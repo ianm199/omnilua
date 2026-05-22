@@ -259,31 +259,72 @@ fn extract_weak_mode(mt: &LuaTable) -> u8 {
     0
 }
 
-/// True when the entry's weakly-tagged component(s) are held only by this
-/// table (Rc `strong_count == 1`). Strings are skipped — they tend to be
-/// interned in long-lived caches and would otherwise vanish from weak
-/// caches almost immediately.
+/// True when the entry's weakly-tagged component(s) have no strong
+/// references outside this single entry. Strings and other non-collectable
+/// values are never considered dead — strings live in the intern pool and
+/// would otherwise vanish from weak caches almost immediately.
+///
+/// The naive form (strong_count == 1) is wrong when an entry stores the
+/// *same* Rc in both key and value slots (`a[t] = t`): the in-entry slots
+/// then contribute 2 strong refs, and we must also distinguish slots that
+/// keep the target alive (strong) from slots that do not (weak per the
+/// table's `__mode`).
 fn entry_is_weakly_dead(k: &LuaValue, v: &LuaValue, mode: u8) -> bool {
-    if (mode & WEAK_KEYS) != 0 && weakly_held_alone(k) {
+    let weak_k = (mode & WEAK_KEYS) != 0;
+    let weak_v = (mode & WEAK_VALUES) != 0;
+    if weak_k && is_dead_side(k, k, v, weak_k, weak_v) {
         return true;
     }
-    if (mode & WEAK_VALUES) != 0 && weakly_held_alone(v) {
+    if weak_v && is_dead_side(v, k, v, weak_k, weak_v) {
         return true;
     }
     false
 }
 
-fn weakly_held_alone(v: &LuaValue) -> bool {
+fn is_dead_side(
+    target: &LuaValue,
+    k: &LuaValue,
+    v: &LuaValue,
+    weak_k: bool,
+    weak_v: bool,
+) -> bool {
+    let total = match strong_count_of(target) {
+        Some(n) => n,
+        None => return false,
+    };
+    let key_slot_refs_target = if same_rc(target, k) { 1usize } else { 0 };
+    let value_slot_refs_target = if same_rc(target, v) { 1usize } else { 0 };
+    let strong_from_key_slot = if !weak_k { key_slot_refs_target } else { 0 };
+    let strong_from_value_slot = if !weak_v { value_slot_refs_target } else { 0 };
+    if strong_from_key_slot + strong_from_value_slot > 0 {
+        return false;
+    }
+    let in_entry = key_slot_refs_target + value_slot_refs_target;
+    total <= in_entry
+}
+
+fn strong_count_of(v: &LuaValue) -> Option<usize> {
     use std::rc::Rc;
     match v {
-        LuaValue::Table(t)    => Rc::strong_count(&t.0) == 1,
-        LuaValue::UserData(u) => Rc::strong_count(&u.0) == 1,
-        LuaValue::Thread(th)  => Rc::strong_count(&th.0) == 1,
+        LuaValue::Table(t)    => Some(Rc::strong_count(&t.0)),
+        LuaValue::UserData(u) => Some(Rc::strong_count(&u.0)),
+        LuaValue::Thread(th)  => Some(Rc::strong_count(&th.0)),
         LuaValue::Function(c) => match c {
-            LuaClosure::Lua(x)    => Rc::strong_count(&x.0) == 1,
-            LuaClosure::C(x)      => Rc::strong_count(&x.0) == 1,
-            LuaClosure::LightC(_) => false,
+            LuaClosure::Lua(x)    => Some(Rc::strong_count(&x.0)),
+            LuaClosure::C(x)      => Some(Rc::strong_count(&x.0)),
+            LuaClosure::LightC(_) => None,
         },
+        _ => None,
+    }
+}
+
+fn same_rc(a: &LuaValue, b: &LuaValue) -> bool {
+    use std::rc::Rc;
+    match (a, b) {
+        (LuaValue::Table(t1), LuaValue::Table(t2))       => Rc::ptr_eq(&t1.0, &t2.0),
+        (LuaValue::UserData(u1), LuaValue::UserData(u2)) => Rc::ptr_eq(&u1.0, &u2.0),
+        (LuaValue::Thread(th1), LuaValue::Thread(th2))   => Rc::ptr_eq(&th1.0, &th2.0),
+        (LuaValue::Function(c1), LuaValue::Function(c2)) => closure_eq(c1, c2),
         _ => false,
     }
 }

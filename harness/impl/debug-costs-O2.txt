@@ -5,3 +5,4 @@
 3 0.61128825 reference/lua-c/testes/sort.lua
 5 0.41545699999999997 reference/lua-c/testes/pm.lua
 6 1.12833325 reference/lua-c/testes/strings.lua
+7 1.35670675 reference/lua-c/testes/bitwise.lua

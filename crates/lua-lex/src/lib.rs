@@ -1121,26 +1121,22 @@ fn read_numeral(
     // C: if (luaO_str2num(luaZ_buffer(ls->buff), &obj) == 0)
     //        lexerror(ls, "malformed number", TK_FLT);
     // macros.tsv: luaZ_buffer → buf.as_mut_slice()
-    // TODO(port): call lua_vm::object::str2num(ls.buff.as_slice()) in Phase B.
     let buf = ls.buff.as_slice();
-    // Strip trailing NUL for parsing (if present)
     let num_bytes = if buf.last() == Some(&0) { &buf[..buf.len() - 1] } else { buf };
-    match str2num_stub(num_bytes) {
-        None => {
-            return Err(lex_error(ls, b"malformed number", TK_FLT));
-        }
-        Some(NumResult::Int(i)) => {
-            // C: if (ttisinteger(&obj)) { seminfo->i = ivalue(&obj); return TK_INT; }
-            // macros.tsv: ttisinteger → matches!(o, LuaValue::Int(_)); ivalue → as_int
+    let mut obj = lua_types::LuaValue::Nil;
+    if lua_vm::object::str2num(num_bytes, &mut obj) == 0 {
+        return Err(lex_error(ls, b"malformed number", TK_FLT));
+    }
+    match obj {
+        lua_types::LuaValue::Int(i) => {
             *seminfo = TokenValue::Int(i);
-            return Ok(TK_INT);
+            Ok(TK_INT)
         }
-        Some(NumResult::Float(f)) => {
-            // C: else { lua_assert(ttisfloat(&obj)); seminfo->r = fltvalue(&obj); return TK_FLT; }
-            // macros.tsv: ttisfloat → matches!(o, LuaValue::Float(_))
+        lua_types::LuaValue::Float(f) => {
             *seminfo = TokenValue::Float(f);
-            return Ok(TK_FLT);
+            Ok(TK_FLT)
         }
+        _ => unreachable!("str2num returned non-numeric LuaValue"),
     }
 }
 

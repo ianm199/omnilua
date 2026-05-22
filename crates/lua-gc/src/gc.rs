@@ -51,6 +51,108 @@ use lua_types::gc::GcRef;
 use lua_types::value::LuaValue;
 
 // ---------------------------------------------------------------------------
+// Phase-B stub types
+//
+// `LuaState` and `GlobalState` properly live in `lua-vm`, which depends on
+// `lua-gc` — a circular import. These placeholder structs let `lua-gc`
+// compile in isolation. Phase B replaces them with `use lua_vm::state::...`
+// once the `GcHost` trait in `lua-types` breaks the cycle.
+//
+// TODO(phase-b): needs lua_vm::state::{LuaState, GlobalState, StringTable}.
+// ---------------------------------------------------------------------------
+
+/// Phase-B stub for `lua_vm::state::StringTable` (`stringtable` in C).
+pub struct StringTable {
+    pub nuse: usize,
+    pub size: usize,
+}
+
+/// Phase-B stub for `lua_vm::state::GlobalState` (`global_State` in C).
+///
+/// Field types are placeholders sufficient for `lua-gc` to type-check; the
+/// real definitions land with Phase B's `GcHost` trait. Non-snake-case
+/// field names match the C source one-for-one to keep this port faithful.
+#[allow(non_snake_case)]
+pub struct GlobalState {
+    pub gcstate: u8,
+    pub gckind: u8,
+    pub gcemergency: bool,
+    pub gcstp: u8,
+    pub gcstopem: bool,
+    pub currentwhite: u8,
+    pub gcpause: u8,
+    pub gcstepmul: u8,
+    pub gcstepsize: u8,
+    pub genmajormul: u8,
+    pub genminormul: u8,
+    pub GCdebt: isize,
+    pub GCestimate: usize,
+    pub lastatomic: usize,
+    pub gray: GcObj,
+    pub grayagain: GcObj,
+    pub weak: GcObj,
+    pub allweak: GcObj,
+    pub ephemeron: GcObj,
+    pub tobefnz: GcObj,
+    pub allgc: GcObj,
+    pub finobj: GcObj,
+    pub fixedgc: GcObj,
+    pub sweepgc: GcObjCursor,
+    pub firstold1: GcObj,
+    pub finobjold1: GcObj,
+    pub finobjsur: GcObj,
+    pub finobjrold: GcObj,
+    pub survival: GcObj,
+    pub old1: GcObj,
+    pub reallyold: GcObj,
+    pub strt: StringTable,
+    total_bytes_stub: usize,
+}
+
+impl GlobalState {
+    /// Phase-B stub for `g->mainthread` (returns the GcObj head of the main thread).
+    ///
+    /// # Safety
+    /// Placeholder returns null; callers under Phase B will receive a real pointer.
+    pub unsafe fn mainthread_raw(&self) -> GcObj {
+        std::ptr::null_mut()
+    }
+
+    /// Phase-B stub for `gettotalbytes(g)` (C macro returning total live bytes).
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes_stub
+    }
+}
+
+/// Phase-B stub for `lua_vm::state::LuaState` (`lua_State` in C).
+pub struct LuaState {
+    g: GlobalState,
+}
+
+impl LuaState {
+    pub fn global(&self) -> &GlobalState {
+        &self.g
+    }
+
+    pub fn global_mut(&mut self) -> &mut GlobalState {
+        &mut self.g
+    }
+
+    /// Phase-B stub for `luaE_setdebt`.
+    pub fn set_debt(&mut self, _debt: isize) {
+        todo!("phase-b: needs lua_vm::state::LuaState::set_debt")
+    }
+
+    /// Phase-B stub for accessing the running thread as a raw GcObj.
+    ///
+    /// # Safety
+    /// Placeholder returns null; Phase B supplies the live thread pointer.
+    pub unsafe fn current_thread_raw(&self) -> GcObj {
+        std::ptr::null_mut()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GC state machine constants  (lgc.h)
 // ---------------------------------------------------------------------------
 

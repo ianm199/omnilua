@@ -1126,7 +1126,12 @@ impl LuaState {
     pub fn current_call_info_mut(&mut self) -> &mut CallInfo { let i = self.ci.as_usize(); &mut self.call_info[i] }
     pub fn current_ci_idx(&self) -> CallInfoIdx { self.ci }
     pub fn call_stack_mut(&mut self) -> &mut Vec<CallInfo> { &mut self.call_info }
-    pub fn next_ci(&mut self) -> Result<CallInfoIdx, LuaError> { todo!("phase-b: next_ci") }
+    pub fn next_ci(&mut self) -> Result<CallInfoIdx, LuaError> {
+        match self.call_info[self.ci.as_usize()].next {
+            Some(idx) => Ok(idx),
+            None => Ok(extend_ci(self)),
+        }
+    }
     pub fn prev_ci(&self, idx: CallInfoIdx) -> Option<CallInfoIdx> { self.call_info[idx.as_usize()].previous }
     pub fn get_prev_ci(&self, _idx: CallInfoIdx) -> Option<&CallInfo> { todo!("phase-b: get_prev_ci") }
     pub fn is_base_ci(&self, idx: CallInfoIdx) -> bool { idx.as_usize() == 0 }

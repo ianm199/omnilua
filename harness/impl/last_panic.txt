@@ -1,1 +1,1 @@
-check_stack
+next_ci

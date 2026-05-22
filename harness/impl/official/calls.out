@@ -6,6 +6,4 @@ testing functions and calls
 +
 +
 testing tail calls
-+
-+
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:361: assertion failed!
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:196: assertion failed!

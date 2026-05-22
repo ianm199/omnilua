@@ -8,65 +8,11 @@ functions with errors
 long strings
 steps
 steps (2)
-[DBG count] totalbytes=-10207232 gc_debt=10240000 tracked_strings=6
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
-[DBG count] totalbytes=-30687232 gc_debt=30718976 tracked_strings=6
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
 clearing tables
 weak tables
 +
 
  >>> testC not active: skipping userdata GC tests <<<
 
-[DBG count] totalbytes=32768 gc_debt=0 tracked_strings=6
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
-[DBG count] totalbytes=32768 gc_debt=8388672 tracked_strings=8
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
-  [6] size=4194336 strong=2 preview=[97, 97, 97, 97, 97, 97, 97, 97]
-  [7] size=4194336 strong=3 preview=[98, 98, 98, 98, 98, 98, 98, 98]
-[DBG count] totalbytes=32768 gc_debt=4194336 tracked_strings=7
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
-  [6] size=4194336 strong=2 preview=[97, 97, 97, 97, 97, 97, 97, 97]
-[DBG count] totalbytes=32768 gc_debt=4194336 tracked_strings=7
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
-  [6] size=4194336 strong=2 preview=[97, 97, 97, 97, 97, 97, 97, 97]
-[DBG count] totalbytes=32768 gc_debt=132 tracked_strings=7
-  [0] size=245 strong=2 preview=[47, 85, 115, 101, 114, 115, 47, 105]
-  [1] size=100 strong=2 preview=[46, 47, 63, 46, 115, 111, 59, 47]
-  [2] size=18343 strong=37 preview=[45, 45, 32, 104, 97, 114, 110, 101]
-  [3] size=187 strong=3 preview=[100, 111, 10, 32, 32, 97, 32, 61]
-  [4] size=112 strong=2 preview=[48, 49, 50, 51, 52, 53, 54, 55]
-  [5] size=87 strong=2 preview=[10, 32, 62, 62, 62, 32, 116, 101]
-  [6] size=132 strong=2 preview=[98, 98, 98, 98, 98, 98, 98, 98]
 self-referenced threads
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:549: coroutines not yet implemented (Phase E)
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:549: not yet implemented: coroutines (Phase E)

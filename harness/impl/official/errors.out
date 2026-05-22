@@ -3,4 +3,7 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing errors
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:55: assertion failed!
+
+ >>> testC not active: skipping tests for messages in C <<<
+
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:39: assertion failed!

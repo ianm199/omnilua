@@ -3,3 +3,4 @@
 8.005384349999998 reference/lua-c/testes/errors.lua [sonnet]
 3 1.8957129999999998 reference/lua-c/testes/strings.lua [sonnet]
 5 1.1403303999999999 reference/lua-c/testes/files.lua [sonnet]
+4 8.416709499999998 reference/lua-c/testes/locals.lua [opus]

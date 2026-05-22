@@ -2067,14 +2067,20 @@ impl LuaState {
         // Phase-B: drive the __gc finalizer queue from common allocation
         // sites so loops like `repeat u = {} until finish` make progress
         // without an explicit `collectgarbage()`. No-op when the queue is
-        // empty (the common case).
+        // empty (the common case). When a finalizer actually runs we
+        // also force a full collect so the weak-table sweep (post-mark
+        // hook) executes — gc.lua's `GC()` helper (`GC1(); GC2()`) drives
+        // weak-table cleanup purely through allocation-triggered finalizer
+        // activity, never calling `collectgarbage()` explicitly.
         if !self.global().pending_finalizers.is_empty() {
             crate::api::run_pending_finalizers(self);
+            self.gc().full_collect();
         }
     }
     pub fn gc_cond_step(&mut self) {
         if !self.global().pending_finalizers.is_empty() {
             crate::api::run_pending_finalizers(self);
+            self.gc().full_collect();
         }
         self.gc().check_step();
     }

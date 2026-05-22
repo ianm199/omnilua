@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 28104,
+  "duration_api_ms": 28804,
+  "ttft_ms": 2008,
+  "num_turns": 6,
+  "result": "Build is green.\n\n**Report:**\n\n- **Modified:** `crates/lua-vm/src/state.rs:1196`\n- **Implementation:** `ci_nresults(idx)` now returns `self.call_info[idx.as_usize()].nresults as i32`. The `CallInfo` struct already declares `nresults: i16` (state.rs:219), matching C's `short nresults` field. The cast to `i32` matches the existing usage pattern at `do_.rs:711` (`state.get_ci(ci_idx).nresults as i32`) and aligns with sibling accessors like `ci_top` and `ci_savedpc` that read a field directly from the indexed `CallInfo`.\n- **New `todo!()` exposure:** None inside the new body — it's a pure field read.\n- **Build:** `cargo build -p lua-cli` is green (warnings only, no errors).",
+  "stop_reason": "end_turn",
+  "session_id": "6247c0a6-b4b5-42fc-95ea-8d54fc45f863",
+  "total_cost_usd": 0.32198400000000005,
+  "usage": {
+    "input_tokens": 10,
+    "cache_creation_input_tokens": 29240,
+    "cache_read_input_tokens": 198018,
+    "output_tokens": 1542,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 29240,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 292,
+        "cache_read_input_tokens": 47504,
+        "cache_creation_input_tokens": 635,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 635
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1520,
+      "outputTokens": 21,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0016250000000000001,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 10,
+      "outputTokens": 1542,
+      "cacheReadInputTokens": 198018,
+      "cacheCreationInputTokens": 29240,
+      "webSearchRequests": 0,
+      "costUSD": 0.32035900000000006,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "ea503019-a2f0-4519-baba-fbcd97c3cca9"
+}

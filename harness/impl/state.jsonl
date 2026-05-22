@@ -248,3 +248,6 @@
 {"ts":"2026-05-16T19:43:26Z","action":"dispatch_done","detail":"type=implement func=OpCode decode from instruction word cost=0.558731","total_cost":0.00}
 {"ts":"2026-05-16T19:43:27Z","action":"panic_detected","detail":"func=ci_nresults iter=7","total_cost":0.00}
 {"ts":"2026-05-16T19:43:27Z","action":"dispatch_start","detail":"type=implement func=ci_nresults iter=7","total_cost":0.00}
+{"ts":"2026-05-16T19:43:56Z","action":"dispatch_done","detail":"type=implement func=ci_nresults cost=0.32198400000000005","total_cost":0.00}
+{"ts":"2026-05-16T19:43:57Z","action":"panic_detected","detail":"func=set_ci_previous iter=8","total_cost":0.00}
+{"ts":"2026-05-16T19:43:57Z","action":"dispatch_start","detail":"type=implement func=set_ci_previous iter=8","total_cost":0.00}

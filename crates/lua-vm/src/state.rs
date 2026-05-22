@@ -1178,7 +1178,11 @@ impl LuaState {
     pub fn set_ci_savedpc(&mut self, idx: CallInfoIdx, pc: u32) {
         self.call_info[idx.as_usize()].set_saved_pc(pc);
     }
-    pub fn set_ci_previous(&mut self, _idx: CallInfoIdx) { todo!("phase-b: set_ci_previous") }
+    pub fn set_ci_previous(&mut self, idx: CallInfoIdx) {
+        self.ci = self.call_info[idx.as_usize()]
+            .previous
+            .expect("set_ci_previous: returning frame has no previous CallInfo");
+    }
     pub fn ci_previous(&self, idx: CallInfoIdx) -> Option<CallInfoIdx> { self.call_info[idx.as_usize()].previous }
     pub fn ci_adjust_func<D>(&mut self, _idx: CallInfoIdx, _delta: D) { todo!("phase-b: ci_adjust_func") }
     pub fn ci_base(&self, idx: CallInfoIdx) -> StackIdx { self.call_info[idx.as_usize()].func + 1 }

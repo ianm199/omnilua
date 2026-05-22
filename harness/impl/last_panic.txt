@@ -1,1 +1,1 @@
-ci_nresults
+set_ci_previous

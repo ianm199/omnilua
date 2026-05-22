@@ -10,3 +10,6 @@ license.workspace = true
 # `// SAFETY: <invariant>`. See PORTING.md §11.
 [lints.rust]
 unsafe_code = "allow"
+
+[dependencies]
+lua-types.workspace = true

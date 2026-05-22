@@ -7,3 +7,6 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+lua-types.workspace = true

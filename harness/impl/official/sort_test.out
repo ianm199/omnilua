@@ -2,9 +2,6 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing (parts of) table library
-testing unpack
-testing pack
-testing sort
-DEBUG try_func_tm: call_error func_idx=StackIdx(22) offender=Nil
+before random
+DEBUG try_func_tm: call_error func_idx=StackIdx(3) offender=Nil
 [err] pcall_k failed: Runtime: attempt to call a nil value

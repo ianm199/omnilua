@@ -1,3 +1,7 @@
 2 1.03769125 reference/lua-c/testes/sort.lua
 1 1.6472562500000005 reference/lua-c/testes/goto.lua
 4 1.7984924999999996 reference/lua-c/testes/bitwise.lua
+5 [2026-05-18T01:56:33Z mega]   → committed 6d4c75b (debug/reference/lua-c/testes/math.lua )
+7.320342750000002 reference/lua-c/testes/math.lua
+3 [2026-05-18T02:03:20Z mega]   → committed 2a246e1 (debug/reference/lua-c/testes/closure.lua )
+7.6509670000000005 reference/lua-c/testes/closure.lua

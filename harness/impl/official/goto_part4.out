@@ -1,7 +1,11 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
-[set_metatable] mode=0 mt_has_entries=1
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing closures
-[set_metatable] mode=3 mt_has_entries=1
+part4-a ok #a=6
+part4-b ok
+part4-c ok
+part4-d ok
+part4-e ok
+part4-f ok
+[ok] execution completed, status=Ok

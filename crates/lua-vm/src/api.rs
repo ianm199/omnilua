@@ -2045,16 +2045,34 @@ pub fn setup_value(state: &mut LuaState, funcindex: i32, n: i32) -> Option<Vec<u
     // C: fi = index2value(L, funcindex); api_checknelems(L, 1);
     let fi = index_to_value(state, funcindex);
     // C: name = aux_upvalue(fi, n, &val, &owner);
-    if let Some((name, _)) = aux_upvalue(&fi, n) {
-        // C: L->top.p--; setobj(L, val, s2v(L->top.p)); luaC_barrier(L, owner, val);
-        let new_val = state.pop();
-        // TODO(port): writing back into the upvalue (C closure or open/closed Lua)
-        // requires interior mutability. Stubbed for Phase A.
-        let _ = (new_val, fi, n);
-        Some(name)
-    } else {
-        None
+    let (name, _) = aux_upvalue(&fi, n)?;
+    // C: L->top.p--; setobj(L, val, s2v(L->top.p)); luaC_barrier(L, owner, val);
+    let new_val = state.pop();
+    match &fi {
+        LuaValue::Function(LuaClosure::Lua(lcl)) => {
+            let upval = &lcl.upvals[(n - 1) as usize];
+            let open_loc = match &*upval.slot() {
+                lua_types::UpValState::Open { thread_id, idx } => Some((*thread_id, *idx)),
+                lua_types::UpValState::Closed(_) => None,
+            };
+            match open_loc {
+                Some((_thread_id, idx)) => {
+                    // TODO(port): cross-thread open upvalue writes (Phase E coroutines)
+                    // need to dispatch to the owning thread's stack; for now assume the
+                    // current thread.
+                    state.set_at(idx, new_val);
+                }
+                None => upval.set_closed_value(new_val),
+            }
+        }
+        LuaValue::Function(LuaClosure::C(_ccl)) => {
+            // TODO(port): C-closure upvalue writes need interior mutability on
+            // LuaCClosure.upvalues. Not exercised by current tests.
+            let _ = new_val;
+        }
+        _ => return None,
     }
+    Some(name)
 }
 
 // C: static UpVal **getupvalref (lua_State *L, int fidx, int n, LClosure **pf)

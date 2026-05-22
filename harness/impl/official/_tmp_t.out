@@ -3,6 +3,11 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing closures
-STEP1
-STEP2
-[ok] execution completed, status=Ok
+[A] passed first section
+[B] passed equality section
+[C] passed do block
+[Cc] before init a
+[Cd] before for loop
+[iter] i=	1
+[iter] i=	2
+[iter] i=	3

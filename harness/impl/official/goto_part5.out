@@ -1,7 +1,11 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
-[set_metatable] mode=0 mt_has_entries=1
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing closures
-[set_metatable] mode=3 mt_has_entries=1
+testG(1) =	1
+testG(2) =	2
+testG(3) =	3
+testG(4) =	5
+testG(5) =	10
+part5-a ok
+[err] pcall_k failed: Runtime: assertion failed!

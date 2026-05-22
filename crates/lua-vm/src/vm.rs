@@ -1144,10 +1144,9 @@ pub(crate) fn imod(m: i64, n: i64) -> Result<i64, LuaError> {
 /// C: `lua_Number luaV_modf(lua_State *L, lua_Number m, lua_Number n)`
 /// Float modulus (Lua semantics).
 pub(crate) fn fmodf(m: f64, n: f64) -> f64 {
-    // C: luai_nummod(L, m, n, r) — fmod with sign correction
-    // state.float_mod(m, n)
     let r = m % n;
-    if r != 0.0 && r * n < 0.0 {
+    let opposite_signs = if r > 0.0 { n < 0.0 } else { r < 0.0 && n > 0.0 };
+    if opposite_signs {
         r + n
     } else {
         r

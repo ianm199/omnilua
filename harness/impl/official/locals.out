@@ -3,4 +3,5 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing local variables and environments
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:91: assertion failed!
++
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:175: assertion failed!

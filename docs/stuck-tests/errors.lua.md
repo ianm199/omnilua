@@ -1,67 +1,54 @@
 # Stuck: `reference/lua-c/testes/errors.lua`
 
-Stuck-skipped after Sonnet then Opus both ran. Most recent transcript: `harness/impl/mega-O2-D5-reference_lua_c_testes_errors_.transcript.jsonl` (~1.8 MB).
+**Status:** diagnosable now. The earlier doc said "instrument first"; that's been done. We have the exact failing tuple.
 
-## Current failure
+## Current failure — the exact case
 
-```
-testing errors
- >>> testC not active: skipping tests for messages in C <<<
-+
-lua: pcall_k failed: Runtime: reference/lua-c/testes/errors.lua:30: assertion failed!
-```
+First failing `checkmessage(prog, expected)` call:
 
-Line 30 is inside `checkmessage`:
 ```lua
-local function checkmessage (prog, msg, debug)
-  local m = doit(prog)
-  if debug then print(m, msg) end
-  assert(string.find(m, msg, 1, true))   -- ← fires here
-end
+prog     = table.sort({1,2,3}, table.sort)
+expected substring = 'table.sort'
+actual message     = bad argument #1 to '?' (table expected, got number)
 ```
 
-So **some error-message text we produce doesn't contain the substring the test expects**. To diagnose which `checkmessage(...)` call is failing, you need to instrument: add `print(prog, m, msg)` above the assert and re-run, or read `errors.lua` from line 44 down for the first `checkmessage` invocation (they cascade).
+So the runtime is catching the right semantic error: `table.sort` is being passed as the comparator, and when the sort engine invokes it as `cmp(a, b)` with two numbers, arg #1 is wrong (`number`, expected `table`). The bug is **name attribution** — the error says `'?'` instead of `'table.sort'`.
 
 ## What's actually wrong
 
-This is not one bug — it's *every* error-message wording difference between our VM and reference Lua. Each call to `checkmessage(prog, expected_substring)` runs a tiny program that should error, captures the message, and asserts the message contains a specific phrase. We've fixed a handful (n%0 modulo, OP_GetUpval typo, obj_type_name routing) but there are dozens.
+The comparator is called from `sort_comp` (`crates/lua-stdlib/src/table_lib.rs:525`) via `state.push_value_at(2); state.call(2, 1)`. That call site invokes `table.sort` **as a value, not by name**, so by the time `arg_error_impl` (`crates/lua-vm/src/debug.rs:118`) tries to resolve a name via `get_info(state, b"n", &mut ar)`, `ar.namewhat` is `nil`/empty and the format string falls back to `'?'`.
 
-The failing assertion's prog/msg pair isn't known from the test output alone — we'd need either to instrument the test or check past transcripts.
+C-Lua's `lauxlib.c:luaL_argerror` handles this by walking the debug info up one frame and using the C function's registered library name. We need the equivalent: for C/Rust functions that have a registered name in `package.loaded` or a known library table, resolve it.
+
+## Suggested prompt for the next agent (sonnet or opus)
+
+> Fix function-name attribution for C/Rust library functions invoked
+> indirectly as values, so that `bad argument #1 to '?'` becomes
+> `bad argument #1 to 'table.sort'` (etc.).
+>
+> Repro (do not modify the test file):
+>
+>   target/debug/lua-rs -e 'table.sort({1,2,3}, table.sort)'
+>
+> Expected: error message contains the substring `table.sort`.
+>
+> Likely fix site: `crates/lua-vm/src/debug.rs:118` `arg_error_impl`. When
+> `get_info(state, b"n", &mut ar)` leaves `ar.namewhat` empty, look up the
+> calling function's registered name. Reference C-Lua: `lauxlib.c:luaL_argerror`
+> and the `findfield` helper in `ldblib.c` that walks `_G` / `package.loaded`
+> to resolve a function value back to its dotted name.
+>
+> Smoke-test errors.lua afterwards — the failure point should move past
+> line 30. Don't try to "fix errors.lua"; just fix this attribution case.
+
+This is a tight, single-fix prompt. Should be a sonnet-tier job — opus is overkill.
 
 ## What past agents have tried
 
-Five commits over the project:
-- `f53fb1d` — early errors.lua work
-- `f289e4e` Phase D-0 prep (collectgarbage wiring + error rails)
-- `9a1c490` parser: defer `dyd.actvar` truncate (cascading effect on debug.getinfo name resolution)
-- `949cffa` vm: `'n%%0'` → `'n%0'` in modulo-zero error
-- `71b48a8` errors.lua debug (vm.rs, debug.rs — error wording)
-- `67f00a4` errors.lua debug — bigger one
+Five commits over the project (`f53fb1d`, `f289e4e`, `9a1c490`, `949cffa`, `71b48a8`, `67f00a4`). The O2 opus run fixed a real codegen bug in `cg_self` for high-index method constants (OP_SELF with `k_idx > MAXINDEXRK`). That advanced past one `checkmessage`, but the next one (the `table.sort` case above) hit immediately.
 
-The O2 opus run (most recent) fixed a non-trivial parser bug. Quoting its summary:
-
-> **Root cause:** `crates/lua-parse/src/lib.rs:2587` (`cg_self`) — the OP_SELF codegen always emitted the method-name constant index as the C operand with `k=1`, even when the constant index exceeded the 8-bit `MAXINDEXRK` limit (255). The index got truncated to its low 8 bits, so `t:bbb()` after 1000+ constants reported the wrong method name (e.g. `'x233'` instead of `'bbb'`).
->
-> **Fix:** When `k_idx > MAXINDEXRK`, demote the key to `ExprKind::K` and discharge it into a register via `cg_exp_to_any_reg`, then emit OP_SELF with `C=reg, k=0`. Mirrors `codeABRK`/`exp2RK` from `lcode.c`.
-
-That was a real find and committed. But it advanced past **one** `checkmessage` call; another one earlier in the test now fails.
-
-The fact that the test fails at line 30 — inside the *first* checkmessage helper — suggests an early assertion is failing. The agent claimed it advanced past line 345; if true, the current failure-at-line-30 may be a fresh regression introduced by the cherry-pick of `42ff10f` (the new file_open_hook plumbing changed how some errors propagate). Worth checking.
-
-## Suggested next move
-
-Instrument the test BEFORE dispatching another agent:
-
-```bash
-sed -i.bak '30i\
-  if not string.find(m, msg, 1, true) then print("FAIL prog=", prog); print("got msg=", m); print("want=", msg) end' reference/lua-c/testes/errors.lua
-target/debug/lua-rs reference/lua-c/testes/errors.lua 2>&1 | head -40
-```
-
-The next agent should be told **which specific `checkmessage` call** is failing — without that, opus burns budget rediscovering it. Past attempts ran the test, hit a generic "assertion failed" line, and went hunting through the entire VM error-message surface.
-
-Once you have the (prog, expected, actual) tuple in hand, this is a 5-minute fix per mismatch. Likely 3-10 mismatches still hidden.
+The recurring failure mode is: agent runs errors.lua → sees generic "assertion failed at line 30" → spends $10 of opus budget bisecting which of ~40 checkmessage calls is failing → finally finds the wording mismatch → fixes it → next round, same drill on the next mismatch. Pre-instrumenting (as we just did) cuts that loop entirely.
 
 ## Files most touched
 
-`crates/lua-vm/src/debug.rs` (error message formatting), `crates/lua-vm/src/vm.rs` (error context), `crates/lua-vm/src/state.rs` (`obj_type_name`), `crates/lua-parse/src/lib.rs` (syntax errors, codegen edges).
+`crates/lua-vm/src/debug.rs` (`arg_error_impl`, `get_info` consumers), `crates/lua-vm/src/state.rs` (`obj_type_name`), `crates/lua-parse/src/lib.rs` (codegen edges).

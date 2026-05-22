@@ -955,7 +955,7 @@ fn basic_get_obj_name<'a>(
             }
         }
         // C: case OP_GETUPVAL: *name = upvalname(p, GETARG_B(i)); return "upvalue";
-        OpCode::GetUpval => {
+        OpCode::GetUpVal => {
             *name = upval_name(p, instr.arg_b() as usize);
             return Some(b"upvalue");
         }
@@ -1306,9 +1306,6 @@ fn var_info(state: &LuaState, val_idx: StackIdx) -> Vec<u8> {
             // C: int reg = instack(ci, o); if (reg >= 0) kind = getobjname(...);
             let reg = in_stack(&ci, val_idx, state);
             if reg >= 0 {
-                // get_obj_name writes into `nref`, which borrows from the local
-                // `proto`.  Copy the bytes out before proto is dropped so the
-                // name survives.
                 let proto = ci_lua_proto(&ci, state);
                 let mut nref: &[u8] = b"?";
                 let pc = current_pc(&ci);

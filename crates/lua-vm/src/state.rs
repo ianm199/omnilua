@@ -558,6 +558,15 @@ pub type ParserHook = fn(
     firstchar: i32,
 ) -> Result<GcRef<lua_types::closure::LuaLClosure>, LuaError>;
 
+/// Function-pointer signature for reading a file's full contents into memory,
+/// installed on [`GlobalState::file_loader_hook`] by the embedder.
+///
+/// `std::fs` is banned outside `lua-cli`, so `lua-stdlib`'s `loadfile` and
+/// `searcher_lua` reach the filesystem via this hook. `None` keeps the file
+/// system unreachable, which is appropriate for embeddings where modules are
+/// served exclusively from `package.preload`.
+pub type FileLoaderHook = fn(filename: &[u8]) -> Result<Vec<u8>, LuaError>;
+
 /// Process-wide state shared by all Lua threads.
 ///
 /// C: `global_State` in `lstate.h`.
@@ -571,6 +580,12 @@ pub struct GlobalState {
     /// this hook instead of the parser stub. `None` leaves the stub in place
     /// so unit tests that never load text still work.
     pub parser_hook: Option<ParserHook>,
+
+    /// Phase-B hook for reading a Lua source file from disk. Set by `lua-cli`
+    /// (or any embedder that wants `require`/`loadfile` to reach the file
+    /// system) since `std::fs` is banned in `lua-stdlib`. `None` makes
+    /// `loadfile` and the Lua-file searcher report a file-not-found error.
+    pub file_loader_hook: Option<FileLoaderHook>,
 
     // C: l_mem totalbytes — Phase D memory accounting
     // types.tsv: global_State.totalbytes → isize
@@ -2644,6 +2659,7 @@ pub fn new_state() -> Option<LuaState> {
 
     let global = GlobalState {
         parser_hook: None,
+        file_loader_hook: None,
         totalbytes: std::mem::size_of::<GlobalState>() as isize,
         gc_debt: 0,
         gc_estimate: 0,

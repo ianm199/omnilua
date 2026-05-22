@@ -288,7 +288,7 @@ fn call_close_method(
     // In Rust: state.push() manages the top pointer; no pointer arithmetic needed.
     // setobj2s → state.push(value.clone())
     // macros.tsv: luaT_gettmbyobj → state.get_tm_by_obj(&obj, TagMethod::Close)
-    let tm = state.get_tm_by_obj(&obj, TagMethod::Close);
+    let tm = state.get_tm_by_obj(&obj, lua_types::tagmethod::TagMethod::Close);
     let top = state.top;
     state.push(tm);
     state.push(obj);
@@ -320,7 +320,7 @@ fn check_close_mth(state: &mut LuaState, level: StackIdx) -> Result<(), LuaError
     // macros.tsv: s2v(level) → state.stack_at(level) — returns &LuaValue
     // macros.tsv: ttisnil(tm) → matches!(tm, LuaValue::Nil)
     let val = state.get_stack_value(level).clone();
-    let tm = state.get_tm_by_obj(&val, TagMethod::Close);
+    let tm = state.get_tm_by_obj(&val, lua_types::tagmethod::TagMethod::Close);
     if matches!(tm, LuaValue::Nil) {
         // C: int idx = cast_int(level - L->ci->func.p);
         // macros.tsv: cast_int → x as i32
@@ -723,10 +723,26 @@ impl LuaState {
     ///
     /// C: `luaT_gettmbyobj(L, obj, TM_CLOSE)`.
     /// macros.tsv: `fasttm → state.fast_tm(et, e)`.
-    /// TODO(port): real implementation in tagmethods.rs.
-    pub(crate) fn get_tm_by_obj<T>(&self, _val: &LuaValue, _tm: T) -> LuaValue {
-        // TODO(port): implement in tagmethods.rs; for now return Nil (no metamethod).
-        LuaValue::Nil
+    pub(crate) fn get_tm_by_obj(
+        &mut self,
+        val: &LuaValue,
+        tm: lua_types::tagmethod::TagMethod,
+    ) -> LuaValue {
+        let mt: Option<GcRef<lua_types::value::LuaTable>> = match val {
+            LuaValue::Table(t) => t.metatable(),
+            LuaValue::UserData(u) => u.metatable(),
+            other => {
+                let type_idx = other.base_type() as usize;
+                self.global().mt[type_idx].clone()
+            }
+        };
+        match mt {
+            Some(mt_ref) => {
+                let ename = self.global().tmname[tm as usize].clone();
+                mt_ref.get_short_str(&ename)
+            }
+            None => LuaValue::Nil,
+        }
     }
 
     /// Calls a Lua or C function (yieldable).

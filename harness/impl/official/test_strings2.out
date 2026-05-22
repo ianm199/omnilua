@@ -3,4 +3,6 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing
-[err] pcall_k failed: Runtime: attempt to index a string value
+789
+--ok--
+[ok] execution completed, status=Ok

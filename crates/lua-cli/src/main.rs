@@ -23,6 +23,28 @@ use lua_types::value::LuaValue;
 use lua_vm::api::{pcall_k, to_lua_string};
 use lua_vm::state::{new_state, LuaState};
 
+fn file_loader_hook(filename: &[u8]) -> Result<Vec<u8>, LuaError> {
+    #[cfg(unix)]
+    let path: std::path::PathBuf = {
+        use std::os::unix::ffi::OsStrExt;
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(filename))
+    };
+    #[cfg(not(unix))]
+    let path: std::path::PathBuf = {
+        let s = std::str::from_utf8(filename).map_err(|_| {
+            LuaError::runtime(format_args!("filename is not valid UTF-8"))
+        })?;
+        std::path::PathBuf::from(s)
+    };
+    std::fs::read(&path).map_err(|err| {
+        LuaError::runtime(format_args!(
+            "cannot open '{}': {}",
+            String::from_utf8_lossy(filename),
+            err
+        ))
+    })
+}
+
 fn parser_hook(
     state: &mut LuaState,
     source: &[u8],

@@ -1,3 +1,4 @@
 4 1.39346275 reference/lua-c/testes/pm.lua
 2 1.7034049999999998 reference/lua-c/testes/goto.lua
 3 1.5681727500000002 reference/lua-c/testes/closure.lua
+1 2.343286 reference/lua-c/testes/vararg.lua

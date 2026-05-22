@@ -679,11 +679,49 @@ fn searcher_lua(state: &mut LuaState) -> Result<usize, LuaError> {
     }
     let filename = filename.unwrap();
     // C: return checkload(L, (luaL_loadfile(L, filename) == LUA_OK), filename);
-    // TODO(port): luaL_loadfile reads and compiles a Lua source file. This
-    //             requires both file-system access (std::fs — banned in
-    //             lua-stdlib) and a full parse+compile pipeline. Stubbing as
-    //             always-failed for Phase A; Phase B wires up state.load_file().
-    let load_ok = false;
+    //
+    // PORT NOTE: `std::fs` is banned in `lua-stdlib`, so file contents come in
+    // via the embedder-registered `file_loader_hook` on `GlobalState`. We then
+    // parse them through `state.load(...)` (which dispatches to the parser
+    // hook) and place the resulting closure on the stack so `checkload` can
+    // pair it with the filename.
+    let chunk = match state.global().file_loader_hook {
+        Some(hook) => hook(&filename),
+        None => Err(LuaError::runtime(format_args!(
+            "no file_loader_hook registered; cannot read '{}'",
+            String::from_utf8_lossy(&filename)
+        ))),
+    };
+    let load_ok = match chunk {
+        Ok(bytes) => {
+            // Use a chunk name of the form `@filename` matching C's luaL_loadfilex.
+            let mut chunkname = b"@".to_vec();
+            chunkname.extend_from_slice(&filename);
+            match state.load(&bytes, &chunkname, None) {
+                Ok(true) => true,
+                Ok(false) => false,
+                Err(e) => {
+                    let msg = match e {
+                        LuaError::Syntax(LuaValue::Str(ref s))
+                        | LuaError::Runtime(LuaValue::Str(ref s)) => s.as_bytes().to_vec(),
+                        other => format!("{:?}", other).into_bytes(),
+                    };
+                    let s = state.intern_str(&msg)?;
+                    state.push(LuaValue::Str(s));
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            let msg = match e {
+                LuaError::Runtime(LuaValue::Str(ref s)) => s.as_bytes().to_vec(),
+                other => format!("{:?}", other).into_bytes(),
+            };
+            let s = state.intern_str(&msg)?;
+            state.push(LuaValue::Str(s));
+            false
+        }
+    };
     checkload(state, load_ok, &filename)
 }
 

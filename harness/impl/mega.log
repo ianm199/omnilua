@@ -416,3 +416,4 @@
 [2026-05-17T19:19:17Z mega]   [O5.D5] DEBUG dispatch on file: reference/lua-c/testes/strings.lua [parallel]
 [2026-05-17T19:20:03Z mega]   [O5.D6] DEBUG dispatch on file: reference/lua-c/testes/bitwise.lua [parallel]
 [2026-05-17T19:21:28Z mega]   [O5.D7] DEBUG dispatch on file: reference/lua-c/testes/math.lua [parallel]
+[2026-05-17T19:21:38Z mega]   [O5.D8] DEBUG dispatch on file: reference/lua-c/testes/tpack.lua [parallel]

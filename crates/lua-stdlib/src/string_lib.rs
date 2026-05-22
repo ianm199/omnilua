@@ -52,6 +52,12 @@ const MAX_FORMAT: usize = 32;
 // C: #define MAXINTSIZE 16
 const MAX_INT_SIZE: usize = 16;
 
+// C: #define MAXSIZE (sizeof(size_t) < sizeof(int) ? MAX_SIZET : (size_t)(INT_MAX))
+// On platforms where size_t is at least as wide as int (all our targets), this
+// collapses to INT_MAX so that packed sizes round-trip through a Lua integer
+// without ambiguity.
+const PACK_MAXSIZE: usize = i32::MAX as usize;
+
 // C: #define NB CHAR_BIT  (8)
 const NB: u32 = 8;
 
@@ -2038,7 +2044,7 @@ pub fn str_packsize(state: &mut LuaState) -> Result<usize, LuaError> {
             return Err(LuaError::arg_error(1, "variable-length format"));
         }
         let space = ntoalign + size;
-        if total_size > usize::MAX - space {
+        if total_size > PACK_MAXSIZE - space {
             return Err(LuaError::arg_error(1, "format result too large"));
         }
         total_size += space;

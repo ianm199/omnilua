@@ -1183,7 +1183,13 @@ impl LuaState {
     pub fn ci_adjust_func<D>(&mut self, _idx: CallInfoIdx, _delta: D) { todo!("phase-b: ci_adjust_func") }
     pub fn ci_base(&self, _idx: CallInfoIdx) -> StackIdx { todo!("phase-b: ci_base") }
     pub fn ci_is_fresh(&self, _idx: CallInfoIdx) -> bool { todo!("phase-b: ci_is_fresh") }
-    pub fn ci_lua_closure(&self, _idx: CallInfoIdx) -> Option<GcRef<lua_types::closure::LuaLClosure>> { todo!("phase-b: ci_lua_closure") }
+    pub fn ci_lua_closure(&self, idx: CallInfoIdx) -> Option<GcRef<lua_types::closure::LuaLClosure>> {
+        let func_idx = self.call_info[idx.as_usize()].func;
+        match self.get_at(func_idx) {
+            LuaValue::Function(lua_types::closure::LuaClosure::Lua(cl)) => Some(cl),
+            _ => None,
+        }
+    }
     pub fn ci_nextraargs(&self, _idx: CallInfoIdx) -> i32 { todo!("phase-b: ci_nextraargs") }
     pub fn ci_nres(&self, _idx: CallInfoIdx) -> i32 { todo!("phase-b: ci_nres") }
     pub fn ci_nres_set(&mut self, _idx: CallInfoIdx, _n: i32) { todo!("phase-b: ci_nres_set") }

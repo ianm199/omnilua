@@ -1910,10 +1910,10 @@ fn llex(
 // TODO_ARCH(phase-b-reconcile): canonical LuaString is constructed via
 // from_bytes; once LuaState::intern_str is wired, route through there instead.
 fn intern_str_stub(
-    _state: &mut LuaState,
+    state: &mut LuaState,
     bytes: &[u8],
 ) -> Result<GcRef<LuaString>, LuaError> {
-    Ok(Rc::new(LuaString::from_bytes(bytes.to_vec())))
+    Ok(state.intern_str(bytes)?.0)
 }
 
 /// Result of converting a byte string to a Lua number.

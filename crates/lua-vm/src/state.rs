@@ -706,6 +706,13 @@ pub struct GlobalState {
     // types.tsv: global_State.strcache → [[GcRef<LuaString>; STRCACHE_M]; STRCACHE_N]
     pub strcache: [[GcRef<LuaString>; STRCACHE_M]; STRCACHE_N],
 
+    /// Stable intern map for the public [`LuaString`] type. Distinct from
+    /// `strt` (which keys internal `LuaStringImpl`) because the parser and
+    /// stdlib need pointer-equality across `intern_str` calls so
+    /// `GcRef::ptr_eq` can resolve variable identity. Without this map each
+    /// call allocates a fresh `GcRef` and locals/upvalues fail to resolve.
+    pub interned_lt: std::collections::HashMap<Box<[u8]>, GcRef<LuaString>>,
+
     // C: lua_WarnFunction warnf — warning function sink
     // types.tsv: global_State.warnf → Option<Box<dyn FnMut(&[u8], bool)>>
     pub warnf: Option<Box<dyn FnMut(&[u8], bool)>>,
@@ -1067,8 +1074,15 @@ impl LuaState {
     /// C: `luaS_new(L, s)` → `state.intern_str(s: &[u8])`
     /// macros.tsv: `luaS_new → state.intern_str(s)`
     pub fn intern_str(&mut self, bytes: &[u8]) -> Result<GcRef<LuaString>, LuaError> {
-        let local = crate::string::new(self, bytes)?;
-        Ok(GcRef::new(LuaString::from_bytes(local.as_bytes().to_vec())))
+        if let Some(existing) = self.global().interned_lt.get(bytes) {
+            return Ok(existing.clone());
+        }
+        let _local = crate::string::new(self, bytes)?;
+        let new_ref = GcRef::new(LuaString::from_bytes(bytes.to_vec()));
+        self.global_mut()
+            .interned_lt
+            .insert(bytes.to_vec().into_boxed_slice(), new_ref.clone());
+        Ok(new_ref)
     }
 
     /// Returns the current CallInfo index (the active call frame).
@@ -2360,6 +2374,7 @@ pub fn new_state() -> Option<LuaState> {
         strcache: std::array::from_fn(|_| {
             std::array::from_fn(|_| placeholder_str.clone())
         }),
+        interned_lt: std::collections::HashMap::new(),
         warnf: None,
         c_functions: Vec::new(),
     };

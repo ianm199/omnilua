@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 31959,
+  "duration_api_ms": 31716,
+  "ttft_ms": 2826,
+  "num_turns": 6,
+  "result": "Build is green.\n\n**Report:**\n- **File modified:** `crates/lua-vm/src/api.rs` — added inherent method `LuaState::push_value_at` just after `push_copy` (around line 341).\n- **Summary:** Following the established pattern (the trait default in `state_stub.rs:219` is a Phase-B shim), I added an inherent method that delegates to the existing free fn `push_value(self, idx)`. Rust's inherent-method-wins resolution silences the trait default. Semantics match `lua_pushvalue`: copy the value at `idx` onto the top of the stack.\n- **Inner todo!() calls:** None — the impl delegates only to the already-implemented `push_value` free function.\n- **Build status:** `cargo build -p lua-cli` is green (warnings only, no errors).",
+  "stop_reason": "end_turn",
+  "session_id": "b3fceeeb-ddbf-406c-973d-e0456f25533a",
+  "total_cost_usd": 0.35119600000000006,
+  "usage": {
+    "input_tokens": 11,
+    "cache_creation_input_tokens": 29976,
+    "cache_read_input_tokens": 247568,
+    "output_tokens": 1536,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 29976,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 271,
+        "cache_read_input_tokens": 48290,
+        "cache_creation_input_tokens": 585,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 585
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1522,
+      "outputTokens": 17,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001607,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 11,
+      "outputTokens": 1536,
+      "cacheReadInputTokens": 247568,
+      "cacheCreationInputTokens": 29976,
+      "webSearchRequests": 0,
+      "costUSD": 0.34958900000000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "0c51ec76-9344-4844-93e8-81bf88c377d4"
+}

@@ -197,3 +197,6 @@
 {"ts":"2026-05-16T18:54:16Z","action":"dispatch_done","detail":"type=implement func=set_metatable_by_name cost=0.42352724999999997","total_cost":0.00}
 {"ts":"2026-05-16T18:54:17Z","action":"panic_detected","detail":"func=push_value_at iter=13","total_cost":0.00}
 {"ts":"2026-05-16T18:54:17Z","action":"dispatch_start","detail":"type=implement func=push_value_at iter=13","total_cost":0.00}
+{"ts":"2026-05-16T18:54:50Z","action":"dispatch_done","detail":"type=implement func=push_value_at cost=0.35119600000000006","total_cost":0.00}
+{"ts":"2026-05-16T18:54:50Z","action":"panic_detected","detail":"func=registry_set iter=14","total_cost":0.00}
+{"ts":"2026-05-16T18:54:50Z","action":"dispatch_start","detail":"type=implement func=registry_set iter=14","total_cost":0.00}

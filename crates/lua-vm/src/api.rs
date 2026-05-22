@@ -364,6 +364,14 @@ impl LuaState {
         create_table(self, narr, nrec)
     }
 
+    /// Pop the value on top of the stack and store it in the registry under
+    /// the string `key`.
+    ///
+    /// C: `lua_setfield(L, LUA_REGISTRYINDEX, key)`.
+    pub fn registry_set(&mut self, key: &[u8]) -> Result<(), LuaError> {
+        set_field(self, LUA_REGISTRYINDEX, key)
+    }
+
     /// Create a new metatable in the registry under key `tname`. Leaves the
     /// new metatable on top of the stack and returns `true` when newly
     /// created. If `registry[tname]` already exists, leaves it on top of the

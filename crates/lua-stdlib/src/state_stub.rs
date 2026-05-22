@@ -1193,16 +1193,36 @@ impl LuaStateStubExt for LuaState {
         M: AsRef<[u8]>,
     {
         let mut buf: Vec<u8> = Vec::new();
+        let mut reader_err: Option<LuaError> = None;
         loop {
-            match reader(self)? {
-                None => break,
-                Some(piece) => {
+            match reader(self) {
+                Err(e) => {
+                    reader_err = Some(e);
+                    break;
+                }
+                Ok(None) => break,
+                Ok(Some(piece)) => {
                     if piece.is_empty() {
                         break;
                     }
                     buf.extend_from_slice(&piece);
                 }
             }
+        }
+        if let Some(e) = reader_err {
+            let msg_value = match e {
+                LuaError::Runtime(v) | LuaError::Syntax(v) => v,
+                LuaError::Memory => {
+                    let s = self.intern_str(b"not enough memory")?;
+                    LuaValue::Str(s)
+                }
+                _ => {
+                    let s = self.intern_str(b"error in reader function")?;
+                    LuaValue::Str(s)
+                }
+            };
+            self.push(msg_value);
+            return Ok(false);
         }
         let mut once = Some(buf);
         let boxed: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || once.take());

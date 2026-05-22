@@ -6,4 +6,6 @@ testing functions and calls
 +
 +
 testing tail calls
-[err] pcall_k failed: Runtime: coroutines not yet implemented (Phase E)
++
++
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:341: assertion failed!

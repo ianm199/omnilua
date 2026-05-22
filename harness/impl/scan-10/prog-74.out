@@ -2,9 +2,188 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing metatables
-[err] pcall_k failed: Runtime: _soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = ar:35: assertion failed!
+testing errors
+DBG var_info: val_idx=StackIdx(20) ci.func=StackIdx(18) ci.top=StackIdx(22) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=9):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=NewTable A=0 B=0 C=0
+DBG     [2] op=ExtraArg A=0 B=0 C=0
+DBG     [3] op=Len A=1 B=0 C=0
+DBG     [4] op=GetTable A=1 B=0 C=1
+DBG     [5] op=LoadI A=2 B=0 C=128
+DBG     [6] op=Add A=0 B=1 C=2
+DBG     [7] op=MmBin A=1 B=2 C=6
+DBG     [8] op=Return A=1 B=1 C=1
+DBG find_set_reg ENTER lastpc=7 reg=1
+DBG   change at pc=3 op=Len → setreg=3
+DBG   change at pc=4 op=GetTable → setreg=4
+DBG find_set_reg EXIT setreg=4 effective_lastpc=6
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG   change at pc=3 op=Len → setreg=3
+DBG find_set_reg EXIT setreg=3 effective_lastpc=4
+DBG   get_obj_name pc=7 reg=1 kind=Some([102, 105, 101, 108, 100]) name="?"
+
+ >>> testC not active: skipping tests for messages in C <<<
+
+DBG var_info: val_idx=StackIdx(22) ci.func=StackIdx(21) ci.top=StackIdx(24) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=8):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=NewTable A=0 B=0 C=0
+DBG     [2] op=ExtraArg A=0 B=0 C=0
+DBG     [3] op=LoadI A=1 B=0 C=128
+DBG     [4] op=Add A=0 B=0 C=1
+DBG     [5] op=MmBin A=0 B=1 C=6
+DBG     [6] op=SetTabUp A=0 B=0 C=0
+DBG     [7] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=5 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=NewTable → setreg=1
+DBG find_set_reg EXIT setreg=1 effective_lastpc=4
+DBG   get_obj_name pc=5 reg=0 kind=None name="?"
+DBG var_info: val_idx=StackIdx(22) ci.func=StackIdx(21) ci.top=StackIdx(24) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=8):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=NewTable A=0 B=0 C=0
+DBG     [2] op=ExtraArg A=0 B=0 C=0
+DBG     [3] op=LoadI A=1 B=0 C=128
+DBG     [4] op=BOr A=0 B=0 C=1
+DBG     [5] op=MmBin A=0 B=1 C=14
+DBG     [6] op=SetTabUp A=0 B=0 C=0
+DBG     [7] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=5 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=NewTable → setreg=1
+DBG find_set_reg EXIT setreg=1 effective_lastpc=4
+DBG   get_obj_name pc=5 reg=0 kind=None name="?"
+DBG find_set_reg ENTER lastpc=11 reg=1
+DBG   change at pc=7 op=LoadI → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=GetTabUp → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=11
+DBG find_set_reg ENTER lastpc=8 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=NewTable → setreg=1
+DBG   change at pc=4 op=LoadI → setreg=4
+DBG   change at pc=5 op=GetTabUp → setreg=5
+DBG   change at pc=6 op=Self_ → setreg=6
+DBG find_set_reg EXIT setreg=6 effective_lastpc=8
+DBG find_set_reg ENTER lastpc=5 reg=1
+DBG   change at pc=3 op=GetField → setreg=3
+DBG find_set_reg EXIT setreg=3 effective_lastpc=5
+DBG find_set_reg ENTER lastpc=10 reg=1
+DBG   change at pc=3 op=LoadI → setreg=3
+DBG   change at pc=7 op=GetTabUp → setreg=7
+DBG   change at pc=8 op=GetTable → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=8 reg=1
+DBG   change at pc=3 op=LoadI → setreg=3
+DBG   change at pc=7 op=GetTabUp → setreg=7
+DBG find_set_reg EXIT setreg=7 effective_lastpc=8
+DBG find_set_reg ENTER lastpc=10 reg=1
+DBG   change at pc=3 op=LoadI → setreg=3
+DBG   change at pc=7 op=GetTabUp → setreg=7
+DBG   change at pc=8 op=GetTable → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=8 reg=1
+DBG   change at pc=3 op=LoadI → setreg=3
+DBG   change at pc=7 op=GetTabUp → setreg=7
+DBG find_set_reg EXIT setreg=7 effective_lastpc=8
+DBG var_info: val_idx=StackIdx(23) ci.func=StackIdx(21) ci.top=StackIdx(25) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=16):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=NewTable A=0 B=1 C=0
+DBG     [2] op=ExtraArg A=0 B=0 C=0
+DBG     [3] op=NewTable A=1 B=0 C=0
+DBG     [4] op=ExtraArg A=0 B=0 C=0
+DBG     [5] op=SetField A=0 B=1 C=1
+DBG     [6] op=SetTabUp A=0 B=0 C=0
+DBG     [7] op=GetTabUp A=0 B=0 C=2
+DBG     [8] op=GetTabUp A=1 B=0 C=0
+DBG     [9] op=GetField A=1 B=1 C=1
+DBG     [10] op=GetField A=1 B=1 C=3
+DBG     [11] op=LoadI A=2 B=0 C=128
+DBG     [12] op=Add A=1 B=1 C=2
+DBG     [13] op=MmBin A=1 B=2 C=6
+DBG     [14] op=Call A=0 B=2 C=1
+DBG     [15] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=13 reg=1
+DBG   change at pc=3 op=NewTable → setreg=3
+DBG   change at pc=8 op=GetTabUp → setreg=8
+DBG   change at pc=9 op=GetField → setreg=9
+DBG   change at pc=10 op=GetField → setreg=10
+DBG find_set_reg EXIT setreg=10 effective_lastpc=12
+DBG find_set_reg ENTER lastpc=10 reg=1
+DBG   change at pc=3 op=NewTable → setreg=3
+DBG   change at pc=8 op=GetTabUp → setreg=8
+DBG   change at pc=9 op=GetField → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG   get_obj_name pc=13 reg=1 kind=Some([102, 105, 101, 108, 100]) name="x"
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG   change at pc=2 op=Move → setreg=2
+DBG find_set_reg EXIT setreg=2 effective_lastpc=4
+DBG find_set_reg ENTER lastpc=5 reg=1
+DBG   change at pc=3 op=GetField → setreg=3
+DBG find_set_reg EXIT setreg=3 effective_lastpc=5
+DBG find_set_reg ENTER lastpc=8 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=NewTable → setreg=1
+DBG   change at pc=4 op=LoadI → setreg=4
+DBG   change at pc=5 op=GetTabUp → setreg=5
+DBG   change at pc=6 op=Self_ → setreg=6
+DBG find_set_reg EXIT setreg=6 effective_lastpc=8
+DBG var_info: val_idx=StackIdx(22) ci.func=StackIdx(21) ci.top=StackIdx(25) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=7):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=GetTabUp A=0 B=0 C=0
+DBG     [2] op=GetField A=0 B=0 C=1
+DBG     [3] op=Self_ A=0 B=0 C=2
+DBG     [4] op=LoadI A=2 B=4 C=128
+DBG     [5] op=Call A=0 B=3 C=1
+DBG     [6] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=2 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG find_set_reg EXIT setreg=1 effective_lastpc=2
+DBG   get_obj_name pc=2 reg=0 kind=Some([103, 108, 111, 98, 97, 108]) name="aaa"
+DBG var_info: val_idx=StackIdx(23) ci.func=StackIdx(21) ci.top=StackIdx(26) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=10):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=NewTable A=0 B=1 C=0
+DBG     [2] op=ExtraArg A=0 B=0 C=0
+DBG     [3] op=LoadI A=1 B=0 C=128
+DBG     [4] op=SetField A=0 B=0 C=1
+DBG     [5] op=GetField A=1 B=0 C=0
+DBG     [6] op=Self_ A=1 B=1 C=1
+DBG     [7] op=LoadI A=3 B=4 C=128
+DBG     [8] op=Call A=1 B=3 C=1
+DBG     [9] op=Return A=1 B=1 C=1
+DBG find_set_reg ENTER lastpc=6 reg=1
+DBG   change at pc=3 op=LoadI → setreg=3
+DBG   change at pc=5 op=GetField → setreg=5
+DBG find_set_reg EXIT setreg=5 effective_lastpc=6
+DBG   get_obj_name pc=6 reg=1 kind=Some([102, 105, 101, 108, 100]) name="bbb"
+DBG find_set_reg ENTER lastpc=9 reg=1
+DBG   change at pc=3 op=NewTable → setreg=3
+DBG   change at pc=6 op=GetField → setreg=6
+DBG   change at pc=7 op=Self_ → setreg=7
+DBG find_set_reg EXIT setreg=7 effective_lastpc=9
+DBG var_info: val_idx=StackIdx(26) ci.func=StackIdx(25) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=6):
+DBG     [0] op=GetUpVal A=0 B=1 C=0
+DBG     [1] op=LoadK A=1 B=0 C=0
+DBG     [2] op=Add A=0 B=0 C=1
+DBG     [3] op=MmBin A=0 B=1 C=6
+DBG     [4] op=SetUpVal A=0 B=0 C=0
+DBG     [5] op=Return0 A=0 B=1 C=0
+DBG find_set_reg ENTER lastpc=3 reg=0
+DBG   change at pc=0 op=GetUpVal → setreg=0
+DBG find_set_reg EXIT setreg=0 effective_lastpc=2
+DBG   get_obj_name pc=3 reg=0 kind=None name="?"
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:38: assertion failed!

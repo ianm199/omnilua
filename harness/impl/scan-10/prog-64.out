@@ -2,13 +2,109 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing local variables and environments
-[err] pcall_k failed: Runtime: module 'tracegc' not found:
-	no field package.preload['tracegc']
-	no file './tracegc.lua'
-	no file './tracegc/init.lua'
-	no file '/usr/local/share/lua/5.4/tracegc.lua'
-	no file '/usr/local/share/lua/5.4/tracegc/init.lua'
-	no file './tracegc.so'
-	no file '/usr/local/lib/lua/5.4/tracegc.so'
-	no file '/usr/local/lib/lua/5.4/loadall.so'
+testing bitwise operations
++
+testing bitwise library
++
+DBG var_info: val_idx=StackIdx(21) ci.func=StackIdx(17) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=3
+DBG   proto.code (len=40):
+DBG     [0] op=VarArgPrep A=3 B=0 C=0
+DBG     [1] op=Not A=3 B=2 C=0
+DBG     [2] op=Test A=3 B=0 C=0
+DBG     [3] op=Jmp A=14 B=0 C=128
+DBG     [4] op=TestSet A=3 B=0 C=0
+DBG     [5] op=Jmp A=1 B=0 C=128
+DBG     [6] op=LoadI A=3 B=0 C=128
+DBG     [7] op=Unm A=3 B=3 C=0
+DBG     [8] op=TestSet A=4 B=1 C=0
+DBG     [9] op=Jmp A=1 B=0 C=128
+DBG     [10] op=LoadI A=4 B=0 C=128
+DBG     [11] op=Unm A=4 B=4 C=0
+DBG     [12] op=BAnd A=3 B=3 C=4
+DBG     [13] op=MmBin A=3 B=4 C=13
+DBG     [14] op=LoadK A=4 B=0 C=0
+DBG     [15] op=BAnd A=3 B=3 C=4
+DBG     [16] op=MmBin A=3 B=4 C=13
+DBG     [17] op=Return A=3 B=2 C=4
+DBG     [18] op=Jmp A=19 B=0 C=128
+DBG     [19] op=NewTable A=3 B=0 C=0
+DBG     [20] op=ExtraArg A=0 B=0 C=0
+DBG     [21] op=VarArg A=4 B=0 C=0
+DBG     [22] op=SetList A=3 B=0 C=0
+DBG     [23] op=BAnd A=4 B=0 C=1
+DBG     [24] op=MmBin A=0 B=1 C=13
+DBG     [25] op=BAnd A=4 B=4 C=2
+DBG     [26] op=MmBin A=4 B=2 C=13
+DBG     [27] op=LoadI A=5 B=0 C=128
+DBG     [28] op=Len A=6 B=3 C=0
+DBG     [29] op=LoadI A=7 B=0 C=128
+DBG     [30] op=ForPrep A=5 B=1 C=0
+DBG     [31] op=GetTable A=9 B=3 C=8
+DBG     [32] op=BAnd A=4 B=4 C=9
+DBG     [33] op=MmBin A=4 B=9 C=13
+DBG     [34] op=ForLoop A=5 B=2 C=0
+DBG     [35] op=LoadK A=5 B=0 C=0
+DBG     [36] op=BAnd A=5 B=4 C=5
+DBG     [37] op=MmBin A=4 B=5 C=13
+DBG     [38] op=Return A=5 B=2 C=4
+DBG     [39] op=Return A=3 B=1 C=4
+DBG find_set_reg ENTER lastpc=13 reg=3
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=Not → setreg=1
+DBG   change at pc=4 op=TestSet → setreg=4
+DBG   change at pc=6 op=LoadI → setreg=-1
+DBG   change at pc=7 op=Unm → setreg=-1
+DBG find_set_reg EXIT setreg=-1 effective_lastpc=12
+DBG   get_obj_name pc=13 reg=3 kind=None name="?"
+DBG var_info: val_idx=StackIdx(15) ci.func=StackIdx(13) ci.top=StackIdx(18) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=10):
+DBG     [0] op=LoadK A=2 B=0 C=0
+DBG     [1] op=BAnd A=2 B=0 C=2
+DBG     [2] op=MmBin A=0 B=2 C=13
+DBG     [3] op=Shl A=2 B=2 C=1
+DBG     [4] op=MmBin A=2 B=1 C=16
+DBG     [5] op=LoadK A=3 B=0 C=0
+DBG     [6] op=BAnd A=2 B=2 C=3
+DBG     [7] op=MmBin A=2 B=3 C=13
+DBG     [8] op=Return1 A=2 B=2 C=0
+DBG     [9] op=Return0 A=2 B=1 C=0
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG find_set_reg EXIT setreg=-1 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=1 kind=None name="?"
+DBG var_info: val_idx=StackIdx(15) ci.func=StackIdx(13) ci.top=StackIdx(18) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=10):
+DBG     [0] op=LoadK A=2 B=0 C=0
+DBG     [1] op=BAnd A=2 B=0 C=2
+DBG     [2] op=MmBin A=0 B=2 C=13
+DBG     [3] op=Shl A=2 B=2 C=1
+DBG     [4] op=MmBin A=2 B=1 C=16
+DBG     [5] op=LoadK A=3 B=0 C=0
+DBG     [6] op=BAnd A=2 B=2 C=3
+DBG     [7] op=MmBin A=2 B=3 C=13
+DBG     [8] op=Return1 A=2 B=2 C=0
+DBG     [9] op=Return0 A=2 B=1 C=0
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG find_set_reg EXIT setreg=-1 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=1 kind=None name="?"
+DBG var_info: val_idx=StackIdx(15) ci.func=StackIdx(13) ci.top=StackIdx(18) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=10):
+DBG     [0] op=LoadK A=2 B=0 C=0
+DBG     [1] op=BAnd A=2 B=0 C=2
+DBG     [2] op=MmBin A=0 B=2 C=13
+DBG     [3] op=Shr A=2 B=2 C=1
+DBG     [4] op=MmBin A=2 B=1 C=17
+DBG     [5] op=LoadK A=3 B=0 C=0
+DBG     [6] op=BAnd A=2 B=2 C=3
+DBG     [7] op=MmBin A=2 B=3 C=13
+DBG     [8] op=Return1 A=2 B=2 C=0
+DBG     [9] op=Return0 A=2 B=1 C=0
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG find_set_reg EXIT setreg=-1 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=1 kind=None name="?"
++
+OK
+[ok] execution completed, status=Ok

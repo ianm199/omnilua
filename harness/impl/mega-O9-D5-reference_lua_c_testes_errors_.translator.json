@@ -1,0 +1,110 @@
+{
+  "type": "result",
+  "subtype": "error_max_budget_usd",
+  "duration_ms": 1388086,
+  "duration_api_ms": 1350299,
+  "is_error": true,
+  "num_turns": 130,
+  "stop_reason": "tool_use",
+  "session_id": "92008180-fa7b-4a40-bafe-55aa23345ce4",
+  "total_cost_usd": 10.029904499999997,
+  "usage": {
+    "input_tokens": 134,
+    "cache_creation_input_tokens": 166687,
+    "cache_read_input_tokens": 14317731,
+    "output_tokens": 67454,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 166687,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 158,
+        "cache_read_input_tokens": 184870,
+        "cache_creation_input_tokens": 716,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 716
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1496,
+      "outputTokens": 15,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001571,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 135,
+      "outputTokens": 69155,
+      "cacheReadInputTokens": 14503317,
+      "cacheCreationInputTokens": 167540,
+      "webSearchRequests": 0,
+      "costUSD": 10.028333499999997,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_013iuFiHDU6tBfRw8fycFQim",
+      "tool_input": {
+        "command": "cat > /tmp/test_err.lua <<'EOF'\nlocal cond, msg = pcall(function() error('hi', 0) end)\nprint(type(msg), msg, msg == 'hi')\nlocal f, msg2 = load(\"error('hi', 0)\")\nprint(type(f), type(msg2))\nlocal cond2, msg3 = pcall(f)\nprint(type(msg3), msg3, msg3 == 'hi')\nEOF\ntarget/debug/lua-rs /tmp/test_err.lua 2>&1 | tail -20",
+        "description": "Test error level=0 directly"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01NZ98yD4Cu84ZdfMaTgCd9U",
+      "tool_input": {
+        "command": "printf '%s\\n' 'local cond, msg = pcall(function() error(\"hi\", 0) end)' 'print(type(msg), msg, msg == \"hi\")' 'local f, msg2 = load(\"error(\\\"hi\\\", 0)\")' 'print(type(f), type(msg2))' 'local cond2, msg3 = pcall(f)' 'print(type(msg3), msg3, msg3 == \"hi\")' > /tmp/test_err.lua && target/debug/lua-rs /tmp/test_err.lua 2>&1 | tail -20",
+        "description": "Test error level=0 directly"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01BPh3DsfykEQ4TCrtzC3ngd",
+      "tool_input": {
+        "command": "target/debug/lua-rs \"$(cat reference/lua-c/testes/errors.lua | head -100)\" 2>&1 | tail -30",
+        "description": "Run first 100 lines of errors.lua"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01Av3hZnZCWmuGLjT1S3S36m",
+      "tool_input": {
+        "command": "target/debug/lua-rs \"$(< harness/impl/test_err.lua)\" 2>&1 | tail -10",
+        "description": "Run prefix exactly as in errors.lua"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_019EcWU9s8tpRFgdvsuVZLL2",
+      "tool_input": {
+        "command": "head -130 /Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/reference/lua-c/testes/errors.lua > /tmp/errors_head.lua && wc -l /tmp/errors_head.lua",
+        "description": "Take first 130 lines of errors.lua"
+      }
+    }
+  ],
+  "fast_mode_state": "off",
+  "uuid": "5c23385a-85e3-43a1-a45e-69462f9f43fe",
+  "errors": [
+    "Reached maximum budget ($10)"
+  ]
+}

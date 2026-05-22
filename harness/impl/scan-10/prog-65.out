@@ -2,12 +2,137 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing functions and calls
-+
-+
-testing tail calls
-[err] pcall_k failed: Runtime: _soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = ar:174: assertion failed!
+testing numbers and math lib
+64-bit integers, 53-bit (mantissa) floats
+testing order (floats cannot represent all integers)
+DBG: end of fmax block (line 240)
+DBG var_info: val_idx=StackIdx(27) ci.func=StackIdx(25) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=7):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=LoadI A=0 B=255 C=127
+DBG     [2] op=LoadK A=1 B=0 C=0
+DBG     [3] op=Shr A=0 B=1 C=0
+DBG     [4] op=MmBin A=1 B=0 C=17
+DBG     [5] op=Return A=0 B=2 C=1
+DBG     [6] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG   change at pc=2 op=LoadK → setreg=2
+DBG find_set_reg EXIT setreg=2 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=1 kind=None name="?"
+DBG var_info: val_idx=StackIdx(27) ci.func=StackIdx(25) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=7):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=LoadI A=0 B=0 C=128
+DBG     [2] op=LoadK A=1 B=0 C=0
+DBG     [3] op=BAnd A=0 B=1 C=0
+DBG     [4] op=MmBin A=1 B=0 C=13
+DBG     [5] op=Return A=0 B=2 C=1
+DBG     [6] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG   change at pc=2 op=LoadK → setreg=2
+DBG find_set_reg EXIT setreg=2 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=1 kind=None name="?"
+DBG var_info: val_idx=StackIdx(26) ci.func=StackIdx(25) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=8):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=GetTabUp A=0 B=0 C=0
+DBG     [2] op=GetField A=0 B=0 C=1
+DBG     [3] op=LoadI A=1 B=0 C=128
+DBG     [4] op=Shl A=0 B=0 C=1
+DBG     [5] op=MmBin A=0 B=1 C=16
+DBG     [6] op=Return A=0 B=2 C=1
+DBG     [7] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=5 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=2 op=GetField → setreg=2
+DBG find_set_reg EXIT setreg=2 effective_lastpc=4
+DBG find_set_reg ENTER lastpc=2 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG find_set_reg EXIT setreg=1 effective_lastpc=2
+DBG   get_obj_name pc=5 reg=0 kind=Some([102, 105, 101, 108, 100]) name="huge"
+DBG var_info: val_idx=StackIdx(26) ci.func=StackIdx(25) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=7):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=LoadK A=0 B=0 C=0
+DBG     [2] op=LoadI A=1 B=0 C=128
+DBG     [3] op=BOr A=0 B=1 C=0
+DBG     [4] op=MmBin A=1 B=0 C=14
+DBG     [5] op=Return A=0 B=2 C=1
+DBG     [6] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=4 reg=0
+DBG   change at pc=0 op=VarArgPrep → setreg=0
+DBG   change at pc=1 op=LoadK → setreg=1
+DBG find_set_reg EXIT setreg=1 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=0 kind=None name="?"
+DBG var_info: val_idx=StackIdx(27) ci.func=StackIdx(25) ci.top=StackIdx(28) upval_kind=None
+DBG   in_stack reg=1
+DBG   proto.code (len=7):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=LoadF A=0 B=255 C=127
+DBG     [2] op=LoadK A=1 B=0 C=0
+DBG     [3] op=BXOr A=0 B=1 C=0
+DBG     [4] op=MmBin A=1 B=0 C=15
+DBG     [5] op=Return A=0 B=2 C=1
+DBG     [6] op=Return A=0 B=1 C=1
+DBG find_set_reg ENTER lastpc=4 reg=1
+DBG   change at pc=2 op=LoadK → setreg=2
+DBG find_set_reg EXIT setreg=2 effective_lastpc=3
+DBG   get_obj_name pc=4 reg=1 kind=None name="?"
+DBG: after checkcompt block (line 295)
+DBG var_info: val_idx=StackIdx(24) ci.func=StackIdx(23) ci.top=StackIdx(26) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=4):
+DBG     [0] op=BOr A=1 B=0 C=0
+DBG     [1] op=MmBin A=0 B=0 C=14
+DBG     [2] op=Return1 A=1 B=2 C=0
+DBG     [3] op=Return0 A=1 B=1 C=0
+DBG   get_obj_name pc=1 reg=0 kind=Some([108, 111, 99, 97, 108]) name="x"
+DBG var_info: val_idx=StackIdx(24) ci.func=StackIdx(23) ci.top=StackIdx(26) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=4):
+DBG     [0] op=BOr A=1 B=0 C=0
+DBG     [1] op=MmBin A=0 B=0 C=14
+DBG     [2] op=Return1 A=1 B=2 C=0
+DBG     [3] op=Return0 A=1 B=1 C=0
+DBG   get_obj_name pc=1 reg=0 kind=Some([108, 111, 99, 97, 108]) name="x"
+DBG var_info: val_idx=StackIdx(24) ci.func=StackIdx(23) ci.top=StackIdx(26) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=4):
+DBG     [0] op=BOr A=1 B=0 C=0
+DBG     [1] op=MmBin A=0 B=0 C=14
+DBG     [2] op=Return1 A=1 B=2 C=0
+DBG     [3] op=Return0 A=1 B=1 C=0
+DBG   get_obj_name pc=1 reg=0 kind=Some([108, 111, 99, 97, 108]) name="x"
+DBG var_info: val_idx=StackIdx(24) ci.func=StackIdx(23) ci.top=StackIdx(26) upval_kind=None
+DBG   in_stack reg=0
+DBG   proto.code (len=4):
+DBG     [0] op=BOr A=1 B=0 C=0
+DBG     [1] op=MmBin A=0 B=0 C=14
+DBG     [2] op=Return1 A=1 B=2 C=0
+DBG     [3] op=Return0 A=1 B=1 C=0
+DBG   get_obj_name pc=1 reg=0 kind=Some([108, 111, 99, 97, 108]) name="x"
+DBG: after f2i block (line 327)
+DBG: line 331-pre
+DBG: line 332
+DBG: line 333
+DBG: line 334
+DBG: line 335
+DBG: after numeric string tests (line 335)
+DBG: line 343
+DBG: line 357
+DBG: line 361
+DBG: line 364
+DBG: line 368
+DBG: after tonumber overflow tests (line 371)
+DBG: after invalid tonumber tests (line 470)
+DBG: after hex/float numerals (line 526)
+DBG: after mod operator tests (line 557)
+DBG: after math fn tests (line 666)
+testing -0 and NaN
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:820: assertion failed!

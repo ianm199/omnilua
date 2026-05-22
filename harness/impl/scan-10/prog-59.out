@@ -2,9 +2,929 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing strings and string library
-[err] pcall_k failed: Runtime: _soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = ar:23: assertion failed!
+testing generational garbage collection
+DBG find_set_reg ENTER lastpc=327 reg=7
+DBG   change at pc=28 op=Call → setreg=28
+DBG   change at pc=31 op=Call → setreg=31
+DBG   change at pc=35 op=Call → setreg=35
+DBG   change at pc=36 op=Call → setreg=36
+DBG   change at pc=38 op=Call → setreg=38
+DBG   change at pc=41 op=Call → setreg=41
+DBG   change at pc=45 op=Call → setreg=45
+DBG   change at pc=54 op=Call → setreg=-1
+DBG   change at pc=60 op=Call → setreg=60
+DBG   change at pc=77 op=Call → setreg=-1
+DBG   change at pc=84 op=Call → setreg=-1
+DBG   change at pc=90 op=Call → setreg=90
+DBG   change at pc=94 op=Call → setreg=94
+DBG   change at pc=103 op=Call → setreg=-1
+DBG   change at pc=110 op=Call → setreg=-1
+DBG   change at pc=116 op=Call → setreg=116
+DBG   change at pc=120 op=Call → setreg=120
+DBG   change at pc=129 op=Call → setreg=-1
+DBG   change at pc=136 op=Call → setreg=-1
+DBG   change at pc=142 op=Call → setreg=142
+DBG   change at pc=152 op=Call → setreg=152
+DBG   change at pc=159 op=Call → setreg=159
+DBG   change at pc=168 op=Call → setreg=-1
+DBG   change at pc=174 op=Call → setreg=174
+DBG   change at pc=179 op=Call → setreg=179
+DBG   change at pc=188 op=Move → setreg=-1
+DBG   change at pc=189 op=Call → setreg=-1
+DBG   change at pc=190 op=Call → setreg=-1
+DBG   change at pc=196 op=Call → setreg=196
+DBG   change at pc=200 op=Call → setreg=200
+DBG   change at pc=209 op=Move → setreg=-1
+DBG   change at pc=210 op=Call → setreg=-1
+DBG   change at pc=211 op=Call → setreg=-1
+DBG   change at pc=217 op=Call → setreg=217
+DBG   change at pc=221 op=Call → setreg=221
+DBG   change at pc=225 op=Call → setreg=225
+DBG   change at pc=229 op=Call → setreg=229
+DBG   change at pc=236 op=Call → setreg=236
+DBG   change at pc=241 op=LoadI → setreg=241
+DBG   change at pc=242 op=Call → setreg=242
+DBG   change at pc=250 op=Move → setreg=-1
+DBG   change at pc=251 op=Call → setreg=-1
+DBG   change at pc=252 op=LoadK → setreg=-1
+DBG   change at pc=257 op=Call → setreg=257
+DBG   change at pc=260 op=NewTable → setreg=260
+DBG   change at pc=265 op=Call → setreg=265
+DBG   change at pc=273 op=GetTabUp → setreg=-1
+DBG   change at pc=275 op=Call → setreg=-1
+DBG   change at pc=276 op=Call → setreg=-1
+DBG   change at pc=277 op=LoadK → setreg=-1
+DBG   change at pc=282 op=Call → setreg=282
+DBG   change at pc=286 op=LoadI → setreg=286
+DBG   change at pc=287 op=Call → setreg=287
+DBG   change at pc=294 op=Call → setreg=294
+DBG   change at pc=298 op=Call → setreg=298
+DBG   change at pc=302 op=Call → setreg=302
+DBG   change at pc=304 op=LoadK → setreg=304
+DBG   change at pc=306 op=Call → setreg=306
+DBG   change at pc=309 op=LoadK → setreg=309
+DBG   change at pc=314 op=Move → setreg=314
+DBG   change at pc=319 op=Call → setreg=319
+DBG   change at pc=322 op=LoadK → setreg=322
+DBG   change at pc=324 op=Call → setreg=324
+DBG   change at pc=326 op=Move → setreg=326
+DBG find_set_reg EXIT setreg=326 effective_lastpc=327
+DBG find_set_reg ENTER lastpc=326 reg=5
+DBG   change at pc=28 op=Call → setreg=28
+DBG   change at pc=31 op=Call → setreg=31
+DBG   change at pc=35 op=Call → setreg=35
+DBG   change at pc=36 op=Call → setreg=36
+DBG   change at pc=38 op=Call → setreg=38
+DBG   change at pc=41 op=Call → setreg=41
+DBG   change at pc=45 op=Call → setreg=45
+DBG   change at pc=53 op=Move → setreg=-1
+DBG   change at pc=54 op=Call → setreg=-1
+DBG   change at pc=55 op=LoadK → setreg=-1
+DBG   change at pc=60 op=Call → setreg=60
+DBG   change at pc=65 op=LoadI → setreg=65
+DBG   change at pc=76 op=Move → setreg=-1
+DBG   change at pc=77 op=Call → setreg=-1
+DBG   change at pc=78 op=LoadK → setreg=-1
+DBG   change at pc=83 op=GetI → setreg=-1
+DBG   change at pc=84 op=Call → setreg=-1
+DBG   change at pc=85 op=LoadK → setreg=-1
+DBG   change at pc=90 op=Call → setreg=90
+DBG   change at pc=93 op=LoadI → setreg=93
+DBG   change at pc=94 op=Call → setreg=94
+DBG   change at pc=102 op=Move → setreg=-1
+DBG   change at pc=103 op=Call → setreg=-1
+DBG   change at pc=104 op=LoadK → setreg=-1
+DBG   change at pc=109 op=GetI → setreg=-1
+DBG   change at pc=110 op=Call → setreg=-1
+DBG   change at pc=111 op=LoadK → setreg=-1
+DBG   change at pc=116 op=Call → setreg=116
+DBG   change at pc=119 op=LoadI → setreg=119
+DBG   change at pc=120 op=Call → setreg=120
+DBG   change at pc=128 op=Move → setreg=-1
+DBG   change at pc=129 op=Call → setreg=-1
+DBG   change at pc=130 op=LoadK → setreg=-1
+DBG   change at pc=135 op=GetI → setreg=-1
+DBG   change at pc=136 op=Call → setreg=-1
+DBG   change at pc=137 op=LoadK → setreg=-1
+DBG   change at pc=142 op=Call → setreg=142
+DBG   change at pc=147 op=LoadI → setreg=147
+DBG   change at pc=152 op=Call → setreg=152
+DBG   change at pc=159 op=Call → setreg=159
+DBG   change at pc=161 op=GetTabUp → setreg=161
+DBG   change at pc=162 op=Not → setreg=162
+DBG   change at pc=165 op=GetTabUp → setreg=-1
+DBG   change at pc=166 op=GetField → setreg=-1
+DBG   change at pc=168 op=Call → setreg=-1
+DBG   change at pc=172 op=LFalseSkip → setreg=-1
+DBG   change at pc=173 op=LoadTrue → setreg=-1
+DBG   change at pc=174 op=Call → setreg=174
+DBG   change at pc=176 op=Move → setreg=176
+DBG   change at pc=179 op=Call → setreg=179
+DBG   change at pc=181 op=GetTabUp → setreg=181
+DBG   change at pc=182 op=Not → setreg=182
+DBG   change at pc=185 op=GetTabUp → setreg=-1
+DBG   change at pc=186 op=GetField → setreg=-1
+DBG   change at pc=190 op=Call → setreg=-1
+DBG   change at pc=194 op=LFalseSkip → setreg=-1
+DBG   change at pc=195 op=LoadTrue → setreg=-1
+DBG   change at pc=196 op=Call → setreg=196
+DBG   change at pc=198 op=LoadK → setreg=198
+DBG   change at pc=200 op=Call → setreg=200
+DBG   change at pc=202 op=GetTabUp → setreg=202
+DBG   change at pc=203 op=Not → setreg=203
+DBG   change at pc=206 op=GetTabUp → setreg=-1
+DBG   change at pc=207 op=GetField → setreg=-1
+DBG   change at pc=211 op=Call → setreg=-1
+DBG   change at pc=215 op=LFalseSkip → setreg=-1
+DBG   change at pc=216 op=LoadTrue → setreg=-1
+DBG   change at pc=217 op=Call → setreg=217
+DBG   change at pc=219 op=GetTabUp → setreg=219
+DBG   change at pc=221 op=Call → setreg=221
+DBG   change at pc=225 op=Call → setreg=225
+DBG   change at pc=227 op=LoadK → setreg=227
+DBG   change at pc=229 op=Call → setreg=229
+DBG   change at pc=236 op=Call → setreg=236
+DBG   change at pc=239 op=GetTabUp → setreg=239
+DBG   change at pc=242 op=Call → setreg=242
+DBG   change at pc=243 op=GetTabUp → setreg=243
+DBG   change at pc=257 op=Call → setreg=257
+DBG   change at pc=258 op=GetTabUp → setreg=258
+DBG   change at pc=265 op=Call → setreg=265
+DBG   change at pc=266 op=GetTabUp → setreg=266
+DBG   change at pc=282 op=Call → setreg=282
+DBG   change at pc=284 op=GetTabUp → setreg=284
+DBG   change at pc=287 op=Call → setreg=287
+DBG   change at pc=294 op=Call → setreg=294
+DBG   change at pc=298 op=Call → setreg=298
+DBG   change at pc=301 op=Move → setreg=301
+DBG   change at pc=302 op=Call → setreg=302
+DBG find_set_reg EXIT setreg=302 effective_lastpc=326
+DBG var_info: val_idx=StackIdx(10) ci.func=StackIdx(2) ci.top=StackIdx(13) upval_kind=None
+DBG   in_stack reg=7
+DBG   proto.code (len=608):
+DBG     [0] op=VarArgPrep A=0 B=0 C=0
+DBG     [1] op=LoadTrue A=0 B=0 C=0
+DBG     [2] op=SetTabUp A=0 B=0 C=0
+DBG     [3] op=LoadTrue A=0 B=0 C=0
+DBG     [4] op=SetTabUp A=0 B=1 C=0
+DBG     [5] op=LoadTrue A=0 B=0 C=0
+DBG     [6] op=SetTabUp A=0 B=2 C=0
+DBG     [7] op=LoadFalse A=0 B=0 C=0
+DBG     [8] op=SetTabUp A=0 B=3 C=0
+DBG     [9] op=GetTabUp A=0 B=0 C=4
+DBG     [10] op=Test A=0 B=0 C=0
+DBG     [11] op=Jmp A=1 B=0 C=128
+DBG     [12] op=NewTable A=0 B=0 C=0
+DBG     [13] op=ExtraArg A=0 B=0 C=0
+DBG     [14] op=SetTabUp A=0 B=4 C=0
+DBG     [15] op=GetTabUp A=0 B=0 C=5
+DBG     [16] op=Test A=0 B=0 C=0
+DBG     [17] op=Jmp A=0 B=0 C=128
+DBG     [18] op=GetUpVal A=0 B=0 C=0
+DBG     [19] op=SetTabUp A=0 B=5 C=0
+DBG     [20] op=GetTabUp A=0 B=0 C=6
+DBG     [21] op=LoadNil A=1 B=0 C=0
+DBG     [22] op=Eq A=0 B=1 C=0
+DBG     [23] op=Jmp A=1 B=0 C=128
+DBG     [24] op=LoadK A=0 B=3 C=0
+DBG     [25] op=SetTabUp A=0 B=6 C=0
+DBG     [26] op=GetTabUp A=0 B=0 C=8
+DBG     [27] op=LoadK A=1 B=4 C=0
+DBG     [28] op=Call A=0 B=2 C=1
+DBG     [29] op=GetTabUp A=0 B=0 C=10
+DBG     [30] op=LoadK A=1 B=5 C=0
+DBG     [31] op=Call A=0 B=2 C=2
+DBG     [32] op=GetTabUp A=1 B=0 C=12
+DBG     [33] op=GetTabUp A=2 B=0 C=13
+DBG     [34] op=LoadK A=3 B=7 C=0
+DBG     [35] op=Call A=2 B=2 C=0
+DBG     [36] op=Call A=1 B=0 C=1
+DBG     [37] op=GetTabUp A=1 B=0 C=13
+DBG     [38] op=Call A=1 B=1 C=1
+DBG     [39] op=GetTabUp A=1 B=0 C=13
+DBG     [40] op=LoadK A=2 B=7 C=0
+DBG     [41] op=Call A=1 B=2 C=2
+DBG     [42] op=NewTable A=2 B=0 C=0
+DBG     [43] op=ExtraArg A=0 B=0 C=0
+DBG     [44] op=GetTabUp A=3 B=0 C=13
+DBG     [45] op=Call A=3 B=1 C=1
+DBG     [46] op=GetTabUp A=3 B=0 C=12
+DBG     [47] op=GetTabUp A=4 B=0 C=16
+DBG     [48] op=Not A=4 B=4 C=0
+DBG     [49] op=Test A=4 B=0 C=0
+DBG     [50] op=Jmp A=8 B=0 C=128
+DBG     [51] op=GetTabUp A=4 B=0 C=16
+DBG     [52] op=GetField A=4 B=4 C=17
+DBG     [53] op=Move A=5 B=2 C=0
+DBG     [54] op=Call A=4 B=2 C=2
+DBG     [55] op=LoadK A=5 B=9 C=0
+DBG     [56] op=Eq A=4 B=5 C=0
+DBG     [57] op=Jmp A=0 B=0 C=128
+DBG     [58] op=LFalseSkip A=4 B=0 C=0
+DBG     [59] op=LoadTrue A=4 B=0 C=0
+DBG     [60] op=Call A=3 B=2 C=1
+DBG     [61] op=NewTable A=3 B=1 C=0
+DBG     [62] op=ExtraArg A=0 B=0 C=0
+DBG     [63] op=NewTable A=4 B=0 C=1
+DBG     [64] op=ExtraArg A=0 B=0 C=0
+DBG     [65] op=LoadI A=5 B=116 C=128
+DBG     [66] op=SetList A=4 B=1 C=0
+DBG     [67] op=SetField A=3 B=19 C=4
+DBG     [68] op=SetI A=2 B=1 C=3
+DBG     [69] op=GetTabUp A=3 B=0 C=12
+DBG     [70] op=GetTabUp A=4 B=0 C=16
+DBG     [71] op=Not A=4 B=4 C=0
+DBG     [72] op=Test A=4 B=0 C=0
+DBG     [73] op=Jmp A=15 B=0 C=128
+DBG     [74] op=GetTabUp A=4 B=0 C=16
+DBG     [75] op=GetField A=4 B=4 C=17
+DBG     [76] op=Move A=5 B=2 C=0
+DBG     [77] op=Call A=4 B=2 C=2
+DBG     [78] op=LoadK A=5 B=10 C=0
+DBG     [79] op=Eq A=4 B=5 C=0
+DBG     [80] op=Jmp A=6 B=0 C=128
+DBG     [81] op=GetTabUp A=4 B=0 C=16
+DBG     [82] op=GetField A=4 B=4 C=17
+DBG     [83] op=GetI A=5 B=2 C=1
+DBG     [84] op=Call A=4 B=2 C=2
+DBG     [85] op=LoadK A=5 B=10 C=0
+DBG     [86] op=Eq A=4 B=5 C=0
+DBG     [87] op=Jmp A=0 B=0 C=128
+DBG     [88] op=LFalseSkip A=4 B=0 C=0
+DBG     [89] op=LoadTrue A=4 B=0 C=0
+DBG     [90] op=Call A=3 B=2 C=1
+DBG     [91] op=GetTabUp A=3 B=0 C=13
+DBG     [92] op=LoadK A=4 B=11 C=0
+DBG     [93] op=LoadI A=5 B=255 C=127
+DBG     [94] op=Call A=3 B=3 C=1
+DBG     [95] op=GetTabUp A=3 B=0 C=12
+DBG     [96] op=GetTabUp A=4 B=0 C=16
+DBG     [97] op=Not A=4 B=4 C=0
+DBG     [98] op=Test A=4 B=0 C=0
+DBG     [99] op=Jmp A=15 B=0 C=128
+DBG     [100] op=GetTabUp A=4 B=0 C=16
+DBG     [101] op=GetField A=4 B=4 C=17
+DBG     [102] op=Move A=5 B=2 C=0
+DBG     [103] op=Call A=4 B=2 C=2
+DBG     [104] op=LoadK A=5 B=11 C=0
+DBG     [105] op=Eq A=4 B=5 C=0
+DBG     [106] op=Jmp A=6 B=0 C=128
+DBG     [107] op=GetTabUp A=4 B=0 C=16
+DBG     [108] op=GetField A=4 B=4 C=17
+DBG     [109] op=GetI A=5 B=2 C=1
+DBG     [110] op=Call A=4 B=2 C=2
+DBG     [111] op=LoadK A=5 B=12 C=0
+DBG     [112] op=Eq A=4 B=5 C=0
+DBG     [113] op=Jmp A=0 B=0 C=128
+DBG     [114] op=LFalseSkip A=4 B=0 C=0
+DBG     [115] op=LoadTrue A=4 B=0 C=0
+DBG     [116] op=Call A=3 B=2 C=1
+DBG     [117] op=GetTabUp A=3 B=0 C=13
+DBG     [118] op=LoadK A=4 B=11 C=0
+DBG     [119] op=LoadI A=5 B=255 C=127
+DBG     [120] op=Call A=3 B=3 C=1
+DBG     [121] op=GetTabUp A=3 B=0 C=12
+DBG     [122] op=GetTabUp A=4 B=0 C=16
+DBG     [123] op=Not A=4 B=4 C=0
+DBG     [124] op=Test A=4 B=0 C=0
+DBG     [125] op=Jmp A=15 B=0 C=128
+DBG     [126] op=GetTabUp A=4 B=0 C=16
+DBG     [127] op=GetField A=4 B=4 C=17
+DBG     [128] op=Move A=5 B=2 C=0
+DBG     [129] op=Call A=4 B=2 C=2
+DBG     [130] op=LoadK A=5 B=9 C=0
+DBG     [131] op=Eq A=4 B=5 C=0
+DBG     [132] op=Jmp A=6 B=0 C=128
+DBG     [133] op=GetTabUp A=4 B=0 C=16
+DBG     [134] op=GetField A=4 B=4 C=17
+DBG     [135] op=GetI A=5 B=2 C=1
+DBG     [136] op=Call A=4 B=2 C=2
+DBG     [137] op=LoadK A=5 B=12 C=0
+DBG     [138] op=Eq A=4 B=5 C=0
+DBG     [139] op=Jmp A=0 B=0 C=128
+DBG     [140] op=LFalseSkip A=4 B=0 C=0
+DBG     [141] op=LoadTrue A=4 B=0 C=0
+DBG     [142] op=Call A=3 B=2 C=1
+DBG     [143] op=GetTabUp A=3 B=0 C=12
+DBG     [144] op=GetI A=4 B=2 C=1
+DBG     [145] op=GetField A=4 B=4 C=19
+DBG     [146] op=GetI A=4 B=4 C=1
+DBG     [147] op=LoadI A=5 B=116 C=128
+DBG     [148] op=Eq A=4 B=5 C=0
+DBG     [149] op=Jmp A=0 B=0 C=128
+DBG     [150] op=LFalseSkip A=4 B=0 C=0
+DBG     [151] op=LoadTrue A=4 B=0 C=0
+DBG     [152] op=Call A=3 B=2 C=1
+DBG     [153] op=Closure A=2 B=0 C=0
+DBG     [154] op=NewTable A=3 B=0 C=1
+DBG     [155] op=ExtraArg A=0 B=0 C=0
+DBG     [156] op=LoadI A=4 B=4 C=128
+DBG     [157] op=SetList A=3 B=1 C=0
+DBG     [158] op=GetTabUp A=4 B=0 C=13
+DBG     [159] op=Call A=4 B=1 C=1
+DBG     [160] op=GetTabUp A=4 B=0 C=12
+DBG     [161] op=GetTabUp A=5 B=0 C=16
+DBG     [162] op=Not A=5 B=5 C=0
+DBG     [163] op=Test A=5 B=0 C=0
+DBG     [164] op=Jmp A=8 B=0 C=128
+DBG     [165] op=GetTabUp A=5 B=0 C=16
+DBG     [166] op=GetField A=5 B=5 C=17
+DBG     [167] op=Move A=6 B=3 C=0
+DBG     [168] op=Call A=5 B=2 C=2
+DBG     [169] op=LoadK A=6 B=9 C=0
+DBG     [170] op=Eq A=5 B=6 C=0
+DBG     [171] op=Jmp A=0 B=0 C=128
+DBG     [172] op=LFalseSkip A=5 B=0 C=0
+DBG     [173] op=LoadTrue A=5 B=0 C=0
+DBG     [174] op=Call A=4 B=2 C=1
+DBG     [175] op=GetTabUp A=4 B=0 C=26
+DBG     [176] op=Move A=5 B=3 C=0
+DBG     [177] op=NewTable A=6 B=0 C=0
+DBG     [178] op=ExtraArg A=0 B=0 C=0
+DBG     [179] op=Call A=4 B=3 C=1
+DBG     [180] op=GetTabUp A=4 B=0 C=12
+DBG     [181] op=GetTabUp A=5 B=0 C=16
+DBG     [182] op=Not A=5 B=5 C=0
+DBG     [183] op=Test A=5 B=0 C=0
+DBG     [184] op=Jmp A=10 B=0 C=128
+DBG     [185] op=GetTabUp A=5 B=0 C=16
+DBG     [186] op=GetField A=5 B=5 C=17
+DBG     [187] op=GetTabUp A=6 B=0 C=27
+DBG     [188] op=Move A=7 B=3 C=0
+DBG     [189] op=Call A=6 B=2 C=0
+DBG     [190] op=Call A=5 B=0 C=2
+DBG     [191] op=LoadK A=6 B=14 C=0
+DBG     [192] op=Eq A=5 B=6 C=0
+DBG     [193] op=Jmp A=0 B=0 C=128
+DBG     [194] op=LFalseSkip A=5 B=0 C=0
+DBG     [195] op=LoadTrue A=5 B=0 C=0
+DBG     [196] op=Call A=4 B=2 C=1
+DBG     [197] op=GetTabUp A=4 B=0 C=13
+DBG     [198] op=LoadK A=5 B=11 C=0
+DBG     [199] op=LoadI A=6 B=255 C=127
+DBG     [200] op=Call A=4 B=3 C=1
+DBG     [201] op=GetTabUp A=4 B=0 C=12
+DBG     [202] op=GetTabUp A=5 B=0 C=16
+DBG     [203] op=Not A=5 B=5 C=0
+DBG     [204] op=Test A=5 B=0 C=0
+DBG     [205] op=Jmp A=10 B=0 C=128
+DBG     [206] op=GetTabUp A=5 B=0 C=16
+DBG     [207] op=GetField A=5 B=5 C=17
+DBG     [208] op=GetTabUp A=6 B=0 C=27
+DBG     [209] op=Move A=7 B=3 C=0
+DBG     [210] op=Call A=6 B=2 C=0
+DBG     [211] op=Call A=5 B=0 C=2
+DBG     [212] op=LoadK A=6 B=12 C=0
+DBG     [213] op=Eq A=5 B=6 C=0
+DBG     [214] op=Jmp A=0 B=0 C=128
+DBG     [215] op=LFalseSkip A=5 B=0 C=0
+DBG     [216] op=LoadTrue A=5 B=0 C=0
+DBG     [217] op=Call A=4 B=2 C=1
+DBG     [218] op=GetTabUp A=4 B=0 C=26
+DBG     [219] op=GetTabUp A=5 B=0 C=27
+DBG     [220] op=Move A=6 B=3 C=0
+DBG     [221] op=Call A=5 B=2 C=2
+DBG     [222] op=NewTable A=6 B=1 C=0
+DBG     [223] op=ExtraArg A=0 B=0 C=0
+DBG     [224] op=SetField A=6 B=29 C=2
+DBG     [225] op=Call A=4 B=3 C=1
+DBG     [226] op=GetTabUp A=4 B=0 C=13
+DBG     [227] op=LoadK A=5 B=11 C=0
+DBG     [228] op=LoadI A=6 B=255 C=127
+DBG     [229] op=Call A=4 B=3 C=1
+DBG     [230] op=NewTable A=2 B=0 C=0
+DBG     [231] op=ExtraArg A=0 B=0 C=0
+DBG     [232] op=LoadFalse A=3 B=0 C=0
+DBG     [233] op=SetI A=2 B=1 C=3
+DBG     [234] op=Closure A=3 B=0 C=0
+DBG     [235] op=GetTabUp A=4 B=0 C=13
+DBG     [236] op=Call A=4 B=1 C=1
+DBG     [237] op=NewTable A=4 B=0 C=0
+DBG     [238] op=ExtraArg A=0 B=0 C=0
+DBG     [239] op=GetTabUp A=5 B=0 C=13
+DBG     [240] op=LoadK A=6 B=11 C=0
+DBG     [241] op=LoadI A=7 B=255 C=127
+DBG     [242] op=Call A=5 B=3 C=1
+DBG     [243] op=GetTabUp A=5 B=0 C=12
+DBG     [244] op=GetTabUp A=6 B=0 C=16
+DBG     [245] op=Not A=6 B=6 C=0
+DBG     [246] op=Test A=6 B=0 C=0
+DBG     [247] op=Jmp A=8 B=0 C=128
+DBG     [248] op=GetTabUp A=6 B=0 C=16
+DBG     [249] op=GetField A=6 B=6 C=17
+DBG     [250] op=Move A=7 B=4 C=0
+DBG     [251] op=Call A=6 B=2 C=2
+DBG     [252] op=LoadK A=7 B=12 C=0
+DBG     [253] op=Eq A=6 B=7 C=0
+DBG     [254] op=Jmp A=0 B=0 C=128
+DBG     [255] op=LFalseSkip A=6 B=0 C=0
+DBG     [256] op=LoadTrue A=6 B=0 C=0
+DBG     [257] op=Call A=5 B=2 C=1
+DBG     [258] op=GetTabUp A=5 B=0 C=26
+DBG     [259] op=Move A=6 B=4 C=0
+DBG     [260] op=NewTable A=7 B=2 C=0
+DBG     [261] op=ExtraArg A=0 B=0 C=0
+DBG     [262] op=SetField A=7 B=29 C=3
+DBG     [263] op=LoadK A=8 B=15 C=0
+DBG     [264] op=SetField A=7 B=19 C=8
+DBG     [265] op=Call A=5 B=3 C=1
+DBG     [266] op=GetTabUp A=5 B=0 C=12
+DBG     [267] op=GetTabUp A=6 B=0 C=16
+DBG     [268] op=Not A=6 B=6 C=0
+DBG     [269] op=Test A=6 B=0 C=0
+DBG     [270] op=Jmp A=10 B=0 C=128
+DBG     [271] op=GetTabUp A=6 B=0 C=16
+DBG     [272] op=GetField A=6 B=6 C=17
+DBG     [273] op=GetTabUp A=7 B=0 C=27
+DBG     [274] op=Move A=8 B=4 C=0
+DBG     [275] op=Call A=7 B=2 C=0
+DBG     [276] op=Call A=6 B=0 C=2
+DBG     [277] op=LoadK A=7 B=10 C=0
+DBG     [278] op=Eq A=6 B=7 C=0
+DBG     [279] op=Jmp A=0 B=0 C=128
+DBG     [280] op=LFalseSkip A=6 B=0 C=0
+DBG     [281] op=LoadTrue A=6 B=0 C=0
+DBG     [282] op=Call A=5 B=2 C=1
+DBG     [283] op=LoadNil A=4 B=0 C=0
+DBG     [284] op=GetTabUp A=5 B=0 C=13
+DBG     [285] op=LoadK A=6 B=11 C=0
+DBG     [286] op=LoadI A=7 B=255 C=127
+DBG     [287] op=Call A=5 B=3 C=1
+DBG     [288] op=Close A=2 B=0 C=0
+DBG     [289] op=NewTable A=2 B=0 C=1
+DBG     [290] op=ExtraArg A=0 B=0 C=0
+DBG     [291] op=LoadI A=3 B=4 C=128
+DBG     [292] op=SetList A=2 B=1 C=0
+DBG     [293] op=GetTabUp A=3 B=0 C=13
+DBG     [294] op=Call A=3 B=1 C=1
+DBG     [295] op=GetTabUp A=3 B=0 C=31
+DBG     [296] op=GetField A=3 B=3 C=32
+DBG     [297] op=Closure A=4 B=1 C=0
+DBG     [298] op=Call A=3 B=2 C=2
+DBG     [299] op=GetTabUp A=4 B=0 C=31
+DBG     [300] op=GetField A=4 B=4 C=33
+DBG     [301] op=Move A=5 B=3 C=0
+DBG     [302] op=Call A=4 B=2 C=3
+DBG     [303] op=GetTabUp A=6 B=0 C=13
+DBG     [304] op=LoadK A=7 B=11 C=0
+DBG     [305] op=LoadI A=8 B=255 C=127
+DBG     [306] op=Call A=6 B=3 C=1
+DBG     [307] op=NewTable A=6 B=0 C=1
+DBG     [308] op=ExtraArg A=0 B=0 C=0
+DBG     [309] op=LoadK A=7 B=17 C=0
+DBG     [310] op=SetList A=6 B=1 C=0
+DBG     [311] op=SetI A=2 B=1 C=6
+DBG     [312] op=GetTabUp A=6 B=0 C=31
+DBG     [313] op=GetField A=6 B=6 C=33
+DBG     [314] op=Move A=7 B=3 C=0
+DBG     [315] op=NewTable A=8 B=0 C=1
+DBG     [316] op=ExtraArg A=0 B=0 C=0
+DBG     [317] op=LoadI A=9 B=61 C=128
+DBG     [318] op=SetList A=8 B=1 C=0
+DBG     [319] op=Call A=6 B=3 C=1
+DBG     [320] op=LoadNil A=3 B=0 C=0
+DBG     [321] op=GetTabUp A=6 B=0 C=13
+DBG     [322] op=LoadK A=7 B=11 C=0
+DBG     [323] op=LoadI A=8 B=255 C=127
+DBG     [324] op=Call A=6 B=3 C=1
+DBG     [325] op=GetTabUp A=6 B=0 C=12
+DBG     [326] op=Move A=7 B=5 C=0
+DBG     [327] op=Call A=7 B=1 C=2
+DBG     [328] op=EqI A=7 B=250 C=0
+DBG     [329] op=Jmp A=4 B=0 C=128
+DBG     [330] op=GetI A=7 B=2 C=1
+DBG     [331] op=GetI A=7 B=7 C=1
+DBG     [332] op=LoadK A=8 B=17 C=0
+DBG     [333] op=Eq A=7 B=8 C=0
+DBG     [334] op=Jmp A=0 B=0 C=128
+DBG     [335] op=LFalseSkip A=7 B=0 C=0
+DBG     [336] op=LoadTrue A=7 B=0 C=0
+DBG     [337] op=Call A=6 B=2 C=1
+DBG     [338] op=GetTabUp A=6 B=0 C=13
+DBG     [339] op=LoadK A=7 B=11 C=0
+DBG     [340] op=LoadI A=8 B=255 C=127
+DBG     [341] op=Call A=6 B=3 C=1
+DBG     [342] op=GetTabUp A=6 B=0 C=12
+DBG     [343] op=Move A=7 B=5 C=0
+DBG     [344] op=Call A=7 B=1 C=2
+DBG     [345] op=EqI A=7 B=250 C=0
+DBG     [346] op=Jmp A=4 B=0 C=128
+DBG     [347] op=GetI A=7 B=2 C=1
+DBG     [348] op=GetI A=7 B=7 C=1
+DBG     [349] op=LoadK A=8 B=17 C=0
+DBG     [350] op=Eq A=7 B=8 C=0
+DBG     [351] op=Jmp A=0 B=0 C=128
+DBG     [352] op=LFalseSkip A=7 B=0 C=0
+DBG     [353] op=LoadTrue A=7 B=0 C=0
+DBG     [354] op=Call A=6 B=2 C=1
+DBG     [355] op=GetTabUp A=2 B=0 C=26
+DBG     [356] op=NewTable A=3 B=0 C=0
+DBG     [357] op=ExtraArg A=0 B=0 C=0
+DBG     [358] op=NewTable A=4 B=1 C=0
+DBG     [359] op=ExtraArg A=0 B=0 C=0
+DBG     [360] op=LoadK A=5 B=18 C=0
+DBG     [361] op=SetField A=4 B=35 C=5
+DBG     [362] op=Call A=2 B=3 C=2
+DBG     [363] op=GetTabUp A=3 B=0 C=13
+DBG     [364] op=Call A=3 B=1 C=1
+DBG     [365] op=GetTabUp A=3 B=0 C=12
+DBG     [366] op=GetTabUp A=4 B=0 C=16
+DBG     [367] op=Not A=4 B=4 C=0
+DBG     [368] op=Test A=4 B=0 C=0
+DBG     [369] op=Jmp A=8 B=0 C=128
+DBG     [370] op=GetTabUp A=4 B=0 C=16
+DBG     [371] op=GetField A=4 B=4 C=17
+DBG     [372] op=Move A=5 B=2 C=0
+DBG     [373] op=Call A=4 B=2 C=2
+DBG     [374] op=LoadK A=5 B=9 C=0
+DBG     [375] op=Eq A=4 B=5 C=0
+DBG     [376] op=Jmp A=0 B=0 C=128
+DBG     [377] op=LFalseSkip A=4 B=0 C=0
+DBG     [378] op=LoadTrue A=4 B=0 C=0
+DBG     [379] op=Call A=3 B=2 C=1
+DBG     [380] op=NewTable A=3 B=0 C=1
+DBG     [381] op=ExtraArg A=0 B=0 C=0
+DBG     [382] op=LoadI A=4 B=4 C=128
+DBG     [383] op=SetList A=3 B=1 C=0
+DBG     [384] op=SetI A=2 B=1 C=3
+DBG     [385] op=GetTabUp A=3 B=0 C=12
+DBG     [386] op=GetTabUp A=4 B=0 C=16
+DBG     [387] op=Not A=4 B=4 C=0
+DBG     [388] op=Test A=4 B=0 C=0
+DBG     [389] op=Jmp A=15 B=0 C=128
+DBG     [390] op=GetTabUp A=4 B=0 C=16
+DBG     [391] op=GetField A=4 B=4 C=17
+DBG     [392] op=Move A=5 B=2 C=0
+DBG     [393] op=Call A=4 B=2 C=2
+DBG     [394] op=LoadK A=5 B=10 C=0
+DBG     [395] op=Eq A=4 B=5 C=0
+DBG     [396] op=Jmp A=6 B=0 C=128
+DBG     [397] op=GetTabUp A=4 B=0 C=16
+DBG     [398] op=GetField A=4 B=4 C=37
+DBG     [399] op=Move A=5 B=2 C=0
+DBG     [400] op=Call A=4 B=2 C=2
+DBG     [401] op=LoadK A=5 B=19 C=0
+DBG     [402] op=Eq A=4 B=5 C=0
+DBG     [403] op=Jmp A=0 B=0 C=128
+DBG     [404] op=LFalseSkip A=4 B=0 C=0
+DBG     [405] op=LoadTrue A=4 B=0 C=0
+DBG     [406] op=Call A=3 B=2 C=1
+DBG     [407] op=GetTabUp A=3 B=0 C=13
+DBG     [408] op=LoadK A=4 B=11 C=0
+DBG     [409] op=LoadI A=5 B=255 C=127
+DBG     [410] op=Call A=3 B=3 C=1
+DBG     [411] op=GetTabUp A=3 B=0 C=12
+DBG     [412] op=GetTabUp A=4 B=0 C=16
+DBG     [413] op=Not A=4 B=4 C=0
+DBG     [414] op=Test A=4 B=0 C=0
+DBG     [415] op=Jmp A=15 B=0 C=128
+DBG     [416] op=GetTabUp A=4 B=0 C=16
+DBG     [417] op=GetField A=4 B=4 C=17
+DBG     [418] op=Move A=5 B=2 C=0
+DBG     [419] op=Call A=4 B=2 C=2
+DBG     [420] op=LoadK A=5 B=11 C=0
+DBG     [421] op=Eq A=4 B=5 C=0
+DBG     [422] op=Jmp A=6 B=0 C=128
+DBG     [423] op=GetTabUp A=4 B=0 C=16
+DBG     [424] op=GetField A=4 B=4 C=37
+DBG     [425] op=Move A=5 B=2 C=0
+DBG     [426] op=Call A=4 B=2 C=2
+DBG     [427] op=LoadK A=5 B=19 C=0
+DBG     [428] op=Eq A=4 B=5 C=0
+DBG     [429] op=Jmp A=0 B=0 C=128
+DBG     [430] op=LFalseSkip A=4 B=0 C=0
+DBG     [431] op=LoadTrue A=4 B=0 C=0
+DBG     [432] op=Call A=3 B=2 C=1
+DBG     [433] op=GetTabUp A=3 B=0 C=13
+DBG     [434] op=LoadK A=4 B=11 C=0
+DBG     [435] op=LoadI A=5 B=255 C=127
+DBG     [436] op=Call A=3 B=3 C=1
+DBG     [437] op=GetTabUp A=3 B=0 C=12
+DBG     [438] op=GetTabUp A=4 B=0 C=16
+DBG     [439] op=Not A=4 B=4 C=0
+DBG     [440] op=Test A=4 B=0 C=0
+DBG     [441] op=Jmp A=8 B=0 C=128
+DBG     [442] op=GetTabUp A=4 B=0 C=16
+DBG     [443] op=GetField A=4 B=4 C=17
+DBG     [444] op=Move A=5 B=2 C=0
+DBG     [445] op=Call A=4 B=2 C=2
+DBG     [446] op=LoadK A=5 B=9 C=0
+DBG     [447] op=Eq A=4 B=5 C=0
+DBG     [448] op=Jmp A=0 B=0 C=128
+DBG     [449] op=LFalseSkip A=4 B=0 C=0
+DBG     [450] op=LoadTrue A=4 B=0 C=0
+DBG     [451] op=Call A=3 B=2 C=1
+DBG     [452] op=NewTable A=3 B=0 C=1
+DBG     [453] op=ExtraArg A=0 B=0 C=0
+DBG     [454] op=LoadI A=4 B=4 C=128
+DBG     [455] op=SetList A=3 B=1 C=0
+DBG     [456] op=SetI A=2 B=1 C=3
+DBG     [457] op=GetTabUp A=3 B=0 C=13
+DBG     [458] op=LoadK A=4 B=11 C=0
+DBG     [459] op=LoadI A=5 B=255 C=127
+DBG     [460] op=Call A=3 B=3 C=1
+DBG     [461] op=GetTabUp A=3 B=0 C=12
+DBG     [462] op=GetI A=4 B=2 C=1
+DBG     [463] op=LoadNil A=5 B=0 C=0
+DBG     [464] op=Eq A=4 B=5 C=0
+DBG     [465] op=Jmp A=0 B=0 C=128
+DBG     [466] op=LFalseSkip A=4 B=0 C=0
+DBG     [467] op=LoadTrue A=4 B=0 C=0
+DBG     [468] op=Call A=3 B=2 C=1
+DBG     [469] op=GetTabUp A=2 B=0 C=16
+DBG     [470] op=LoadNil A=3 B=0 C=0
+DBG     [471] op=Eq A=2 B=3 C=0
+DBG     [472] op=Jmp A=9 B=0 C=128
+DBG     [473] op=GetTabUp A=2 B=0 C=40
+DBG     [474] op=Test A=2 B=0 C=0
+DBG     [475] op=Jmp A=0 B=0 C=128
+DBG     [476] op=GetTabUp A=2 B=0 C=8
+DBG     [477] op=LoadK A=3 B=20 C=0
+DBG     [478] op=Call A=2 B=2 C=1
+DBG     [479] op=GetTabUp A=2 B=0 C=8
+DBG     [480] op=LoadK A=3 B=21 C=0
+DBG     [481] op=Call A=2 B=2 C=1
+DBG     [482] op=Return A=2 B=1 C=1
+DBG     [483] op=GetTabUp A=2 B=0 C=16
+DBG     [484] op=GetField A=2 B=2 C=43
+DBG     [485] op=LoadI A=3 B=255 C=127
+DBG     [486] op=LoadI A=4 B=0 C=128
+DBG     [487] op=Call A=2 B=3 C=2
+DBG     [488] op=GetTabUp A=3 B=0 C=13
+DBG     [489] op=Call A=3 B=1 C=1
+DBG     [490] op=GetTabUp A=3 B=0 C=12
+DBG     [491] op=GetTabUp A=4 B=0 C=16
+DBG     [492] op=GetField A=4 B=4 C=17
+DBG     [493] op=Move A=5 B=2 C=0
+DBG     [494] op=Call A=4 B=2 C=2
+DBG     [495] op=LoadK A=5 B=9 C=0
+DBG     [496] op=Eq A=4 B=5 C=0
+DBG     [497] op=Jmp A=0 B=0 C=128
+DBG     [498] op=LFalseSkip A=4 B=0 C=0
+DBG     [499] op=LoadTrue A=4 B=0 C=0
+DBG     [500] op=Call A=3 B=2 C=1
+DBG     [501] op=GetField A=3 B=0 C=44
+DBG     [502] op=Move A=4 B=2 C=0
+DBG     [503] op=NewTable A=5 B=1 C=0
+DBG     [504] op=ExtraArg A=0 B=0 C=0
+DBG     [505] op=NewTable A=6 B=0 C=1
+DBG     [506] op=ExtraArg A=0 B=0 C=0
+DBG     [507] op=LoadI A=7 B=116 C=128
+DBG     [508] op=SetList A=6 B=1 C=0
+DBG     [509] op=SetField A=5 B=19 C=6
+DBG     [510] op=Call A=3 B=3 C=1
+DBG     [511] op=GetTabUp A=3 B=0 C=12
+DBG     [512] op=GetTabUp A=4 B=0 C=16
+DBG     [513] op=GetField A=4 B=4 C=17
+DBG     [514] op=Move A=5 B=2 C=0
+DBG     [515] op=Call A=4 B=2 C=2
+DBG     [516] op=LoadK A=5 B=10 C=0
+DBG     [517] op=Eq A=4 B=5 C=0
+DBG     [518] op=Jmp A=8 B=0 C=128
+DBG     [519] op=GetTabUp A=4 B=0 C=16
+DBG     [520] op=GetField A=4 B=4 C=17
+DBG     [521] op=GetField A=5 B=0 C=45
+DBG     [522] op=Move A=6 B=2 C=0
+DBG     [523] op=Call A=5 B=2 C=0
+DBG     [524] op=Call A=4 B=0 C=2
+DBG     [525] op=LoadK A=5 B=10 C=0
+DBG     [526] op=Eq A=4 B=5 C=0
+DBG     [527] op=Jmp A=0 B=0 C=128
+DBG     [528] op=LFalseSkip A=4 B=0 C=0
+DBG     [529] op=LoadTrue A=4 B=0 C=0
+DBG     [530] op=Call A=3 B=2 C=1
+DBG     [531] op=GetTabUp A=3 B=0 C=13
+DBG     [532] op=LoadK A=4 B=11 C=0
+DBG     [533] op=LoadI A=5 B=255 C=127
+DBG     [534] op=Call A=3 B=3 C=1
+DBG     [535] op=GetTabUp A=3 B=0 C=12
+DBG     [536] op=GetTabUp A=4 B=0 C=16
+DBG     [537] op=GetField A=4 B=4 C=17
+DBG     [538] op=Move A=5 B=2 C=0
+DBG     [539] op=Call A=4 B=2 C=2
+DBG     [540] op=LoadK A=5 B=11 C=0
+DBG     [541] op=Eq A=4 B=5 C=0
+DBG     [542] op=Jmp A=8 B=0 C=128
+DBG     [543] op=GetTabUp A=4 B=0 C=16
+DBG     [544] op=GetField A=4 B=4 C=17
+DBG     [545] op=GetField A=5 B=0 C=45
+DBG     [546] op=Move A=6 B=2 C=0
+DBG     [547] op=Call A=5 B=2 C=0
+DBG     [548] op=Call A=4 B=0 C=2
+DBG     [549] op=LoadK A=5 B=12 C=0
+DBG     [550] op=Eq A=4 B=5 C=0
+DBG     [551] op=Jmp A=0 B=0 C=128
+DBG     [552] op=LFalseSkip A=4 B=0 C=0
+DBG     [553] op=LoadTrue A=4 B=0 C=0
+DBG     [554] op=Call A=3 B=2 C=1
+DBG     [555] op=GetTabUp A=3 B=0 C=13
+DBG     [556] op=LoadK A=4 B=11 C=0
+DBG     [557] op=LoadI A=5 B=255 C=127
+DBG     [558] op=Call A=3 B=3 C=1
+DBG     [559] op=GetTabUp A=3 B=0 C=12
+DBG     [560] op=GetTabUp A=4 B=0 C=16
+DBG     [561] op=GetField A=4 B=4 C=17
+DBG     [562] op=Move A=5 B=2 C=0
+DBG     [563] op=Call A=4 B=2 C=2
+DBG     [564] op=LoadK A=5 B=9 C=0
+DBG     [565] op=Eq A=4 B=5 C=0
+DBG     [566] op=Jmp A=8 B=0 C=128
+DBG     [567] op=GetTabUp A=4 B=0 C=16
+DBG     [568] op=GetField A=4 B=4 C=17
+DBG     [569] op=GetField A=5 B=0 C=45
+DBG     [570] op=Move A=6 B=2 C=0
+DBG     [571] op=Call A=5 B=2 C=0
+DBG     [572] op=Call A=4 B=0 C=2
+DBG     [573] op=LoadK A=5 B=12 C=0
+DBG     [574] op=Eq A=4 B=5 C=0
+DBG     [575] op=Jmp A=0 B=0 C=128
+DBG     [576] op=LFalseSkip A=4 B=0 C=0
+DBG     [577] op=LoadTrue A=4 B=0 C=0
+DBG     [578] op=Call A=3 B=2 C=1
+DBG     [579] op=GetTabUp A=3 B=0 C=12
+DBG     [580] op=GetField A=4 B=0 C=45
+DBG     [581] op=Move A=5 B=2 C=0
+DBG     [582] op=Call A=4 B=2 C=2
+DBG     [583] op=GetField A=4 B=4 C=19
+DBG     [584] op=GetI A=4 B=4 C=1
+DBG     [585] op=LoadI A=5 B=116 C=128
+DBG     [586] op=Eq A=4 B=5 C=0
+DBG     [587] op=Jmp A=0 B=0 C=128
+DBG     [588] op=LFalseSkip A=4 B=0 C=0
+DBG     [589] op=LoadTrue A=4 B=0 C=0
+DBG     [590] op=Call A=3 B=2 C=1
+DBG     [591] op=GetTabUp A=2 B=0 C=12
+DBG     [592] op=GetTabUp A=3 B=0 C=13
+DBG     [593] op=LoadK A=4 B=7 C=0
+DBG     [594] op=Call A=3 B=2 C=0
+DBG     [595] op=Call A=2 B=0 C=1
+DBG     [596] op=GetTabUp A=2 B=0 C=12
+DBG     [597] op=GetTabUp A=3 B=0 C=13
+DBG     [598] op=LoadK A=4 B=7 C=0
+DBG     [599] op=Call A=3 B=2 C=0
+DBG     [600] op=Call A=2 B=0 C=1
+DBG     [601] op=GetTabUp A=2 B=0 C=13
+DBG     [602] op=Move A=3 B=1 C=0
+DBG     [603] op=Call A=2 B=2 C=1
+DBG     [604] op=GetTabUp A=2 B=0 C=8
+DBG     [605] op=LoadK A=3 B=21 C=0
+DBG     [606] op=Call A=2 B=2 C=1
+DBG     [607] op=Return A=2 B=1 C=1
+DBG find_set_reg ENTER lastpc=327 reg=7
+DBG   change at pc=28 op=Call → setreg=28
+DBG   change at pc=31 op=Call → setreg=31
+DBG   change at pc=35 op=Call → setreg=35
+DBG   change at pc=36 op=Call → setreg=36
+DBG   change at pc=38 op=Call → setreg=38
+DBG   change at pc=41 op=Call → setreg=41
+DBG   change at pc=45 op=Call → setreg=45
+DBG   change at pc=54 op=Call → setreg=-1
+DBG   change at pc=60 op=Call → setreg=60
+DBG   change at pc=77 op=Call → setreg=-1
+DBG   change at pc=84 op=Call → setreg=-1
+DBG   change at pc=90 op=Call → setreg=90
+DBG   change at pc=94 op=Call → setreg=94
+DBG   change at pc=103 op=Call → setreg=-1
+DBG   change at pc=110 op=Call → setreg=-1
+DBG   change at pc=116 op=Call → setreg=116
+DBG   change at pc=120 op=Call → setreg=120
+DBG   change at pc=129 op=Call → setreg=-1
+DBG   change at pc=136 op=Call → setreg=-1
+DBG   change at pc=142 op=Call → setreg=142
+DBG   change at pc=152 op=Call → setreg=152
+DBG   change at pc=159 op=Call → setreg=159
+DBG   change at pc=168 op=Call → setreg=-1
+DBG   change at pc=174 op=Call → setreg=174
+DBG   change at pc=179 op=Call → setreg=179
+DBG   change at pc=188 op=Move → setreg=-1
+DBG   change at pc=189 op=Call → setreg=-1
+DBG   change at pc=190 op=Call → setreg=-1
+DBG   change at pc=196 op=Call → setreg=196
+DBG   change at pc=200 op=Call → setreg=200
+DBG   change at pc=209 op=Move → setreg=-1
+DBG   change at pc=210 op=Call → setreg=-1
+DBG   change at pc=211 op=Call → setreg=-1
+DBG   change at pc=217 op=Call → setreg=217
+DBG   change at pc=221 op=Call → setreg=221
+DBG   change at pc=225 op=Call → setreg=225
+DBG   change at pc=229 op=Call → setreg=229
+DBG   change at pc=236 op=Call → setreg=236
+DBG   change at pc=241 op=LoadI → setreg=241
+DBG   change at pc=242 op=Call → setreg=242
+DBG   change at pc=250 op=Move → setreg=-1
+DBG   change at pc=251 op=Call → setreg=-1
+DBG   change at pc=252 op=LoadK → setreg=-1
+DBG   change at pc=257 op=Call → setreg=257
+DBG   change at pc=260 op=NewTable → setreg=260
+DBG   change at pc=265 op=Call → setreg=265
+DBG   change at pc=273 op=GetTabUp → setreg=-1
+DBG   change at pc=275 op=Call → setreg=-1
+DBG   change at pc=276 op=Call → setreg=-1
+DBG   change at pc=277 op=LoadK → setreg=-1
+DBG   change at pc=282 op=Call → setreg=282
+DBG   change at pc=286 op=LoadI → setreg=286
+DBG   change at pc=287 op=Call → setreg=287
+DBG   change at pc=294 op=Call → setreg=294
+DBG   change at pc=298 op=Call → setreg=298
+DBG   change at pc=302 op=Call → setreg=302
+DBG   change at pc=304 op=LoadK → setreg=304
+DBG   change at pc=306 op=Call → setreg=306
+DBG   change at pc=309 op=LoadK → setreg=309
+DBG   change at pc=314 op=Move → setreg=314
+DBG   change at pc=319 op=Call → setreg=319
+DBG   change at pc=322 op=LoadK → setreg=322
+DBG   change at pc=324 op=Call → setreg=324
+DBG   change at pc=326 op=Move → setreg=326
+DBG find_set_reg EXIT setreg=326 effective_lastpc=327
+DBG find_set_reg ENTER lastpc=326 reg=5
+DBG   change at pc=28 op=Call → setreg=28
+DBG   change at pc=31 op=Call → setreg=31
+DBG   change at pc=35 op=Call → setreg=35
+DBG   change at pc=36 op=Call → setreg=36
+DBG   change at pc=38 op=Call → setreg=38
+DBG   change at pc=41 op=Call → setreg=41
+DBG   change at pc=45 op=Call → setreg=45
+DBG   change at pc=53 op=Move → setreg=-1
+DBG   change at pc=54 op=Call → setreg=-1
+DBG   change at pc=55 op=LoadK → setreg=-1
+DBG   change at pc=60 op=Call → setreg=60
+DBG   change at pc=65 op=LoadI → setreg=65
+DBG   change at pc=76 op=Move → setreg=-1
+DBG   change at pc=77 op=Call → setreg=-1
+DBG   change at pc=78 op=LoadK → setreg=-1
+DBG   change at pc=83 op=GetI → setreg=-1
+DBG   change at pc=84 op=Call → setreg=-1
+DBG   change at pc=85 op=LoadK → setreg=-1
+DBG   change at pc=90 op=Call → setreg=90
+DBG   change at pc=93 op=LoadI → setreg=93
+DBG   change at pc=94 op=Call → setreg=94
+DBG   change at pc=102 op=Move → setreg=-1
+DBG   change at pc=103 op=Call → setreg=-1
+DBG   change at pc=104 op=LoadK → setreg=-1
+DBG   change at pc=109 op=GetI → setreg=-1
+DBG   change at pc=110 op=Call → setreg=-1
+DBG   change at pc=111 op=LoadK → setreg=-1
+DBG   change at pc=116 op=Call → setreg=116
+DBG   change at pc=119 op=LoadI → setreg=119
+DBG   change at pc=120 op=Call → setreg=120
+DBG   change at pc=128 op=Move → setreg=-1
+DBG   change at pc=129 op=Call → setreg=-1
+DBG   change at pc=130 op=LoadK → setreg=-1
+DBG   change at pc=135 op=GetI → setreg=-1
+DBG   change at pc=136 op=Call → setreg=-1
+DBG   change at pc=137 op=LoadK → setreg=-1
+DBG   change at pc=142 op=Call → setreg=142
+DBG   change at pc=147 op=LoadI → setreg=147
+DBG   change at pc=152 op=Call → setreg=152
+DBG   change at pc=159 op=Call → setreg=159
+DBG   change at pc=161 op=GetTabUp → setreg=161
+DBG   change at pc=162 op=Not → setreg=162
+DBG   change at pc=165 op=GetTabUp → setreg=-1
+DBG   change at pc=166 op=GetField → setreg=-1
+DBG   change at pc=168 op=Call → setreg=-1
+DBG   change at pc=172 op=LFalseSkip → setreg=-1
+DBG   change at pc=173 op=LoadTrue → setreg=-1
+DBG   change at pc=174 op=Call → setreg=174
+DBG   change at pc=176 op=Move → setreg=176
+DBG   change at pc=179 op=Call → setreg=179
+DBG   change at pc=181 op=GetTabUp → setreg=181
+DBG   change at pc=182 op=Not → setreg=182
+DBG   change at pc=185 op=GetTabUp → setreg=-1
+DBG   change at pc=186 op=GetField → setreg=-1
+DBG   change at pc=190 op=Call → setreg=-1
+DBG   change at pc=194 op=LFalseSkip → setreg=-1
+DBG   change at pc=195 op=LoadTrue → setreg=-1
+DBG   change at pc=196 op=Call → setreg=196
+DBG   change at pc=198 op=LoadK → setreg=198
+DBG   change at pc=200 op=Call → setreg=200
+DBG   change at pc=202 op=GetTabUp → setreg=202
+DBG   change at pc=203 op=Not → setreg=203
+DBG   change at pc=206 op=GetTabUp → setreg=-1
+DBG   change at pc=207 op=GetField → setreg=-1
+DBG   change at pc=211 op=Call → setreg=-1
+DBG   change at pc=215 op=LFalseSkip → setreg=-1
+DBG   change at pc=216 op=LoadTrue → setreg=-1
+DBG   change at pc=217 op=Call → setreg=217
+DBG   change at pc=219 op=GetTabUp → setreg=219
+DBG   change at pc=221 op=Call → setreg=221
+DBG   change at pc=225 op=Call → setreg=225
+DBG   change at pc=227 op=LoadK → setreg=227
+DBG   change at pc=229 op=Call → setreg=229
+DBG   change at pc=236 op=Call → setreg=236
+DBG   change at pc=239 op=GetTabUp → setreg=239
+DBG   change at pc=242 op=Call → setreg=242
+DBG   change at pc=243 op=GetTabUp → setreg=243
+DBG   change at pc=257 op=Call → setreg=257
+DBG   change at pc=258 op=GetTabUp → setreg=258
+DBG   change at pc=265 op=Call → setreg=265
+DBG   change at pc=266 op=GetTabUp → setreg=266
+DBG   change at pc=282 op=Call → setreg=282
+DBG   change at pc=284 op=GetTabUp → setreg=284
+DBG   change at pc=287 op=Call → setreg=287
+DBG   change at pc=294 op=Call → setreg=294
+DBG   change at pc=298 op=Call → setreg=298
+DBG   change at pc=301 op=Move → setreg=301
+DBG   change at pc=302 op=Call → setreg=302
+DBG find_set_reg EXIT setreg=302 effective_lastpc=326
+DBG   get_obj_name pc=327 reg=7 kind=None name="?"
+[err] pcall_k failed: Runtime: attempt to call a string value

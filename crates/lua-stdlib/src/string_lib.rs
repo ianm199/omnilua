@@ -418,7 +418,10 @@ fn tonum(state: &mut LuaState, arg: i32) -> Result<bool, LuaError> {
 /// C: `static void trymt(lua_State *L, const char *mtname)`
 fn trymt(state: &mut LuaState, mtname: &[u8]) -> Result<(), LuaError> {
     // C: lua_settop(L, 2); /* back to original arguments */
-    state.set_top(2);
+    // PORT NOTE: `state.set_top` (inherent) takes an absolute StackIdx and
+    // would wipe the call frame's arguments. `lua_settop` is frame-relative
+    // — keep the first two args of the current C function.
+    lua_vm::api::set_top(state, 2)?;
     // C: if (lua_type(L, 2) == LUA_TSTRING || !luaL_getmetafield(L, 2, mtname))
     //        luaL_error(...)
     let t2_is_string = state.type_at(2) == LuaType::String;

@@ -2,6 +2,8 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-19
-function: 0x600002222ce0	nil
+testing metatables
+before a[1]=30 assignment
+after a[1]=30 assignment
+done
 [ok] execution completed, status=Ok

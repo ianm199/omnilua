@@ -2,4 +2,10 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-[err] pcall_k failed: Runtime: bad argument #1 to 'input' (FILE* expected, got userdata)
+testing functions and calls
++
++
+testing tail calls
++
++
+[err] pcall_k failed: Runtime: reader function must return a string

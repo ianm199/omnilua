@@ -2,13 +2,90 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing tables, next, and for
-
- >>> testC not active: skipping tests for table sizes <<<
-
+testing scanner
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
+DBG find_set_reg ENTER lastpc=10 reg=4
+DBG   change at pc=1 op=GetTabUp → setreg=1
+DBG   change at pc=7 op=Call → setreg=7
+DBG   change at pc=8 op=Call → setreg=8
+DBG   change at pc=9 op=Move → setreg=9
+DBG find_set_reg EXIT setreg=9 effective_lastpc=10
+DBG find_set_reg ENTER lastpc=9 reg=3
+DBG   change at pc=0 op=GetTabUp → setreg=0
+DBG   change at pc=8 op=Call → setreg=8
+DBG find_set_reg EXIT setreg=8 effective_lastpc=9
 +
-[err] pcall_k failed: Runtime: _soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = ar:16: assertion failed!
++
++
++
++
+[err] pcall_k failed: Runtime: coroutine.yield: coroutines not yet implemented (Phase E)

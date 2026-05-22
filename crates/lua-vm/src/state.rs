@@ -1112,9 +1112,15 @@ impl LuaState {
         }
         self.top = new_top;
     }
+    /// Primitive "set top index" — just writes `self.top`, no nil-fill.
+    ///
+    /// C: tail of `lua_settop` (lapi.c) — `L->top.p = newtop;`
+    /// PORT NOTE: callers (`api.rs::set_top`, `raw_set`, etc.) pre-nil-fill or
+    /// only shrink, so this routine intentionally does no clearing or resizing.
+    /// The to-be-closed (`tbclist`) close path is Phase E.
     pub fn set_top_idx(&mut self, idx: impl Into<StackIdxConv>) {
-        let _i: StackIdx = idx.into().0;
-        todo!("phase-b: set_top_idx")
+        let new_top: StackIdx = idx.into().0;
+        self.top = new_top;
     }
     pub fn dec_top(&mut self) { todo!("phase-b: dec_top") }
     pub fn pop_n(&mut self, n: usize) {

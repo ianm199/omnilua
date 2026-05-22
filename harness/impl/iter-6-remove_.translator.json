@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 144209,
+  "duration_api_ms": 144743,
+  "ttft_ms": 2259,
+  "num_turns": 31,
+  "result": "Build is green.\n\n**Report:**\n\n- **Modified:** `crates/lua-stdlib/src/state_stub.rs` — added a `remove` override in the `impl LuaStateStubExt for LuaState` block (around new line 334-337).\n- **What it does:** Ports the C macro `#define lua_remove(L,idx) (lua_rotate(L,(idx),-1), lua_pop(L,1))`. It calls `lua_vm::api::rotate(self, idx, -1)` to shift the element at `idx` to the top, then `lua_vm::api::set_top(self, -2)` (the canonical `lua_pop(L,1)` expansion) to drop it.\n- **New surfaced `todo!()`s:** None inside this impl — both `rotate` and `set_top` already exist as concrete functions in `lua-vm::api`.\n- **Build:** `cargo build -p lua-cli` is green (warnings only, no errors).",
+  "stop_reason": "end_turn",
+  "session_id": "18abcb34-56e7-439c-9c96-5754bc89440f",
+  "total_cost_usd": 1.2976929999999998,
+  "usage": {
+    "input_tokens": 36,
+    "cache_creation_input_tokens": 49360,
+    "cache_read_input_tokens": 1589376,
+    "output_tokens": 7720,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 49360,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 314,
+        "cache_read_input_tokens": 67523,
+        "cache_creation_input_tokens": 736,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 736
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1250,
+      "outputTokens": 15,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001325,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 36,
+      "outputTokens": 7720,
+      "cacheReadInputTokens": 1589376,
+      "cacheCreationInputTokens": 49360,
+      "webSearchRequests": 0,
+      "costUSD": 1.2963679999999997,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "8a5fe0fa-48a9-406a-8027-f559cb85a4eb"
+}

@@ -1334,9 +1334,12 @@ fn read_long_string(
     if let Some(out) = seminfo {
         // The buffer contains: sep bytes of '[=' + content + sep bytes of '=]'
         // We want the content in between.
+        // PORT NOTE: per PORTING.md §4.3, capture the slice into an owned
+        // Vec so the immutable borrow of ls.buff is dropped before the
+        // mutable borrow needed by new_string.
         let buf = ls.buff.as_slice();
-        let content = &buf[sep..buf.len() - sep];
-        let ts = new_string(state, ls, content)?;
+        let content: Vec<u8> = buf[sep..buf.len() - sep].to_vec();
+        let ts = new_string(state, ls, &content)?;
         *out = TokenValue::Str(ts);
     }
     Ok(())
@@ -1699,9 +1702,14 @@ fn read_string(
     // C: seminfo->ts = luaX_newstring(ls, luaZ_buffer(ls->buff) + 1,
     //                                     luaZ_bufflen(ls->buff) - 2);
     // Buffer contains: delimiter + content + delimiter; strip both delimiters.
+    // PORT NOTE: capture into owned Vec to drop the borrow before new_string.
     let buf = ls.buff.as_slice();
-    let content = if buf.len() >= 2 { &buf[1..buf.len() - 1] } else { &buf[0..0] };
-    let ts = new_string(state, ls, content)?;
+    let content: Vec<u8> = if buf.len() >= 2 {
+        buf[1..buf.len() - 1].to_vec()
+    } else {
+        Vec::new()
+    };
+    let ts = new_string(state, ls, &content)?;
     *seminfo = TokenValue::Str(ts);
     Ok(())
 }
@@ -1883,7 +1891,9 @@ fn llex(
                     }
 
                     // C: ts = luaX_newstring(ls, luaZ_buffer(ls->buff), luaZ_bufflen(ls->buff))
-                    let ts = new_string(state, ls, ls.buff.as_slice())?;
+                    // PORT NOTE: copy buffer bytes to drop borrow before new_string.
+                    let content: Vec<u8> = ls.buff.as_slice().to_vec();
+                    let ts = new_string(state, ls, &content)?;
 
                     // C: seminfo->ts = ts
                     let is_reserved = ts.is_reserved_word();

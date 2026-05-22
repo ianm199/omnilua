@@ -10,6 +10,8 @@
 
 #![allow(dead_code)]
 
+use std::convert::Infallible;
+
 use crate::state::{LuaState, GlobalState, CallInfo, CallInfoIdx, StackIdx};
 use lua_types::{
     LuaValue, LuaType, LuaError, LuaString, LuaTable, LuaUserData, LuaClosure, UpVal,
@@ -1314,7 +1316,11 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
 // ── miscellaneous functions ───────────────────────────────────────────────────
 
 // C: LUA_API int lua_error (lua_State *L)
-pub fn lua_error(state: &mut LuaState) -> Result<!, LuaError> {
+// PORT NOTE: returns Result<Infallible, _> — semantically "always Err". The
+// translator originally wrote `Result<!, _>` but the `!` type in a return
+// position is still nightly-only as of Rust 1.93; Infallible is the stable
+// stand-in. Callsites just pattern-match on Err.
+pub fn lua_error(state: &mut LuaState) -> Result<Infallible, LuaError> {
     // C: errobj = s2v(L->top.p - 1);
     // C: api_checknelems(L, 1);
     // C: if (ttisshrstring(errobj) && eqshrstr(tsvalue(errobj), G(L)->memerrmsg))

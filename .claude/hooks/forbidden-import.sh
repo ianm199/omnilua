@@ -17,9 +17,14 @@ cd "$ROOT"
 fail=0
 report() { echo "[forbidden-import] FAIL: $*" >&2; fail=1; }
 
-# All Rust files under crates/
-FILES=()
-while IFS= read -r f; do FILES+=("$f"); done < <(find crates -name '*.rs' 2>/dev/null)
+# Under parallel fanout, scope to only the current worker's target via
+# CLAUDE_TARGET_RS_FILE (set by fanout.sh). Otherwise scan all crates/.
+if [ -n "${CLAUDE_TARGET_RS_FILE:-}" ] && [ -f "${CLAUDE_TARGET_RS_FILE}" ]; then
+    FILES=("${CLAUDE_TARGET_RS_FILE}")
+else
+    FILES=()
+    while IFS= read -r f; do FILES+=("$f"); done < <(find crates -name '*.rs' 2>/dev/null)
+fi
 
 if [ "${#FILES[@]}" = "0" ]; then
     exit 0

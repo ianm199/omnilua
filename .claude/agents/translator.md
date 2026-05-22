@@ -50,8 +50,9 @@ Read the output. Errors fall into two categories:
 **EXPECTED in Phase A (ignore these):**
 - `error[E0432]: unresolved import ...`
 - `error[E0412]: cannot find type 'X' in this scope`
-- `error[E0433]: failed to resolve: could not find ...`
+- `error[E0433]: failed to resolve: could not find ...` (note: "could not find", not "cannot find")
 - `error[E0425]: cannot find value/function ...`
+- `error[E0282]: type annotations needed` (often follows from missing types)
 - `error: cannot find macro ... in this scope`
 - `error: no \`X\` in module ...`
 - `error: use of undeclared crate or module ...`

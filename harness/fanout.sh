@@ -196,6 +196,12 @@ Use the Translator subagent (.claude/agents/translator.md). When done, stop — 
     porting_md="$(cat PORTING.md)"
     transcript="$RESULTS_DIR/$basename.transcript.jsonl"
 
+    # Pass the target file path through to the hooks (which inherit env via
+    # claude-code). Lets per-file hooks scope to THIS worker's file instead
+    # of scanning the whole crates/ tree (which under parallel runs causes
+    # false positives where worker A reports worker B's in-flight file).
+    export CLAUDE_TARGET_RS_FILE="$rust_full"
+
     claude -p \
         --agent translator \
         --append-system-prompt "$porting_md" \
@@ -249,7 +255,12 @@ Use the Translator subagent (.claude/agents/translator.md). When done, stop — 
         rustc --edition 2021 --crate-type=lib --emit=metadata \
             -o "$rmeta_tmp" \
             "$rust_full" 2>"$syntax_log" >/dev/null || true
-        local namefilt='cannot find|unresolved|no `[A-Z][a-zA-Z_]*`|use of undeclared|cannot find type|cannot find macro|cannot find function|cannot find value|cannot find trait|cannot find derive|associated function|associated item|cannot find attribute|aborting due to'
+        # Filter out errors expected in Phase A (cross-crate types not yet defined).
+        # Covers BOTH 'cannot find X' (E0412 etc.) AND 'could not find X' /
+        # 'failed to resolve' (E0433) — they're variant phrasings of the same
+        # name-resolution failure class. Earlier regex only caught the first;
+        # missed E0433 entirely and misclassified 5 files as syntax-failed.
+        local namefilt='cannot find|could not find|failed to resolve|unresolved|no `[A-Z][a-zA-Z_]*`|use of undeclared|associated function|associated item|cannot find attribute|type annotations needed|aborting due to'
         syntax_residual=$(grep '^error' "$syntax_log" 2>/dev/null | grep -vE "$namefilt" | wc -l | tr -d ' ')
         if [ "$syntax_residual" -gt 0 ]; then
             syntax_ok="false"

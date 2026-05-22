@@ -580,6 +580,8 @@ fn try_func_tm(state: &mut LuaState, func_idx: StackIdx) -> Result<StackIdx, Lua
     // C: if (l_unlikely(ttisnil(tm))) luaG_callerror(L, s2v(func))
     if matches!(tm, LuaValue::Nil) {
         let offender = state.get_at(func_idx).clone();
+        eprintln!("[DEBUG try_func_tm] attempt to call nil at func_idx={:?}, value={:?}", func_idx, offender);
+        eprintln!("[DEBUG try_func_tm] stack top={:?}, ci.func={:?}", state.top, state.current_call_info().func);
         return Err(crate::debug::call_error(state, &offender, func_idx));
     }
 

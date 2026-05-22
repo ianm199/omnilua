@@ -1,42 +1,13 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[4/4] Executing chunk...
-testing numbers and math lib
-64-bit integers, 53-bit (mantissa) floats
-testing order (floats cannot represent all integers)
-DBG: end of fmax block (line 240)
-DBG: after checkcompt block (line 295)
-DBG: after f2i block (line 327)
-DBG: line 331-pre
-DBG: line 332
-DBG: line 333
-DBG: line 334
-DBG: line 335
-DBG: after numeric string tests (line 335)
-DBG: line 343
-DBG: line 357
-DBG: line 361
-DBG: line 364
-DBG: line 368
-DBG: after tonumber overflow tests (line 371)
-DBG: after invalid tonumber tests (line 470)
-DBG: after hex/float numerals (line 526)
-DBG: after mod operator tests (line 557)
-DBG  pc=4153 line=662 op=6 A=14 B=0 C=0 Bx=0 k[C]=Some(Str(GcRef(LuaString { bytes: [95, 115, 111, 102, 116], is_short: true, hash: 1739415280 })))
-DBG  pc=4154 line=662 op=7 A=14 B=0 C=0 Bx=0 k[C]=Some(Str(GcRef(LuaString { bytes: [95, 115, 111, 102, 116], is_short: true, hash: 1739415280 })))
-DBG  pc=4155 line=662 op=68 A=13 B=2 C=1 Bx=516 k[C]=Some(Str(GcRef(LuaString { bytes: [95, 112, 111, 114, 116], is_short: true, hash: 1739326279 })))
-DBG  pc=4156 line=667 op=11 A=12 B=0 C=16 Bx=8192 k[C]=Some(Str(GcRef(LuaString { bytes: [97, 115, 115, 101, 114, 116], is_short: true, hash: 2439642687 })))
-DBG  pc=4157 line=667 op=11 A=13 B=0 C=10 Bx=5120 k[C]=Some(Str(GcRef(LuaString { bytes: [109, 97, 116, 104], is_short: true, hash: 1580530753 })))
-DBG  pc=4158 line=667 op=14 A=13 B=13 C=2 Bx=1050 k[C]=Some(Str(GcRef(LuaString { bytes: [95, 110, 111, 109, 115, 103], is_short: true, hash: 2377655322 })))
-DBG  pc=4159 line=667 op=1 A=14 B=1 C=128 Bx=65538 k[C]=Some(Str(GcRef(LuaString { bytes: [43, 46, 48, 49], is_short: true, hash: 1578513373 })))
-DBG  pc=4160 line=667 op=1 A=15 B=1 C=128 Bx=65539 k[C]=Some(Str(GcRef(LuaString { bytes: [43, 46, 48, 49], is_short: true, hash: 1578513373 })))
-DBG  pc=4161 line=667 op=68 A=13 B=3 C=0 Bx=6 k[C]=Some(Str(GcRef(LuaString { bytes: [95, 115, 111, 102, 116], is_short: true, hash: 1739415280 })))
-DBG  pc=4162 line=667 op=68 A=12 B=0 C=1 Bx=512 k[C]=Some(Str(GcRef(LuaString { bytes: [95, 112, 111, 114, 116], is_short: true, hash: 1739326279 })))
-DBG num_constants=350
-DBG  k[2]=Str("_nomsg")
-DBG  k[258]=Str("ult")
-DBG  k[259]=Str("sin")
-DBG  k[261]=Str("cos")
-DBG call_error: line=667 func_idx=StackIdx(16) top=StackIdx(19)
-[err] pcall_k failed: Runtime: attempt to call a nil value
+[cg_free_reg-bug] reg=15 freereg=17 nactvar=12 pc=4241 previousline=676
+
+thread 'main' (9833412) panicked at crates/lua-parse/src/lib.rs:635:9:
+assertion `left == right` failed
+  left: 15
+ right: 16
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[panic] assertion `left == right` failed
+  left: 15
+ right: 16

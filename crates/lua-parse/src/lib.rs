@@ -626,6 +626,13 @@ fn reserve_regs(fs: &mut FuncState, n: i32) -> Result<(), LuaError> {
 /// are freed by decrementing `fs.freereg`.
 fn cg_free_reg(fs: &mut FuncState, reg: i32) {
     if reg >= fs.nactvar as i32 {
+        if reg != fs.freereg as i32 - 1 {
+            eprintln!(
+                "[cg_free_reg-bug] reg={} freereg={} nactvar={} pc={} previousline={}",
+                reg, fs.freereg, fs.nactvar, fs.pc, fs.previousline
+            );
+            eprintln!("backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+        }
         debug_assert_eq!(reg, fs.freereg as i32 - 1);
         fs.freereg = fs.freereg.saturating_sub(1);
     }
@@ -2121,9 +2128,9 @@ fn check_readonly(ls: &mut LexState, state: &mut LuaState, e: &ExprDesc) -> Resu
     };
     if let Some(vname) = varname {
         // C: luaK_semerror(ls, luaO_pushfstring(..., "attempt to assign to const variable '%s'", ...))
-        // TODO(port): getstr(varname) → varname.as_bytes()
         return Err(LuaError::syntax(format_args!(
-            "attempt to assign to const variable"
+            "attempt to assign to const variable '{}'",
+            String::from_utf8_lossy(vname.as_bytes())
         )));
     }
     Ok(())
@@ -2234,20 +2241,26 @@ fn new_upvalue(
     v: &ExprDesc,
 ) -> Result<i32, LuaError> {
     let idx = alloc_upvalue(fs)?;
+    let kind: u8 = if v.k == ExprKind::Local {
+        // C: kind = getlocalvardesc(prev, v->u.var.vidx)->vd.kind
+        let prev = fs.prev.as_deref().expect("upvalue capture requires enclosing FuncState");
+        get_local_var_desc(ls, prev, v.u.var_vidx as i32).kind.as_u8()
+    } else {
+        // C: kind = prev->f->upvalues[v->u.info].kind
+        let prev = fs.prev.as_deref().expect("upvalue chain requires enclosing FuncState");
+        prev.f.upvalues[v.u.info as usize].kind
+    };
     let up = &mut fs.f.upvalues[idx];
     if v.k == ExprKind::Local {
-        // C: up->instack = 1; up->idx = v->u.var.ridx; up->kind = getlocalvardesc(prev, ...)->vd.kind
+        // C: up->instack = 1; up->idx = v->u.var.ridx
         up.instack = true;
         up.idx = v.u.var_ridx;
-        // TODO(port): need access to prev FuncState to get kind via getlocalvardesc
-        up.kind = VarKind::Reg.as_u8();
     } else {
-        // C: up->instack = 0; up->idx = cast_byte(v->u.info); up->kind = prev->f->upvalues[...].kind
+        // C: up->instack = 0; up->idx = cast_byte(v->u.info)
         up.instack = false;
         up.idx = v.u.info as u8;
-        // TODO(port): need access to prev FuncState to get upvalue kind
-        up.kind = VarKind::Reg.as_u8();
     }
+    up.kind = kind;
     up.name = Some(name);
     // C: luaC_objbarrier(fs->ls->L, fs->f, name) — no-op in Phase A
     Ok(fs.nups as i32 - 1)

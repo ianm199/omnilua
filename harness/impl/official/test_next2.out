@@ -2,11 +2,9 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing tables, next, and for
-
- >>> testC not active: skipping tests for table sizes <<<
-
-+
-+
-+
+A
+B
+C
+D
+E
 [err] pcall_k failed: Runtime: invalid key to 'next'

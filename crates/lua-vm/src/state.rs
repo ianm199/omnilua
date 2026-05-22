@@ -1181,7 +1181,7 @@ impl LuaState {
     pub fn set_ci_previous(&mut self, _idx: CallInfoIdx) { todo!("phase-b: set_ci_previous") }
     pub fn ci_previous(&self, idx: CallInfoIdx) -> Option<CallInfoIdx> { self.call_info[idx.as_usize()].previous }
     pub fn ci_adjust_func<D>(&mut self, _idx: CallInfoIdx, _delta: D) { todo!("phase-b: ci_adjust_func") }
-    pub fn ci_base(&self, _idx: CallInfoIdx) -> StackIdx { todo!("phase-b: ci_base") }
+    pub fn ci_base(&self, idx: CallInfoIdx) -> StackIdx { self.call_info[idx.as_usize()].func + 1 }
     pub fn ci_is_fresh(&self, _idx: CallInfoIdx) -> bool { todo!("phase-b: ci_is_fresh") }
     pub fn ci_lua_closure(&self, idx: CallInfoIdx) -> Option<GcRef<lua_types::closure::LuaLClosure>> {
         let func_idx = self.call_info[idx.as_usize()].func;

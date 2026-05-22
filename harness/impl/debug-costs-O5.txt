@@ -1,3 +1,4 @@
 2 1.2294044999999998 reference/lua-c/testes/closure.lua
 1 1.7494842500000003 reference/lua-c/testes/goto.lua
 4 1.7784472500000004 reference/lua-c/testes/strings.lua
+3 2.327042999999999 reference/lua-c/testes/gc.lua

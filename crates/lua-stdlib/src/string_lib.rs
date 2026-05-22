@@ -396,8 +396,7 @@ pub fn str_dump(state: &mut LuaState) -> Result<usize, LuaError> {
 /// C: `static int tonum(lua_State *L, int arg)`
 fn tonum(state: &mut LuaState, arg: i32) -> Result<bool, LuaError> {
     if state.type_at(arg) == LuaType::Number {
-        let v = state.get_at(arg).clone();
-        state.push(v);
+        state.push_value_at(arg)?;
         Ok(true)
     } else {
         // check whether it is a numerical string

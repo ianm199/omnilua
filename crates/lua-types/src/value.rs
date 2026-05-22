@@ -113,20 +113,45 @@ pub enum F2Imod {
 // upgrade target; the simple Vec-pair implementation here is correct for
 // Lua semantics and unblocks the runtime.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+
+const WEAK_KEYS: u8 = 1 << 0;
+const WEAK_VALUES: u8 = 1 << 1;
 
 #[derive(Debug, Default)]
 pub struct LuaTable {
     entries: RefCell<Vec<(LuaValue, LuaValue)>>,
     metatable: RefCell<Option<GcRef<LuaTable>>>,
+    weak_mode: Cell<u8>,
 }
 
 impl LuaTable {
     pub fn placeholder() -> Self { Self::default() }
 
     /// Read a key; returns `LuaValue::Nil` if absent or if key is nil.
+    ///
+    /// If this table has weak keys or values (`__mode`), any matching entry
+    /// whose weakly-tagged component has no other strong holders (Rc
+    /// `strong_count == 1`) is removed and `Nil` is returned. This is the
+    /// Phase-A/B/C stand-in for the real incremental sweeper.
     pub fn get(&self, k: &LuaValue) -> LuaValue {
         if matches!(k, LuaValue::Nil) { return LuaValue::Nil; }
+        let mode = self.weak_mode.get();
+        if mode != 0 {
+            let entries = self.entries.borrow();
+            let found = entries.iter().position(|(ek, _)| lua_key_eq(ek, k));
+            if let Some(i) = found {
+                let (ek, ev) = &entries[i];
+                let dead = entry_is_weakly_dead(ek, ev, mode);
+                if dead {
+                    drop(entries);
+                    self.entries.borrow_mut().swap_remove(i);
+                    return LuaValue::Nil;
+                }
+                return ev.clone();
+            }
+            return LuaValue::Nil;
+        }
         for (ek, ev) in self.entries.borrow().iter() {
             if lua_key_eq(ek, k) { return ev.clone(); }
         }
@@ -165,6 +190,9 @@ impl LuaTable {
     }
 
     pub fn set_metatable(&self, mt: Option<GcRef<LuaTable>>) {
+        let mode = mt.as_ref().map(|t| extract_weak_mode(t)).unwrap_or(0);
+        eprintln!("[set_metatable] mode={} mt_has_entries={}", mode, mt.as_ref().map(|t| t.entries.borrow().len()).unwrap_or(0));
+        self.weak_mode.set(mode);
         *self.metatable.borrow_mut() = mt;
     }
 
@@ -174,7 +202,15 @@ impl LuaTable {
     /// Implements Lua's `next(t, k)` for iteration. When `k` is `Nil`,
     /// returns the first entry. Otherwise returns the entry that follows
     /// `k` in insertion order. Returns `None` when iteration is done.
+    ///
+    /// Skips weakly-dead entries on the way; this keeps `pairs()` over a
+    /// weak table from observing collected slots.
     pub fn next_pair(&self, k: &LuaValue) -> Option<(LuaValue, LuaValue)> {
+        let mode = self.weak_mode.get();
+        if mode != 0 {
+            let mut entries = self.entries.borrow_mut();
+            entries.retain(|(ek, ev)| !entry_is_weakly_dead(ek, ev, mode));
+        }
         let entries = self.entries.borrow();
         if matches!(k, LuaValue::Nil) {
             return entries.first().cloned();
@@ -187,6 +223,57 @@ impl LuaTable {
             Some(i) => entries.get(i + 1).cloned(),
             None    => None,
         }
+    }
+}
+
+/// Inspect a metatable's `__mode` field (a string of any combination of
+/// 'k' and 'v') and produce the corresponding `WEAK_KEYS | WEAK_VALUES`
+/// bitmask. Returns 0 when no `__mode` is set or it is not a string.
+fn extract_weak_mode(mt: &LuaTable) -> u8 {
+    let entries = mt.entries.borrow();
+    for (k, v) in entries.iter() {
+        if let LuaValue::Str(ks) = k {
+            if ks.as_bytes() == b"__mode" {
+                if let LuaValue::Str(vs) = v {
+                    let bytes = vs.as_bytes();
+                    let mut mode = 0u8;
+                    if bytes.iter().any(|b| *b == b'k') { mode |= WEAK_KEYS; }
+                    if bytes.iter().any(|b| *b == b'v') { mode |= WEAK_VALUES; }
+                    return mode;
+                }
+                return 0;
+            }
+        }
+    }
+    0
+}
+
+/// True when the entry's weakly-tagged component(s) are held only by this
+/// table (Rc `strong_count == 1`). Strings are skipped — they tend to be
+/// interned in long-lived caches and would otherwise vanish from weak
+/// caches almost immediately.
+fn entry_is_weakly_dead(k: &LuaValue, v: &LuaValue, mode: u8) -> bool {
+    if (mode & WEAK_KEYS) != 0 && weakly_held_alone(k) {
+        return true;
+    }
+    if (mode & WEAK_VALUES) != 0 && weakly_held_alone(v) {
+        return true;
+    }
+    false
+}
+
+fn weakly_held_alone(v: &LuaValue) -> bool {
+    use std::rc::Rc;
+    match v {
+        LuaValue::Table(t)    => Rc::strong_count(&t.0) == 1,
+        LuaValue::UserData(u) => Rc::strong_count(&u.0) == 1,
+        LuaValue::Thread(th)  => Rc::strong_count(&th.0) == 1,
+        LuaValue::Function(c) => match c {
+            LuaClosure::Lua(x)    => Rc::strong_count(&x.0) == 1,
+            LuaClosure::C(x)      => Rc::strong_count(&x.0) == 1,
+            LuaClosure::LightC(_) => false,
+        },
+        _ => false,
     }
 }
 

@@ -1352,20 +1352,15 @@ fn typeerror_inner(
     op: &[u8],
     extra: &[u8],
 ) -> LuaError {
-    // C: const char *t = luaT_objtypename(L, o);
-    // TODO(port): luaT_objtypename lives in crate::tagmethods
     let t = state.obj_type_name(val);
-    // C: luaG_runerror(L, "attempt to %s a %s value%s", op, t, extra)
-    runtime_bytes({
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"attempt to ");
-        msg.extend_from_slice(op);
-        msg.extend_from_slice(b" a ");
-        msg.extend_from_slice(t);
-        msg.extend_from_slice(b" value");
-        msg.extend_from_slice(extra);
-        msg
-    })
+    let mut msg = Vec::new();
+    msg.extend_from_slice(b"attempt to ");
+    msg.extend_from_slice(op);
+    msg.extend_from_slice(b" a ");
+    msg.extend_from_slice(t);
+    msg.extend_from_slice(b" value");
+    msg.extend_from_slice(extra);
+    prefixed_runtime(state, msg)
 }
 
 /// Raises a type error for performing operation `op` on value `val`.
@@ -1384,6 +1379,7 @@ pub(crate) fn type_error(state: &LuaState, val: &LuaValue, val_idx: StackIdx, op
 /// The caller passes a pre-formatted `(kind, name)` pair (e.g.
 /// `(b"upvalue", b"a")`) used verbatim in the trailing `(kind 'name')`.
 pub(crate) fn type_error_with_hint(
+    state: &LuaState,
     val: &LuaValue,
     op: &[u8],
     kind: &[u8],
@@ -1398,7 +1394,7 @@ pub(crate) fn type_error_with_hint(
     msg.extend_from_slice(t);
     msg.extend_from_slice(b" value");
     msg.extend_from_slice(&extra);
-    runtime_bytes(msg)
+    prefixed_runtime(state, msg)
 }
 
 /// Standalone type-name accessor that does not require `&LuaState`. Used by
@@ -1438,17 +1434,14 @@ pub(crate) fn call_error(state: &LuaState, val: &LuaValue, val_idx: StackIdx) ->
 ///
 /// C: `l_noret luaG_forerror(lua_State *L, const TValue *o, const char *what)` (LUAI_FUNC)
 pub(crate) fn for_error(state: &LuaState, val: &LuaValue, what: &[u8]) -> LuaError {
-    // C: luaG_runerror(L, "bad 'for' %s (number expected, got %s)", what, luaT_objtypename(L, o))
     let t = state.obj_type_name(val);
-    runtime_bytes({
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"bad 'for' ");
-        msg.extend_from_slice(what);
-        msg.extend_from_slice(b" (number expected, got ");
-        msg.extend_from_slice(t);
-        msg.push(b')');
-        msg
-    })
+    let mut msg = Vec::new();
+    msg.extend_from_slice(b"bad 'for' ");
+    msg.extend_from_slice(what);
+    msg.extend_from_slice(b" (number expected, got ");
+    msg.extend_from_slice(t);
+    msg.push(b')');
+    prefixed_runtime(state, msg)
 }
 
 /// Raises a concatenation type error for the first non-coercible operand.
@@ -1516,13 +1509,11 @@ pub(crate) fn to_int_error(
         Some(idx) => var_info(state, idx),
         None => Vec::new(),
     };
-    runtime_bytes({
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"number");
-        msg.extend_from_slice(&extra);
-        msg.extend_from_slice(b" has no integer representation");
-        msg
-    })
+    let mut msg = Vec::new();
+    msg.extend_from_slice(b"number");
+    msg.extend_from_slice(&extra);
+    msg.extend_from_slice(b" has no integer representation");
+    prefixed_runtime(state, msg)
 }
 
 /// Raises an order-comparison type error for incompatible types.
@@ -1535,24 +1526,21 @@ pub(crate) fn order_error(state: &LuaState, p1: &LuaValue, p2: &LuaValue) -> Lua
     let t2 = state.obj_type_name(p2);
     // C: if (strcmp(t1, t2) == 0) luaG_runerror(L, "attempt to compare two %s values", t1);
     //    else                      luaG_runerror(L, "attempt to compare %s with %s", t1, t2);
-    if t1 == t2 {
-        runtime_bytes({
-            let mut msg = Vec::new();
-            msg.extend_from_slice(b"attempt to compare two ");
-            msg.extend_from_slice(t1);
-            msg.extend_from_slice(b" values");
-            msg
-        })
+    let msg = if t1 == t2 {
+        let mut m = Vec::new();
+        m.extend_from_slice(b"attempt to compare two ");
+        m.extend_from_slice(t1);
+        m.extend_from_slice(b" values");
+        m
     } else {
-        runtime_bytes({
-            let mut msg = Vec::new();
-            msg.extend_from_slice(b"attempt to compare ");
-            msg.extend_from_slice(t1);
-            msg.extend_from_slice(b" with ");
-            msg.extend_from_slice(t2);
-            msg
-        })
-    }
+        let mut m = Vec::new();
+        m.extend_from_slice(b"attempt to compare ");
+        m.extend_from_slice(t1);
+        m.extend_from_slice(b" with ");
+        m.extend_from_slice(t2);
+        m
+    };
+    prefixed_runtime(state, msg)
 }
 
 /// Prepends `src:line: ` to `msg` (as a new Lua string on the stack) and
@@ -1645,7 +1633,7 @@ pub(crate) fn run_error(state: &mut LuaState, msg: Vec<u8>) -> Result<(), LuaErr
         let line = get_current_line(&ci, state);
         let proto = ci_lua_proto(&ci, state);
         let src = proto.source_string();
-        add_info(state, &msg, src.map(|s| &**s), line)
+        add_info(Some(state), &msg, src.map(|s| &**s), line)
     } else {
         msg
     };

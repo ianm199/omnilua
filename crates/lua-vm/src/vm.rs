@@ -663,7 +663,7 @@ pub(crate) fn finish_set(
                 return Err(match (t_idx, var_hint) {
                     (Some(idx), _) => crate::debug::type_error(state, &t, idx, b"index"),
                     (None, Some((kind, name))) => {
-                        crate::debug::type_error_with_hint(&t, b"index", kind, name)
+                        crate::debug::type_error_with_hint(state, &t, b"index", kind, name)
                     }
                     (None, None) => LuaError::type_error(&t, "index"),
                 });

@@ -1,1 +1,2 @@
 2 1.343441 reference/lua-c/testes/gc.lua
+4 2.331370749999999 reference/lua-c/testes/pm.lua

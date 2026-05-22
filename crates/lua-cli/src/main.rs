@@ -217,6 +217,33 @@ fn file_remove_hook(filename: &[u8]) -> Result<(), LuaError> {
         })
 }
 
+fn file_rename_hook(from: &[u8], to: &[u8]) -> Result<(), LuaError> {
+    fn to_path(bytes: &[u8]) -> Result<std::path::PathBuf, LuaError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+        }
+        #[cfg(not(unix))]
+        {
+            let s = std::str::from_utf8(bytes).map_err(|_| {
+                LuaError::runtime(format_args!("filename is not valid UTF-8"))
+            })?;
+            Ok(std::path::PathBuf::from(s))
+        }
+    }
+    let from_path = to_path(from)?;
+    let to_path_buf = to_path(to)?;
+    std::fs::rename(&from_path, &to_path_buf).map_err(|err| {
+        LuaError::runtime(format_args!(
+            "cannot rename '{}' to '{}': {}",
+            String::from_utf8_lossy(from),
+            String::from_utf8_lossy(to),
+            err
+        ))
+    })
+}
+
 fn file_open_hook(filename: &[u8], mode: &[u8]) -> Result<Box<dyn LuaFileHandle>, LuaError> {
     FsFile::open(filename, mode).map(|f| Box::new(f) as Box<dyn LuaFileHandle>).map_err(|err| {
         LuaError::runtime(format_args!(
@@ -481,6 +508,7 @@ fn main() -> ExitCode {
         state.global_mut().file_loader_hook = Some(file_loader_hook);
         state.global_mut().file_open_hook = Some(file_open_hook);
         state.global_mut().file_remove_hook = Some(file_remove_hook);
+        state.global_mut().file_rename_hook = Some(file_rename_hook);
         state.global_mut().dynlib_load_hook = Some(dynlib_load);
         state.global_mut().dynlib_symbol_hook = Some(dynlib_symbol);
         state.global_mut().dynlib_unload_hook = Some(dynlib_unload);

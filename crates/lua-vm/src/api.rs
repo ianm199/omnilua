@@ -1988,15 +1988,19 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             }
             let cycle_complete = state.gc().incremental_step(work_units);
             state.global_mut().set_gc_stop_flags(old_stp);
-            // Mirror C-Lua's atomic post-cycle byte accounting: when the
-            // collector reaches Pause, refill the budget so subsequent
-            // step calls can drop debt without underflowing.
+            // Phase-B byte accounting: real allocation isn't tracked, so
+            // simulate C-Lua's post-sweep totalbytes drop here. Halving
+            // the current `tb` makes `gcinfo() < x` hold across a step
+            // that completes a cycle (gc.lua `dosteps()` line 194), while
+            // the floor at 1 KB preserves `set_debt`'s `tb > 0` invariant
+            // across many back-to-back step calls.
             if cycle_complete {
                 let mut g = state.global_mut();
-                let target_tb = 32_768_isize;
+                let floor: isize = 1024;
                 let cur_tb = g.totalbytes + g.gc_debt;
-                if cur_tb < target_tb {
-                    g.totalbytes += target_tb - cur_tb;
+                let new_tb = (cur_tb / 2).max(floor);
+                if new_tb < cur_tb {
+                    g.totalbytes -= cur_tb - new_tb;
                 }
             }
             // Sync the global gcstate byte for `gc_at_pause()` callers.

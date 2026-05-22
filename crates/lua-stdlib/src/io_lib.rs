@@ -750,12 +750,9 @@ pub fn io_output(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ── Read helpers ─────────────────────────────────────────────────────────────
 
-/// Read and push a Lua number from `file`. Return `true` on success.
-/// C: `read_number(L, f)`.
-fn read_number(
-    state: &mut LuaState,
-    file: &mut dyn LuaFileHandle,
-) -> Result<bool, LuaError> {
+/// Read a numeric literal from `file` into an owned byte buffer.
+/// C: `read_number(L, f)` — the file-only half (state interaction in `g_read`).
+fn read_number_bytes(file: &mut dyn LuaFileHandle) -> Vec<u8> {
     // C: do { rn.c = l_getc(rn.f); } while (isspace(rn.c)); /* skip spaces */
     let first = loop {
         let b = file.read_byte();
@@ -803,43 +800,26 @@ fn read_number(
 
     // C: ungetc(rn.c, rn.f);
     file.unread_byte(rn.current);
-
-    // C: if (lua_stringtonumber(L, rn.buff)) return 1; else { lua_pushnil(L); return 0; }
-    // TODO(port): state.string_to_number(bytes) — parses bytes into LuaValue::Int or Float
-    let bytes = rn.as_bytes();
-    let pushed = state.string_to_number_push(&bytes)?;
-    if pushed != 0 {
-        Ok(true)
-    } else {
-        state.push(LuaValue::Nil);
-        Ok(false)
-    }
+    rn.as_bytes().to_vec()
 }
 
-/// Test for EOF: push `""` and return `true` if not at EOF. C: `test_eof`.
-fn test_eof(
-    state: &mut LuaState,
-    file: &mut dyn LuaFileHandle,
-) -> Result<bool, LuaError> {
+/// Peek for EOF: returns `true` if more input is available. C: `test_eof`
+/// (the file-only half — caller still pushes `""` regardless).
+fn test_eof(file: &mut dyn LuaFileHandle) -> bool {
     // C: int c = getc(f); ungetc(c, f); lua_pushliteral(L, ""); return (c != EOF);
     let c = file.read_byte();
     if c != EOF_SENTINEL {
         file.unread_byte(c);
     }
-    state.push_string(b"");
-    Ok(c != EOF_SENTINEL)
+    c != EOF_SENTINEL
 }
 
-/// Read one line from `file` and push it. If `chop`, strip the trailing `\n`.
-/// Return `true` if anything was read. C: `read_line(L, f, chop)`.
+/// Read one line from `file` into an owned buffer. Returns `(bytes, had_content)`.
+/// If `chop` is true the trailing `\n` is stripped. C: `read_line(L, f, chop)`.
 ///
 /// PERF(port): C uses luaL_prepbuffer (large fixed stack buffer) to avoid
 /// per-byte allocation; Rust's Vec grows here, which is slightly slower.
-fn read_line(
-    state: &mut LuaState,
-    file: &mut dyn LuaFileHandle,
-    chop: bool,
-) -> Result<bool, LuaError> {
+fn read_line(file: &mut dyn LuaFileHandle, chop: bool) -> (Vec<u8>, bool) {
     let mut buf: Vec<u8> = Vec::new();
     let mut c: i32 = EOF_SENTINEL;
 
@@ -866,20 +846,18 @@ fn read_line(
 
     // C: return (c == '\n' || lua_rawlen(L, -1) > 0);
     let had_content = c == b'\n' as i32 || !buf.is_empty();
-    state.push_string(&buf);
-    Ok(had_content)
+    (buf, had_content)
 }
 
-/// Read the entire file into a single string and push it. C: `read_all(L, f)`.
+/// Read the entire file into an owned buffer. C: `read_all(L, f)` (file-only half).
 ///
 /// PERF(port): C uses `fread` with a large buffer; Rust reads byte-by-byte via
 /// `LuaFileOps::read_byte`. Phase B should add `read_chunk(&mut buf)` to the
 /// trait for bulk reads.
-fn read_all(state: &mut LuaState, file: &mut dyn LuaFileHandle) -> Result<(), LuaError> {
+fn read_all(file: &mut dyn LuaFileHandle) -> Vec<u8> {
     // C: do { nr = fread(p, LUAL_BUFFERSIZE, f); luaL_addsize(&b, nr); } while (nr == LUAL_BUFFERSIZE);
     let mut buf: Vec<u8> = Vec::new();
     loop {
-        let start = buf.len();
         let mut chunk_read = 0usize;
         for _ in 0..LUAL_BUFFER_SIZE {
             let b = file.read_byte();
@@ -893,17 +871,12 @@ fn read_all(state: &mut LuaState, file: &mut dyn LuaFileHandle) -> Result<(), Lu
             break;
         }
     }
-    state.push_string(&buf);
-    Ok(())
+    buf
 }
 
-/// Read exactly `n` bytes from `file` and push the result.
-/// Return `true` if anything was read. C: `read_chars(L, f, n)`.
-fn read_chars(
-    state: &mut LuaState,
-    file: &mut dyn LuaFileHandle,
-    n: usize,
-) -> Result<bool, LuaError> {
+/// Read at most `n` bytes from `file`. Returns `(bytes, had_content)`.
+/// C: `read_chars(L, f, n)` (file-only half).
+fn read_chars(file: &mut dyn LuaFileHandle, n: usize) -> (Vec<u8>, bool) {
     // C: nr = fread(p, sizeof(char), n, f); luaL_addsize(&b, nr); return (nr > 0);
     let mut buf = Vec::with_capacity(n);
     for _ in 0..n {
@@ -914,18 +887,17 @@ fn read_chars(
         buf.push(b as u8);
     }
     let nr = buf.len();
-    state.push_string(&buf);
-    Ok(nr > 0)
+    (buf, nr > 0)
 }
 
 /// Dispatch one or more read formats; push results. C: `g_read(L, f, first)`.
 ///
-/// TODO(port): borrow split — `file` is `&mut dyn LuaFileOps` extracted from a
-/// `LuaUserData` that lives inside `state`. Phase B must restructure so the file
-/// is accessed through the stack index rather than a raw borrow.
+/// Takes an `Rc<RefCell<LStream>>` so each I/O step can borrow the file briefly,
+/// release the borrow, then push the result to `state`. This is the "collect
+/// then borrow" pattern that resolves the `&mut state` vs `&mut file` conflict.
 fn g_read(
     state: &mut LuaState,
-    file: &mut dyn LuaFileHandle,
+    p_rc: &Rc<RefCell<LStream>>,
     first: i32,
 ) -> Result<usize, LuaError> {
     // C: int nargs = lua_gettop(L) - 1;
@@ -934,11 +906,21 @@ fn g_read(
     let mut success = true;
 
     // C: clearerr(f);
-    file.clear_error();
+    {
+        let mut p = p_rc.borrow_mut();
+        let fh = p.file.as_mut().expect("open stream has no file handle");
+        fh.clear_error();
+    }
 
     if nargs == 0 {
         // C: success = read_line(L, f, 1); n = first + 1;
-        success = read_line(state, file, true)?;
+        let (bytes, had) = {
+            let mut p = p_rc.borrow_mut();
+            let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+            read_line(fh, true)
+        };
+        state.push_string(&bytes)?;
+        success = had;
         n = first + 1;
     } else {
         // C: luaL_checkstack(L, nargs+LUA_MINSTACK, "too many arguments");
@@ -949,32 +931,72 @@ fn g_read(
             if state.type_at(n) == LuaType::Number {
                 // C: size_t l = (size_t)luaL_checkinteger(L, n);
                 let l = state.check_arg_integer(n)? as usize;
-                success = if l == 0 {
-                    test_eof(state, file)?
+                if l == 0 {
+                    let not_eof = {
+                        let mut p = p_rc.borrow_mut();
+                        let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+                        test_eof(fh)
+                    };
+                    state.push_string(b"")?;
+                    success = not_eof;
                 } else {
-                    read_chars(state, file, l)?
-                };
+                    let (bytes, had) = {
+                        let mut p = p_rc.borrow_mut();
+                        let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+                        read_chars(fh, l)
+                    };
+                    state.push_string(&bytes)?;
+                    success = had;
+                }
             } else {
                 // C: const char *p = luaL_checkstring(L, n);
                 // C: if (*p == '*') p++;  /* skip optional '*' (compat) */
                 let s: Vec<u8> = state.check_arg_string(n)?;
-                let p: &[u8] = if s.first() == Some(&b'*') { &s[1..] } else { &s[..] };
-                match p.first() {
+                let pp: &[u8] = if s.first() == Some(&b'*') { &s[1..] } else { &s[..] };
+                match pp.first() {
                     // C: case 'n': success = read_number(L, f); break;
                     Some(&b'n') => {
-                        success = read_number(state, file)?;
+                        let bytes = {
+                            let mut p = p_rc.borrow_mut();
+                            let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+                            read_number_bytes(fh)
+                        };
+                        let pushed = state.string_to_number_push(&bytes)?;
+                        if pushed != 0 {
+                            success = true;
+                        } else {
+                            state.push(LuaValue::Nil);
+                            success = false;
+                        }
                     }
                     // C: case 'l': success = read_line(L, f, 1); break;
                     Some(&b'l') => {
-                        success = read_line(state, file, true)?;
+                        let (bytes, had) = {
+                            let mut p = p_rc.borrow_mut();
+                            let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+                            read_line(fh, true)
+                        };
+                        state.push_string(&bytes)?;
+                        success = had;
                     }
                     // C: case 'L': success = read_line(L, f, 0); break;
                     Some(&b'L') => {
-                        success = read_line(state, file, false)?;
+                        let (bytes, had) = {
+                            let mut p = p_rc.borrow_mut();
+                            let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+                            read_line(fh, false)
+                        };
+                        state.push_string(&bytes)?;
+                        success = had;
                     }
                     // C: case 'a': read_all(L, f); success = 1; break;
                     Some(&b'a') => {
-                        read_all(state, file)?;
+                        let bytes = {
+                            let mut p = p_rc.borrow_mut();
+                            let fh = p.file.as_deref_mut().expect("open stream has no file handle");
+                            read_all(fh)
+                        };
+                        state.push_string(&bytes)?;
                         success = true;
                     }
                     _ => {
@@ -988,7 +1010,14 @@ fn g_read(
     }
 
     // C: if (ferror(f)) return luaL_fileresult(L, 0, NULL);
-    if file.has_error() {
+    let has_err = {
+        let p = p_rc.borrow();
+        match p.file.as_deref() {
+            Some(fh) => fh.has_error(),
+            None => false,
+        }
+    };
+    if has_err {
         return file_result(
             state,
             false,
@@ -1007,23 +1036,51 @@ fn g_read(
     Ok((n - first) as usize)
 }
 
+/// Resolve the registry-default I/O file (IO_INPUT / IO_OUTPUT) into its
+/// backing `Rc<RefCell<LStream>>`. Errors if the slot holds a closed handle
+/// or a value that is not a registered file userdata.
+///
+/// C: `getiofile(L, findex)`.
+fn get_io_file_rc(state: &mut LuaState, key: &[u8]) -> Result<Rc<RefCell<LStream>>, LuaError> {
+    state.registry_get(key)?;
+    let ud_id = state
+        .test_arg_userdata(-1, LUA_FILE_HANDLE)
+        .map(|ud| ud.identity());
+    state.pop_n(1);
+    let label = &key[IO_PREFIX_LEN..];
+    let id = ud_id.ok_or_else(|| {
+        LuaError::runtime(format_args!(
+            "default {} file is invalid",
+            label.escape_ascii()
+        ))
+    })?;
+    let rc = lookup_lstream(id).ok_or_else(|| {
+        LuaError::runtime(format_args!(
+            "default {} file is invalid",
+            label.escape_ascii()
+        ))
+    })?;
+    if rc.borrow().is_closed() {
+        return Err(LuaError::runtime(format_args!(
+            "default {} file is closed",
+            label.escape_ascii()
+        )));
+    }
+    Ok(rc)
+}
+
 /// `io.read(...)`. C: `io_read`.
 pub fn io_read(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: return g_read(L, getiofile(L, IO_INPUT), 1);
-    // TODO(port): borrow split — extract file from registry before calling g_read;
-    // requires RefCell<Box<dyn LuaFileOps>> inside LStream for interior mutability.
-    Err(LuaError::runtime(format_args!(
-        "TODO(port): borrow split needed for io_read"
-    )))
+    let p_rc = get_io_file_rc(state, IO_INPUT_KEY)?;
+    g_read(state, &p_rc, 1)
 }
 
 /// `file:read(...)`. C: `f_read`.
 pub fn f_read(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: return g_read(L, tofile(L), 2);
-    // TODO(port): borrow split — same issue as io_read; g_read needs StackIdx API.
-    Err(LuaError::runtime(format_args!(
-        "TODO(port): borrow split needed for f_read"
-    )))
+    let p_rc = tofile(state)?;
+    g_read(state, &p_rc, 2)
 }
 
 // ── Write helpers ────────────────────────────────────────────────────────────
@@ -1293,7 +1350,7 @@ pub fn io_flush(state: &mut LuaState) -> Result<usize, LuaError> {
                         "default output file is closed"
                     )));
                 }
-                let fh = p.file.as_mut().expect("open stream has no file handle");
+                let fh = p.file.as_deref_mut().expect("open stream has no file handle");
                 fh.flush()
             };
             return match result {

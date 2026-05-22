@@ -1870,37 +1870,39 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
         let conv = fmt_bytes[i];
         i += 1;
 
+        let spec_slice = &fmt_bytes[spec_start + 1..i - 1];
+        let spec = parse_fmt_spec(spec_slice);
+
         match conv {
             b'c' => {
                 let n = state.check_arg_integer(arg)?;
-                buf.push(n as u8);
+                let body = vec![n as u8];
+                pad_str(&mut buf, &body, &spec);
             }
             b'd' | b'i' => {
                 let n = state.check_arg_integer(arg)?;
-                // TODO(port): width/precision/flags from spec not applied
-                // PERF(port): str_format %d/%i ignores width/precision/flags; use sprintf crate in Phase B
-                let s = format!("{}", n);
-                buf.extend_from_slice(s.as_bytes());
+                let (sign, digits) = signed_int_parts(n, &spec);
+                pad_int(&mut buf, &sign, &digits, &spec);
             }
             b'u' => {
                 let n = state.check_arg_integer(arg)? as u64;
-                let s = format!("{}", n);
-                buf.extend_from_slice(s.as_bytes());
+                let (prefix, digits) = unsigned_int_parts(n, 10, false, &spec);
+                pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'o' => {
                 let n = state.check_arg_integer(arg)? as u64;
-                let s = format!("{:o}", n);
-                buf.extend_from_slice(s.as_bytes());
+                let (prefix, digits) = unsigned_int_parts(n, 8, false, &spec);
+                pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'x' => {
                 let n = state.check_arg_integer(arg)? as u64;
-                let s = format!("{:x}", n);
-                buf.extend_from_slice(s.as_bytes());
+                let (prefix, digits) = unsigned_int_parts(n, 16, false, &spec);
+                pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'X' => {
                 let n = state.check_arg_integer(arg)? as u64;
-                let s = format!("{:X}", n);
-                buf.extend_from_slice(s.as_bytes());
+                let (prefix, digits) = unsigned_int_parts(n, 16, true, &spec);
+                pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'a' => {
                 let n = state.check_arg_number(arg)?;
@@ -1912,71 +1914,38 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
                 let hex: Vec<u8> = num2straux(n).into_iter().map(|b| b.to_ascii_uppercase()).collect();
                 buf.extend_from_slice(&hex);
             }
-            b'f' => {
+            b'f' | b'F' | b'e' | b'E' | b'g' | b'G' => {
                 let n = state.check_arg_number(arg)?;
-                // TODO(port): width/precision not applied
-                let s = format!("{}", n);
-                buf.extend_from_slice(s.as_bytes());
-            }
-            b'e' => {
-                let n = state.check_arg_number(arg)?;
-                let s = format!("{:e}", n);
-                buf.extend_from_slice(s.as_bytes());
-            }
-            b'E' => {
-                let n = state.check_arg_number(arg)?;
-                let s = format!("{:E}", n);
-                buf.extend_from_slice(s.as_bytes());
-            }
-            b'g' | b'G' => {
-                let n = state.check_arg_number(arg)?;
-                // TODO(port): %g format — use shortest decimal representation
-                // Rust doesn't have a direct %g equivalent; approximate with {:?}
-                let s = format!("{}", n);
-                buf.extend_from_slice(s.as_bytes());
+                let body = format_float(n, conv, &spec);
+                let (sign, digits): (Vec<u8>, Vec<u8>) = if !body.is_empty() && (body[0] == b'-' || body[0] == b'+') {
+                    (vec![body[0]], body[1..].to_vec())
+                } else if n >= 0.0 && spec.plus_sign {
+                    (b"+".to_vec(), body)
+                } else if n >= 0.0 && spec.space_sign {
+                    (b" ".to_vec(), body)
+                } else {
+                    (Vec::new(), body)
+                };
+                let no_prec_spec = FmtSpec { precision: None, ..FmtSpec {
+                    left_align: spec.left_align, plus_sign: spec.plus_sign,
+                    space_sign: spec.space_sign, alt_form: spec.alt_form,
+                    zero_pad: spec.zero_pad, width: spec.width, precision: None,
+                }};
+                pad_int(&mut buf, &sign, &digits, &no_prec_spec);
             }
             b'p' => {
-                let spec = &fmt_bytes[spec_start + 1..i - 1];
-                let mut left_align = false;
-                let mut sidx = 0usize;
-                while sidx < spec.len() && b"-+#0 ".contains(&spec[sidx]) {
-                    if spec[sidx] == b'-' {
-                        left_align = true;
-                    }
-                    sidx += 1;
-                }
-                let mut width = 0usize;
-                while sidx < spec.len() && spec[sidx].is_ascii_digit() {
-                    width = width * 10 + (spec[sidx] - b'0') as usize;
-                    sidx += 1;
-                }
                 let s: Vec<u8> = match lua_vm::api::to_pointer(state, arg) {
                     Some(p) => format!("0x{:x}", p).into_bytes(),
                     None => b"(null)".to_vec(),
                 };
-                if s.len() >= width {
-                    buf.extend_from_slice(&s);
-                } else {
-                    let pad = width - s.len();
-                    if left_align {
-                        buf.extend_from_slice(&s);
-                        for _ in 0..pad {
-                            buf.push(b' ');
-                        }
-                    } else {
-                        for _ in 0..pad {
-                            buf.push(b' ');
-                        }
-                        buf.extend_from_slice(&s);
-                    }
-                }
+                pad_str(&mut buf, &s, &FmtSpec { precision: None, ..spec });
             }
             b'q' => {
                 addliteral(state, &mut buf, arg)?;
             }
             b's' => {
                 let s = state.to_string_coerced(arg).unwrap_or_default();
-                buf.extend_from_slice(&s);
+                pad_str(&mut buf, &s, &spec);
             }
             _ => {
                 return Err(LuaError::runtime(format_args!(

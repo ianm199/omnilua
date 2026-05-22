@@ -1,0 +1,1 @@
+2 1.2294044999999998 reference/lua-c/testes/closure.lua

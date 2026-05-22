@@ -797,3 +797,4 @@
 [2026-05-18T05:33:32Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: attempt to call a string value): reference/lua-c/testes/gengc.lua
 [2026-05-18T05:33:32Z mega]   [O5.D4] DEBUG dispatch on file: reference/lua-c/testes/strings.lua [parallel]
 [2026-05-18T05:33:32Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 820: assertion failed!): reference/lua-c/testes/math.lua
+[2026-05-18T05:37:06Z mega]   [O5.D5] DEBUG dispatch on file: reference/lua-c/testes/literals.lua [parallel]

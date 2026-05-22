@@ -2191,17 +2191,19 @@ fn adjust_local_vars(ls: &mut LexState, state: &mut LuaState, nvars: i32) -> Res
 /// Closes scope for all variables above `tolevel`, updating their endpc.
 fn remove_vars(ls: &mut LexState, fs: &mut FuncState, tolevel: i32) {
     // C: fs->ls->dyd->actvar.n -= (fs->nactvar - tolevel)
+    //
+    // C just decrements a length counter; the underlying array memory is
+    // untouched and the subsequent loop reads from it freely. A Rust
+    // `truncate` would actually free the entries, leaving the loop reading
+    // out-of-range and silently writing every iteration's endpc to
+    // `locvars[0]` (via the `unwrap_or(0)` fallback below). Defer the
+    // truncate until after the loop walks each soon-to-be-removed entry.
     let delta = fs.nactvar as i32 - tolevel;
-    if delta > 0 {
-        let new_len = ls.dyd.actvar.len().saturating_sub(delta as usize);
-        ls.dyd.actvar.truncate(new_len);
-    }
     while fs.nactvar as i32 > tolevel {
         fs.nactvar -= 1;
         // C: LocVar *var = localdebuginfo(fs, --fs->nactvar); if (var) var->endpc = fs->pc
         let nactvar = fs.nactvar as i32;
         let vd_kind = {
-            // need to check kind without holding a borrow across the mut borrow below
             let first_local = fs.firstlocal;
             ls.dyd.actvar.get((first_local + nactvar) as usize)
                 .map(|v| v.kind)
@@ -2218,6 +2220,10 @@ fn remove_vars(ls: &mut LexState, fs: &mut FuncState, tolevel: i32) {
                 lv.endpc = fs.pc;
             }
         }
+    }
+    if delta > 0 {
+        let new_len = ls.dyd.actvar.len().saturating_sub(delta as usize);
+        ls.dyd.actvar.truncate(new_len);
     }
 }
 

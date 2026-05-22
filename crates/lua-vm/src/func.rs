@@ -395,6 +395,7 @@ fn prep_call_close_mth(
 ///
 /// C: `void luaF_newtbcupval(lua_State *L, StkId level)`
 pub(crate) fn new_tbc_upval(state: &mut LuaState, level: StackIdx) -> Result<(), LuaError> {
+    eprintln!("DEBUG new_tbc_upval level={}", level.0);
     // C: lua_assert(level > L->tbclist.p);
     // In Rust: tbclist is Vec<StackIdx>, "current head" = last element.
     debug_assert!(
@@ -405,6 +406,7 @@ pub(crate) fn new_tbc_upval(state: &mut LuaState, level: StackIdx) -> Result<(),
     // macros.tsv: l_isfalse → matches!(o, LuaValue::Nil | LuaValue::Bool(false))
     // Clone before borrow to avoid aliasing with later mutable calls.
     let val = state.get_stack_value(level).clone();
+    eprintln!("DEBUG new_tbc_upval val={:?}", val);
     if matches!(val, LuaValue::Nil | LuaValue::Bool(false)) {
         return Ok(());
     }
@@ -530,6 +532,8 @@ pub(crate) fn close(
     status: i32,
     yy: bool,
 ) -> Result<StackIdx, LuaError> {
+    eprintln!("DEBUG func::close called level={} status={} tbclist_len={}",
+        level.0, status, state.tbclist.len());
     // C: ptrdiff_t levelrel = savestack(L, level);
     // macros.tsv: savestack → idx (StackIdx is already stable across reallocs in Rust)
     // PORT NOTE: savestack / restorestack are no-ops here. In C they save/restore a

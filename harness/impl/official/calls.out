@@ -6,8 +6,4 @@ testing functions and calls
 +
 +
 testing tail calls
-
-thread 'main' (7963420) panicked at crates/lua-stdlib/src/coro_lib.rs:129:5:
-not yet implemented: phase-e: coroutine_resume — stackful coroutines need corosensei (PORTING.md §2 #6)
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-e: coroutine_resume — stackful coroutines need corosensei (PORTING.md §2 #6)
+[err] pcall_k failed: Runtime: coroutines not yet implemented (Phase E)

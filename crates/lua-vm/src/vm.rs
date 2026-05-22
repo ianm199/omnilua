@@ -2034,7 +2034,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra = base + i.arg_a();
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
-                        state.close_upvals(ra)?; // LUA_OK = 0
+                        crate::func::close(state, ra, lua_types::status::LuaStatus::Ok as i32, true)?;
                         trap = state.ci_trap(ci);
                     }
                     // ── OP_TBC ────────────────────────────────────────────────
@@ -2290,7 +2290,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             if state.top_idx().0 < ci_top.0 {
                                 state.set_top(ci_top);
                             }
-                            state.close_upvals(base)?;
+                            crate::func::close(state, base, crate::func::CLOSE_K_TOP, true)?;
                             trap = state.ci_trap(ci);
                             base = state.ci_base(ci); // updatestack
                         }

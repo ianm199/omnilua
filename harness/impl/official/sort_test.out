@@ -3,5 +3,9 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 before random
-DEBUG try_func_tm: call_error func_idx=StackIdx(3) offender=Nil
-[err] pcall_k failed: Runtime: attempt to call a nil value
+random done	0.79875090390947
+random(10) done	1
+random(5,15) done	11
+randomseed done
+after seed	0.93081217803957
+[ok] execution completed, status=Ok

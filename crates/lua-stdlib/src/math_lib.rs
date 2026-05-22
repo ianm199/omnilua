@@ -51,10 +51,18 @@ struct LibReg {
 /// C: `typedef struct { Rand64 s[4]; } RanState;`
 ///
 /// In C this is stored as raw `lua_newuserdatauv` memory and accessed by
-/// casting the userdata pointer. In Rust it is stored as typed userdata;
-/// see `set_rand_func` and the TODO(port) notes in `math_random`.
+/// casting the userdata pointer. Until typed-userdata closure upvalues land
+/// in Phase B, we keep the PRNG state in a thread-local cell so that
+/// `math.random` and `math.randomseed` are callable from Lua. This collapses
+/// per-lua_State PRNG isolation to per-thread, which is sufficient for the
+/// 5.4 test corpus.
 struct RanState {
     s: [u64; 4],
+}
+
+thread_local! {
+    static RAN_STATE: std::cell::RefCell<RanState> =
+        std::cell::RefCell::new(RanState { s: [0xff, 0xff, 0xff, 0xff] });
 }
 
 // ── Pure PRNG algorithms ──────────────────────────────────────────────────
@@ -587,34 +595,26 @@ fn math_randomseed(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(2) // C: return 2;  /* return seeds */
 }
 
-/// Advance the PRNG stored in upvalue 1 and return the raw 64-bit output.
+/// Advance the PRNG stored in the thread-local `RAN_STATE` and return the
+/// raw 64-bit output.
 ///
-/// Extracted to a separate function so `math_random` can release the upvalue
-/// borrow before calling `state.push(...)`.
-///
-/// TODO(port): implement by extracting `&mut RanState` from upvalue 1.
-/// The RanState userdata must use interior mutability in Phase B to allow
-/// concurrent reads of `state` (for push operations) while mutating the PRNG.
+/// PORT NOTE: In C this draws from the userdata in closure upvalue 1. The
+/// Rust port stores the PRNG state in a thread-local until typed-userdata
+/// closure upvalues are wired up. Storage location is the only difference;
+/// the algorithm is unchanged.
 fn advance_prng(_state: &mut LuaState) -> Result<u64, LuaError> {
-    // TODO(port): access GcRef<RefCell<RanState>> from closure upvalue 1,
-    // borrow_mut it, call next_rand(&mut ran.s), return the result.
-    todo!("PORT: advance_prng — upvalue RanState access (Phase B)")
+    Ok(RAN_STATE.with(|r| next_rand(&mut r.borrow_mut().s)))
 }
 
-/// Apply rejection sampling for `math.random` using the PRNG in upvalue 1.
+/// Apply rejection sampling for `math.random` using the thread-local PRNG.
 ///
-/// Extracted so the upvalue borrow does not overlap the push call in `math_random`.
-///
-/// TODO(port): same upvalue access issue as `advance_prng`.
+/// PORT NOTE: see `advance_prng` for the thread-local rationale.
 fn project_from_upvalue(
     _state: &mut LuaState,
     ran: u64,
     n: u64,
 ) -> Result<u64, LuaError> {
-    // TODO(port): access &mut [u64; 4] from upvalue RanState for rejection loop.
-    // For now, compute without the rejection loop (biased but structurally correct).
-    // Phase B replaces with: project(ran, n, &mut ran_state.s)
-    todo!("PORT: project_from_upvalue — upvalue RanState access (Phase B)")
+    Ok(RAN_STATE.with(|r| project(ran, n, &mut r.borrow_mut().s)))
 }
 
 /// Seed the PRNG from wall-clock time (entropy source).
@@ -640,37 +640,32 @@ fn apply_random_seed(state: &mut LuaState) -> Result<(), LuaError> {
 ///
 /// C: `setseed(L, state->s, n1, n2)` — also pushes n1, n2.
 ///
-/// TODO(port): must write seeds into the upvalue RanState in Phase B.
+/// PORT NOTE: writes seeds into the thread-local RanState (see `advance_prng`).
 fn apply_set_seed(state: &mut LuaState, n1: u64, n2: u64) -> Result<(), LuaError> {
-    // TODO(port): extract &mut [u64; 4] from upvalue 1, call set_seed_words(s, n1, n2).
-    // The push calls below are the correct post-seed behaviour.
-    let _ = (n1, n2); // suppress unused-variable hint; Phase B will use these
+    RAN_STATE.with(|r| set_seed_words(&mut r.borrow_mut().s, n1, n2));
     // C: lua_pushinteger(L, n1); lua_pushinteger(L, n2);
     state.push(LuaValue::Int(n1 as i64));
     state.push(LuaValue::Int(n2 as i64));
     Ok(())
 }
 
-/// Register `math.random` and `math.randomseed` as closures sharing a single
-/// `RanState` userdata upvalue, then seed it.
+/// Register `math.random` and `math.randomseed` on the math library table at
+/// stack top, after seeding the thread-local PRNG.
 ///
 /// C: `static void setrandfunc(lua_State *L)`
+///
+/// PORT NOTE: C stores the PRNG inside a userdata bound as upvalue 1 of both
+/// closures. Until typed userdata closure upvalues are available, the Rust
+/// port keeps the PRNG in a thread-local (see `RAN_STATE`) and registers the
+/// functions as plain non-closure entries on the library table.
 fn set_rand_func(state: &mut LuaState) -> Result<(), LuaError> {
-    // C: RanState *state = (RanState *)lua_newuserdatauv(L, sizeof(RanState), 0);
-    // TODO(port): create LuaValue::UserData holding a RanState, push it.
-    // state.new_typed_userdata::<RanState>()? — API to be defined in Phase B.
-
-    // C: randseed(L, state);  /* initialize with a "random" seed */
-    // Seeds are pushed by randseed; pop them immediately.
     apply_random_seed(state)?;
-    // C: lua_pop(L, 2);  /* remove pushed seeds */
     state.pop_n(2);
 
-    // C: luaL_setfuncs(L, randfuncs, 1);
-    // Registers math_random and math_randomseed as closures with 1 upvalue
-    // (the RanState userdata on top of the stack).
-    // TODO(port): state.set_funcs_with_upvalue(&RAND_FUNCS, 1)?;
-    // RAND_FUNCS = [("random", math_random), ("randomseed", math_randomseed)]
+    state.push_c_function(math_random)?;
+    state.set_field(-2, b"random")?;
+    state.push_c_function(math_randomseed)?;
+    state.set_field(-2, b"randomseed")?;
     Ok(())
 }
 

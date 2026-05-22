@@ -1,1 +1,2 @@
 4 1.8690434999999999 reference/lua-c/testes/locals.lua
+3 1.4793205000000003 reference/lua-c/testes/math.lua

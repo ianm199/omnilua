@@ -1,1 +1,1 @@
-proto_const
+fast_get_short_str

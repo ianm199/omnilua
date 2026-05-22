@@ -1342,7 +1342,12 @@ impl LuaState {
         if matches!(v, LuaValue::Nil) { Ok(None) } else { Ok(Some(v)) }
     }
     pub fn fast_get_int<T>(&mut self, _t: T, _k: i64) -> Result<Option<LuaValue>, LuaError> { todo!("phase-b: fast_get_int") }
-    pub fn fast_get_short_str<T, K>(&mut self, _t: T, _k: K) -> Result<Option<LuaValue>, LuaError> { todo!("phase-b: fast_get_short_str") }
+    pub fn fast_get_short_str(&mut self, t: &LuaValue, k: &LuaValue) -> Result<Option<LuaValue>, LuaError> {
+        let LuaValue::Table(tbl) = t else { return Ok(None); };
+        let LuaValue::Str(s) = k else { return Ok(None); };
+        let v = tbl.get_short_str(s);
+        if matches!(v, LuaValue::Nil) { Ok(None) } else { Ok(Some(v)) }
+    }
     pub fn fast_tm_table(&mut self, t: Option<&GcRef<LuaTable>>, tm: TagMethod) -> LuaValue {
         let Some(mt) = t else { return LuaValue::Nil; };
         debug_assert!((tm as u8) <= TagMethod::Eq as u8);

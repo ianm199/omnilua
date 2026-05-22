@@ -272,3 +272,6 @@
 {"ts":"2026-05-16T20:03:13Z","action":"dispatch_done","detail":"type=implement func=upvalue_get cost=0.899743","total_cost":0.00}
 {"ts":"2026-05-16T20:03:14Z","action":"panic_detected","detail":"func=proto_const iter=5","total_cost":0.00}
 {"ts":"2026-05-16T20:03:14Z","action":"dispatch_start","detail":"type=implement func=proto_const iter=5","total_cost":0.00}
+{"ts":"2026-05-16T20:04:39Z","action":"dispatch_done","detail":"type=implement func=proto_const cost=0.5953605000000001","total_cost":0.00}
+{"ts":"2026-05-16T20:04:39Z","action":"panic_detected","detail":"func=fast_get_short_str iter=6","total_cost":0.00}
+{"ts":"2026-05-16T20:04:39Z","action":"dispatch_start","detail":"type=implement func=fast_get_short_str iter=6","total_cost":0.00}

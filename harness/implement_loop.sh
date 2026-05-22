@@ -40,6 +40,7 @@ touch "$STATE" "$LOG" "$LAST_PANIC_FILE"
 MAX_ITER=${MAX_ITER:-25}
 LOOP_COST_CAP=${LOOP_COST_CAP:-200.00}
 TEST_PROG=${TEST_PROG:-'print("hello")'}
+SUCCESS_MARKER=${SUCCESS_MARKER:-'^hello$'}
 
 TOTAL_COST="0.00"
 PREV_FUNC=""
@@ -91,7 +92,7 @@ detect_failure_type() {
     #                  unwrap on None, etc.)
     #   unknown      - exited non-zero with no recognizable diagnostic
     local out="$1"
-    if grep -q '^hello$' "$out" || grep -q '^"hello"$' "$out"; then
+    if grep -qE "$SUCCESS_MARKER" "$out"; then
         echo "success"; return
     fi
     if grep -qE "not yet implemented:" "$out" \
@@ -106,7 +107,7 @@ detect_failure_type() {
         echo "real-error"; return
     fi
     if grep -qE "^\[ok\] execution completed" "$out" \
-        && ! grep -q '^hello$' "$out"; then
+        && ! grep -qE "$SUCCESS_MARKER" "$out"; then
         echo "real-error"; return
     fi
     echo "unknown"

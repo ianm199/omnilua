@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 93687,
+  "duration_api_ms": 92756,
+  "ttft_ms": 6435,
+  "num_turns": 17,
+  "result": "Build is green.\n\n## Report\n\n- **Modified:** `crates/lua-vm/src/api.rs` — added an inherent `LuaState::write_output(&mut self, msg: &[u8]) -> Result<(), LuaError>` inside the existing `impl LuaState { ... }` block (just after `push_value_at`, around line 346).\n- **What it does:** Locks `std::io::stdout()`, calls `write_all(msg)` then `flush()`, mapping any I/O error to `LuaError::runtime`. This mirrors the C macro `lua_writestring(s,l) = fwrite(s, 1, l, stdout)` plus the `lua_writeline` flush, as used by `print_fn` in `base.rs` (writes `\\t` separators, each arg's bytes, and a final `\\n`).\n- **Trait shim:** Per the Phase-B-reconcile pattern, the trait default `LuaStateStubExt::write_output` is left untouched — Rust's inherent-method-wins resolution silences it automatically.\n- **No new `todo!()` chains:** `write_output` itself uses only `std::io` and `LuaError::runtime`, no other stub methods.\n- **Build:** `cargo build -p lua-cli` ✅ green (only pre-existing warnings).",
+  "stop_reason": "end_turn",
+  "session_id": "64558fee-fc88-4d4d-867c-ffb5f525947d",
+  "total_cost_usd": 0.8488924999999999,
+  "usage": {
+    "input_tokens": 22,
+    "cache_creation_input_tokens": 44106,
+    "cache_read_input_tokens": 901182,
+    "output_tokens": 4837,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 44106,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 429,
+        "cache_read_input_tokens": 62303,
+        "cache_creation_input_tokens": 702,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 702
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1514,
+      "outputTokens": 18,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001604,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 22,
+      "outputTokens": 4837,
+      "cacheReadInputTokens": 901182,
+      "cacheCreationInputTokens": 44106,
+      "webSearchRequests": 0,
+      "costUSD": 0.8472885,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "1cb5b594-5740-4e7c-825f-06aa28fd058f"
+}

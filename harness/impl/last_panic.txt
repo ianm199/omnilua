@@ -1,1 +1,1 @@
-write_output
+Syntax: internal: cg_exp_to_next_reg cannot discharge KInt (load_string status=1)

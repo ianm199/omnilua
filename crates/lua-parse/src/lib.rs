@@ -703,6 +703,47 @@ fn cg_exp_to_next_reg(
                 emit_inst(fs, line, inst);
             }
         }
+        ExprKind::KInt => {
+            let i = e.u.ival;
+            let max = lua_code::opcodes::MAXARG_BX as i64 - lua_code::opcodes::OFFSET_S_BX as i64;
+            let min = -(lua_code::opcodes::OFFSET_S_BX as i64);
+            if i >= min && i <= max {
+                let bx = (i as i32 + lua_code::opcodes::OFFSET_S_BX) as u32;
+                let inst = lua_code::opcodes::Instruction::abx(
+                    lua_code::opcodes::OpCode::LoadI, reg as u32, bx,
+                );
+                emit_inst(fs, line, inst);
+            } else {
+                let k_idx = add_k_value(fs, LuaValue::Int(i));
+                let inst = lua_code::opcodes::Instruction::abx(
+                    lua_code::opcodes::OpCode::LoadK, reg as u32, k_idx as u32,
+                );
+                emit_inst(fs, line, inst);
+            }
+        }
+        ExprKind::KFlt => {
+            let f = e.u.nval;
+            let max = lua_code::opcodes::MAXARG_BX as i64 - lua_code::opcodes::OFFSET_S_BX as i64;
+            let min = -(lua_code::opcodes::OFFSET_S_BX as i64);
+            let fi_opt: Option<i64> = if f.fract() == 0.0 && f.abs() < i64::MAX as f64 {
+                Some(f as i64)
+            } else {
+                None
+            };
+            if let Some(fi) = fi_opt.filter(|fi| *fi >= min && *fi <= max) {
+                let bx = (fi as i32 + lua_code::opcodes::OFFSET_S_BX) as u32;
+                let inst = lua_code::opcodes::Instruction::abx(
+                    lua_code::opcodes::OpCode::LoadF, reg as u32, bx,
+                );
+                emit_inst(fs, line, inst);
+            } else {
+                let k_idx = add_k_value(fs, LuaValue::Float(f));
+                let inst = lua_code::opcodes::Instruction::abx(
+                    lua_code::opcodes::OpCode::LoadK, reg as u32, k_idx as u32,
+                );
+                emit_inst(fs, line, inst);
+            }
+        }
         _ => {
             return Err(LuaError::syntax(format_args!(
                 "internal: cg_exp_to_next_reg cannot discharge {:?}", e.k

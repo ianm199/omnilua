@@ -1,2 +1,104 @@
 [2026-05-16T19:50:50Z respawn] respawn watchdog starting. GLOBAL_CAP=$2000.00 PER_RUN_MAX_ITER=80 OUTER_MAX_RUNS=50
 [2026-05-16T19:50:50Z respawn] outer run #1 starting
+[2026-05-16T20:35:00Z respawn] outer run #1 exited rc=0
+[2026-05-16T20:35:05Z respawn] outer run #2 starting
+[2026-05-16T20:35:05Z respawn] outer run #2 exited rc=0
+[2026-05-16T20:35:10Z respawn] outer run #3 starting
+[2026-05-16T20:35:11Z respawn] outer run #3 exited rc=0
+[2026-05-16T20:35:16Z respawn] outer run #4 starting
+[2026-05-16T20:35:16Z respawn] outer run #4 exited rc=0
+[2026-05-16T20:35:21Z respawn] outer run #5 starting
+[2026-05-16T20:35:22Z respawn] outer run #5 exited rc=0
+[2026-05-16T20:35:27Z respawn] outer run #6 starting
+[2026-05-16T20:35:27Z respawn] outer run #6 exited rc=0
+[2026-05-16T20:35:32Z respawn] outer run #7 starting
+[2026-05-16T20:35:33Z respawn] outer run #7 exited rc=0
+[2026-05-16T20:35:38Z respawn] outer run #8 starting
+[2026-05-16T20:35:38Z respawn] outer run #8 exited rc=0
+[2026-05-16T20:35:43Z respawn] outer run #9 starting
+[2026-05-16T20:35:44Z respawn] outer run #9 exited rc=0
+[2026-05-16T20:35:49Z respawn] outer run #10 starting
+[2026-05-16T20:35:49Z respawn] outer run #10 exited rc=0
+[2026-05-16T20:35:54Z respawn] outer run #11 starting
+[2026-05-16T20:35:55Z respawn] outer run #11 exited rc=0
+[2026-05-16T20:36:00Z respawn] outer run #12 starting
+[2026-05-16T20:36:00Z respawn] outer run #12 exited rc=0
+[2026-05-16T20:36:05Z respawn] outer run #13 starting
+[2026-05-16T20:36:06Z respawn] outer run #13 exited rc=0
+[2026-05-16T20:36:11Z respawn] outer run #14 starting
+[2026-05-16T20:36:11Z respawn] outer run #14 exited rc=0
+[2026-05-16T20:36:16Z respawn] outer run #15 starting
+[2026-05-16T20:36:17Z respawn] outer run #15 exited rc=0
+[2026-05-16T20:36:22Z respawn] outer run #16 starting
+[2026-05-16T20:36:22Z respawn] outer run #16 exited rc=0
+[2026-05-16T20:36:27Z respawn] outer run #17 starting
+[2026-05-16T20:36:28Z respawn] outer run #17 exited rc=0
+[2026-05-16T20:36:33Z respawn] outer run #18 starting
+[2026-05-16T20:36:33Z respawn] outer run #18 exited rc=0
+[2026-05-16T20:36:38Z respawn] outer run #19 starting
+[2026-05-16T20:36:39Z respawn] outer run #19 exited rc=0
+[2026-05-16T20:36:44Z respawn] outer run #20 starting
+[2026-05-16T20:36:44Z respawn] outer run #20 exited rc=0
+[2026-05-16T20:36:49Z respawn] outer run #21 starting
+[2026-05-16T20:36:50Z respawn] outer run #21 exited rc=0
+[2026-05-16T20:36:55Z respawn] outer run #22 starting
+[2026-05-16T20:36:55Z respawn] outer run #22 exited rc=0
+[2026-05-16T20:37:00Z respawn] outer run #23 starting
+[2026-05-16T20:37:01Z respawn] outer run #23 exited rc=0
+[2026-05-16T20:37:06Z respawn] outer run #24 starting
+[2026-05-16T20:37:06Z respawn] outer run #24 exited rc=0
+[2026-05-16T20:37:11Z respawn] outer run #25 starting
+[2026-05-16T20:37:12Z respawn] outer run #25 exited rc=0
+[2026-05-16T20:37:17Z respawn] outer run #26 starting
+[2026-05-16T20:37:17Z respawn] outer run #26 exited rc=0
+[2026-05-16T20:37:22Z respawn] outer run #27 starting
+[2026-05-16T20:37:23Z respawn] outer run #27 exited rc=0
+[2026-05-16T20:37:28Z respawn] outer run #28 starting
+[2026-05-16T20:37:28Z respawn] outer run #28 exited rc=0
+[2026-05-16T20:37:33Z respawn] outer run #29 starting
+[2026-05-16T20:37:34Z respawn] outer run #29 exited rc=0
+[2026-05-16T20:37:39Z respawn] outer run #30 starting
+[2026-05-16T20:37:39Z respawn] outer run #30 exited rc=0
+[2026-05-16T20:37:44Z respawn] outer run #31 starting
+[2026-05-16T20:37:45Z respawn] outer run #31 exited rc=0
+[2026-05-16T20:37:50Z respawn] outer run #32 starting
+[2026-05-16T20:37:50Z respawn] outer run #32 exited rc=0
+[2026-05-16T20:37:55Z respawn] outer run #33 starting
+[2026-05-16T20:37:56Z respawn] outer run #33 exited rc=0
+[2026-05-16T20:38:01Z respawn] outer run #34 starting
+[2026-05-16T20:38:01Z respawn] outer run #34 exited rc=0
+[2026-05-16T20:38:06Z respawn] outer run #35 starting
+[2026-05-16T20:38:07Z respawn] outer run #35 exited rc=0
+[2026-05-16T20:38:12Z respawn] outer run #36 starting
+[2026-05-16T20:38:12Z respawn] outer run #36 exited rc=0
+[2026-05-16T20:38:17Z respawn] outer run #37 starting
+[2026-05-16T20:38:18Z respawn] outer run #37 exited rc=0
+[2026-05-16T20:38:23Z respawn] outer run #38 starting
+[2026-05-16T20:38:23Z respawn] outer run #38 exited rc=0
+[2026-05-16T20:38:28Z respawn] outer run #39 starting
+[2026-05-16T20:38:29Z respawn] outer run #39 exited rc=0
+[2026-05-16T20:38:34Z respawn] outer run #40 starting
+[2026-05-16T20:38:34Z respawn] outer run #40 exited rc=0
+[2026-05-16T20:38:39Z respawn] outer run #41 starting
+[2026-05-16T20:38:40Z respawn] outer run #41 exited rc=0
+[2026-05-16T20:38:45Z respawn] outer run #42 starting
+[2026-05-16T20:38:45Z respawn] outer run #42 exited rc=0
+[2026-05-16T20:38:50Z respawn] outer run #43 starting
+[2026-05-16T20:38:51Z respawn] outer run #43 exited rc=0
+[2026-05-16T20:38:56Z respawn] outer run #44 starting
+[2026-05-16T20:38:56Z respawn] outer run #44 exited rc=0
+[2026-05-16T20:39:01Z respawn] outer run #45 starting
+[2026-05-16T20:39:02Z respawn] outer run #45 exited rc=0
+[2026-05-16T20:39:07Z respawn] outer run #46 starting
+[2026-05-16T20:39:07Z respawn] outer run #46 exited rc=0
+[2026-05-16T20:39:12Z respawn] outer run #47 starting
+[2026-05-16T20:39:13Z respawn] outer run #47 exited rc=0
+[2026-05-16T20:39:18Z respawn] outer run #48 starting
+[2026-05-16T20:39:18Z respawn] outer run #48 exited rc=0
+[2026-05-16T20:39:23Z respawn] outer run #49 starting
+[2026-05-16T20:39:24Z respawn] outer run #49 exited rc=0
+[2026-05-16T20:39:29Z respawn] outer run #50 starting
+[2026-05-16T20:39:29Z respawn] outer run #50 exited rc=0
+[2026-05-16T20:39:34Z respawn] respawn watchdog finished after 50 attempts (or success)
+[2026-05-16T20:41:11Z respawn] respawn watchdog starting. GLOBAL_CAP=$2000.00 PER_RUN_MAX_ITER=80 OUTER_MAX_RUNS=50
+[2026-05-16T20:41:11Z respawn] outer run #1 starting (test: print("hello"); print(1+2); print("end"))

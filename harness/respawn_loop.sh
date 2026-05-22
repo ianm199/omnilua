@@ -27,15 +27,19 @@ emit() {
 
 emit "respawn watchdog starting. GLOBAL_CAP=\$$GLOBAL_CAP PER_RUN_MAX_ITER=$PER_RUN_MAX_ITER OUTER_MAX_RUNS=$OUTER_MAX_RUNS"
 
+TEST_PROG=${TEST_PROG:-'print("hello"); print(1+2); print("end")'}
+SUCCESS_MARKER=${SUCCESS_MARKER:-'^end$'}
+
 for run in $(seq 1 "$OUTER_MAX_RUNS"); do
-    emit "outer run #$run starting"
+    emit "outer run #$run starting (test: $TEST_PROG)"
     MAX_ITER=$PER_RUN_MAX_ITER LOOP_COST_CAP=$PER_RUN_COST_CAP \
+        TEST_PROG="$TEST_PROG" \
         ./harness/implement_loop.sh
     rc=$?
     emit "outer run #$run exited rc=$rc"
 
-    if cargo run -q -p lua-cli -- 'print("hello")' 2>&1 | grep -q '^hello$'; then
-        emit "SUCCESS: print(\"hello\") works. Stopping watchdog."
+    if cargo run -q -p lua-cli -- "$TEST_PROG" 2>&1 | grep -qE "$SUCCESS_MARKER"; then
+        emit "SUCCESS: test program produced expected output. Stopping watchdog."
         break
     fi
 

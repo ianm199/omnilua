@@ -296,3 +296,156 @@
 {"ts":"2026-05-16T20:33:24Z","action":"dispatch_done","detail":"type=implement func=to_display_string cost=1.4540522499999997","total_cost":0.00}
 {"ts":"2026-05-16T20:33:24Z","action":"panic_detected","detail":"func=write_output iter=13","total_cost":0.00}
 {"ts":"2026-05-16T20:33:24Z","action":"dispatch_start","detail":"type=implement func=write_output iter=13","total_cost":0.00}
+{"ts":"2026-05-16T20:34:59Z","action":"dispatch_done","detail":"type=implement func=write_output cost=0.8488924999999999","total_cost":0.00}
+{"ts":"2026-05-16T20:35:00Z","action":"success","detail":"iter=14","total_cost":0.00}
+{"ts":"2026-05-16T20:35:00Z","action":"run_end","detail":"iterations=13 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:05Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:05Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:05Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:10Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:11Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:11Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:16Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:16Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:16Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:21Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:22Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:22Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:27Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:27Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:27Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:32Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:33Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:33Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:38Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:38Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:38Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:43Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:44Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:44Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:49Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:49Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:49Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:35:54Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:35:55Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:35:55Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:00Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:00Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:00Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:05Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:06Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:06Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:11Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:11Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:11Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:16Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:17Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:17Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:22Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:22Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:22Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:27Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:28Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:28Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:33Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:33Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:33Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:38Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:39Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:39Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:44Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:44Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:44Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:49Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:50Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:50Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:36:55Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:36:55Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:36:55Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:00Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:01Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:01Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:06Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:06Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:06Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:11Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:12Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:12Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:17Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:17Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:17Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:22Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:23Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:23Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:28Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:28Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:28Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:33Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:34Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:34Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:39Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:39Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:39Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:44Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:45Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:45Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:50Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:50Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:50Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:37:55Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:37:56Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:37:56Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:01Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:01Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:01Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:06Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:07Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:07Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:12Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:12Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:12Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:17Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:18Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:18Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:23Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:23Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:23Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:28Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:29Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:29Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:34Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:34Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:34Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:39Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:40Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:40Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:45Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:45Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:45Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:50Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:51Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:51Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:38:56Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:38:56Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:38:56Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:39:01Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:39:02Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:39:02Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:39:07Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:39:07Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:39:07Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:39:12Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:39:13Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:39:13Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:39:18Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:39:18Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:39:18Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:39:23Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:39:24Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:39:24Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:39:29Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
+{"ts":"2026-05-16T20:39:29Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:39:29Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T20:41:11Z","action":"run_start","detail":"print(\"hello\"); print(1+2); print(\"end\")","total_cost":0.00}
+{"ts":"2026-05-16T20:41:11Z","action":"real_error","detail":"err=Syntax: internal: cg_exp_to_next_reg cannot discharge KInt (load_string status=1) step=3/4 Loading source (parse + compile) iter=1","total_cost":0.00}
+{"ts":"2026-05-16T20:41:11Z","action":"dispatch_start","detail":"type=debug err=Syntax: internal: cg_exp_to_next_reg cannot discharge KInt (load_string status=1) iter=1","total_cost":0.00}

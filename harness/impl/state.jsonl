@@ -1614,3 +1614,36 @@
 {"ts":"2026-05-17T00:19:12Z","action":"dispatch_done","detail":"type=debug err=crates/lua-parse/src/lib.rs:3704:5: cost=1.884743","total_cost":0.00}
 {"ts":"2026-05-17T00:19:12Z","action":"real_error","detail":"err=crates/lua-vm/src/state.rs:1300:28: step=4/4 Executing chunk iter=4","total_cost":0.00}
 {"ts":"2026-05-17T00:19:12Z","action":"dispatch_start","detail":"type=debug err=crates/lua-vm/src/state.rs:1300:28: iter=4","total_cost":0.00}
+{"ts":"2026-05-17T00:27:02Z","action":"dispatch_done","detail":"type=debug err=crates/lua-vm/src/state.rs:1300:28: cost=2.9706077500000005","total_cost":0.00}
+{"ts":"2026-05-17T00:27:02Z","action":"success","detail":"iter=5","total_cost":0.00}
+{"ts":"2026-05-17T00:27:02Z","action":"run_end","detail":"iterations=4 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:07Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:07Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:07Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:13Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:13Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:13Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:18Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:18Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:18Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:23Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:24Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:24Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:29Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:29Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:29Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:34Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:35Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:35Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:40Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:40Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:40Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:45Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:46Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:46Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:27:51Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:27:51Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:27:51Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:34:38Z","action":"run_start","detail":"local function counter() local n = 0; return function() n = n + 1; return n end end; local c = counter(); print(c()); print(c()); print(c())","total_cost":0.00}
+{"ts":"2026-05-17T00:34:39Z","action":"panic_detected","detail":"func=try_bin_tm iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:34:39Z","action":"dispatch_start","detail":"type=implement func=try_bin_tm iter=1","total_cost":0.00}

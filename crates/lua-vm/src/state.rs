@@ -1476,7 +1476,10 @@ impl LuaState {
     }
     pub fn table_getn(&self, _t: &GcRef<LuaTable>) -> i64 { todo!("phase-b: table_getn") }
 
-    pub fn try_bin_tm<T, U, V, W>(&mut self, _p1: T, _p2: U, _res: V, _tm: W) -> Result<(), LuaError> { todo!("phase-b: try_bin_tm") }
+    pub fn try_bin_tm(&mut self, p1: &LuaValue, p2: &LuaValue, res: StackIdx, tm: lua_types::tagmethod::TagMethod) -> Result<(), LuaError> {
+        let event = crate::tagmethods::TagMethod::from_u8(tm as u8);
+        crate::tagmethods::try_bin_tm(self, p1, p2, res, event)
+    }
     pub fn try_bin_i_tm<T, U, V, W, X>(&mut self, _p1: T, _imm: U, _flip: V, _res: W, _tm: X) -> Result<(), LuaError> { todo!("phase-b: try_bin_i_tm") }
     pub fn try_bin_assoc_tm<T, U, V, W, X>(&mut self, _p1: T, _p2: U, _flip: V, _res: W, _tm: X) -> Result<(), LuaError> { todo!("phase-b: try_bin_assoc_tm") }
     pub fn try_concat_tm<T, U>(&mut self, _p1: T, _p2: U) -> Result<Option<LuaValue>, LuaError> { todo!("phase-b: try_concat_tm") }

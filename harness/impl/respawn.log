@@ -836,3 +836,26 @@
 [2026-05-17T00:10:26Z respawn] outer run #21 exited rc=0
 [2026-05-17T00:10:32Z respawn] respawn watchdog starting. GLOBAL_CAP=$2000.00 PER_RUN_MAX_ITER=80 OUTER_MAX_RUNS=50
 [2026-05-17T00:10:32Z respawn] outer run #1 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:02Z respawn] outer run #1 exited rc=0
+[2026-05-17T00:27:07Z respawn] outer run #2 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:07Z respawn] outer run #2 exited rc=0
+[2026-05-17T00:27:12Z respawn] outer run #3 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:13Z respawn] outer run #3 exited rc=0
+[2026-05-17T00:27:18Z respawn] outer run #4 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:18Z respawn] outer run #4 exited rc=0
+[2026-05-17T00:27:23Z respawn] outer run #5 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:24Z respawn] outer run #5 exited rc=0
+[2026-05-17T00:27:29Z respawn] outer run #6 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:29Z respawn] outer run #6 exited rc=0
+[2026-05-17T00:27:34Z respawn] outer run #7 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:35Z respawn] outer run #7 exited rc=0
+[2026-05-17T00:27:40Z respawn] outer run #8 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:40Z respawn] outer run #8 exited rc=0
+[2026-05-17T00:27:45Z respawn] outer run #9 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:46Z respawn] outer run #9 exited rc=0
+[2026-05-17T00:27:51Z respawn] outer run #10 starting (test: local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5)))
+[2026-05-17T00:27:51Z respawn] outer run #10 exited rc=0
+[2026-05-17T00:27:51Z respawn] SUCCESS: test program produced expected output. Stopping watchdog.
+[2026-05-17T00:27:51Z respawn] respawn watchdog finished after 50 attempts (or success)
+[2026-05-17T00:34:38Z respawn] respawn watchdog starting. GLOBAL_CAP=$2000.00 PER_RUN_MAX_ITER=80 OUTER_MAX_RUNS=50
+[2026-05-17T00:34:38Z respawn] outer run #1 starting (test: local function counter() local n = 0; return function() n = n + 1; return n end end; local c = counter(); print(c()); print(c()); print(c()))

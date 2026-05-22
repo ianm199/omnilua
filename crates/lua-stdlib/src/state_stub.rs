@@ -326,6 +326,10 @@ impl LuaStateStubExt for LuaState {
         lua_vm::api::push_lstring(self, s)?;
         Ok(())
     }
+
+    fn call(&mut self, nargs: i32, nresults: i32) -> Result<(), LuaError> {
+        lua_vm::api::call_k(self, nargs, nresults, 0, None)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

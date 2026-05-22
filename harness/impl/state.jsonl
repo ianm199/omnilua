@@ -64,3 +64,6 @@
 {"ts":"2026-05-16T14:27:19Z","action":"dispatch_done","detail":"func=push_c_function cost=2.0451292500000005","total_cost":0.00}
 {"ts":"2026-05-16T14:27:20Z","action":"panic_detected","detail":"func=push_bytes iter=16","total_cost":0.00}
 {"ts":"2026-05-16T14:27:20Z","action":"dispatch_start","detail":"func=push_bytes iter=16","total_cost":0.00}
+{"ts":"2026-05-16T14:28:06Z","action":"dispatch_done","detail":"func=push_bytes cost=0.49707775000000004","total_cost":0.00}
+{"ts":"2026-05-16T14:28:06Z","action":"panic_detected","detail":"func=call iter=17","total_cost":0.00}
+{"ts":"2026-05-16T14:28:06Z","action":"dispatch_start","detail":"func=call iter=17","total_cost":0.00}

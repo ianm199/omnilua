@@ -398,7 +398,7 @@ fn tonum(state: &mut LuaState, arg: i32) -> Result<bool, LuaError> {
         if let Some(s) = state.to_lua_string_bytes(arg) {
             let len = s.len();
             // PORT NOTE: string_to_number pushes the number if successful
-            let pushed = state.string_to_number_push(s)?;
+            let pushed = state.string_to_number_push(&s)?;
             Ok(pushed == len + 1)
         } else {
             Ok(false)
@@ -422,8 +422,8 @@ fn trymt(state: &mut LuaState, mtname: &[u8]) -> Result<(), LuaError> {
         return Err(LuaError::runtime(format_args!(
             "attempt to {} a '{}' with a '{}'",
             op.escape_ascii(),
-            state.type_name_at(-2),
-            state.type_name_at(-1),
+            state.type_name_at(-2).escape_ascii(),
+            state.type_name_at(-1).escape_ascii(),
         )));
     }
     // C: lua_insert(L, -3); lua_call(L, 2, 1);
@@ -470,7 +470,7 @@ pub fn arith_div(state: &mut LuaState) -> Result<usize, LuaError> {
 }
 /// C: `static int arith_idiv(lua_State *L)`
 pub fn arith_idiv(state: &mut LuaState) -> Result<usize, LuaError> {
-    arith(state, ArithOp::IDiv, b"__idiv")
+    arith(state, ArithOp::Idiv, b"__idiv")
 }
 /// C: `static int arith_unm(lua_State *L)`
 pub fn arith_unm(state: &mut LuaState) -> Result<usize, LuaError> {
@@ -1010,7 +1010,7 @@ fn push_captures(
     state.ensure_stack(nlevels as i32, "too many captures")?;
     for i in 0..nlevels {
         match get_one_capture(ms, i, s, e)? {
-            CaptureInfo::Position(n) => state.push(LuaValue::Int(n)),
+            CaptureInfo::Position(n) => state.push(LuaValue::Int(n))?,
             CaptureInfo::Bytes(b) => state.push_bytes(b)?,
         }
     }
@@ -1218,7 +1218,7 @@ fn add_value(
         LuaType::Table => {
             // C: push_onecapture(ms, 0, s, e); lua_gettable(L, 3);
             match get_one_capture(ms, 0, s, e)? {
-                CaptureInfo::Position(n) => state.push(LuaValue::Int(n)),
+                CaptureInfo::Position(n) => state.push(LuaValue::Int(n))?,
                 CaptureInfo::Bytes(b) => state.push_bytes(b)?,
             }
             state.get_table(3)?;
@@ -1240,13 +1240,12 @@ fn add_value(
     if state.type_at(-1) != LuaType::String {
         let tname = state.type_name_at(-1).to_owned();
         return Err(LuaError::runtime(format_args!(
-            "invalid replacement value (a {})", tname
+            "invalid replacement value (a {})", tname.escape_ascii()
         )));
     }
     // C: luaL_addvalue(b);
-    let v = state.pop().as_bytes_or_coerce()
-        .unwrap_or_default()
-        .to_vec();
+    let v = state.to_bytes(-1).unwrap_or_default();
+    state.pop();
     buf.extend_from_slice(&v);
     Ok(true)
 }
@@ -1263,7 +1262,8 @@ pub fn str_gsub(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: luaL_argexpected(..., tr == TNUMBER || tr == TSTRING || tr == TFUNCTION || tr == TTABLE, ...)
     if !matches!(tr, LuaType::Number | LuaType::String | LuaType::Function | LuaType::Table) {
-        return Err(LuaError::type_arg_error(3, "string/function/table", state.arg(3)));
+        let v = state.arg(3);
+        return Err(LuaError::type_arg_error(3, "string/function/table", &v));
     }
 
     let src_owned = src_bytes.to_vec();
@@ -1463,7 +1463,7 @@ fn addliteral(state: &mut LuaState, buf: &mut Vec<u8>, arg: i32) -> Result<(), L
         }
         LuaType::Nil | LuaType::Boolean => {
             // C: luaL_tolstring(L, arg, NULL); luaL_addvalue(b);
-            let s = state.to_string_coerced(arg)?;
+            let s = state.to_string_coerced(arg).unwrap_or_default();
             buf.extend_from_slice(&s);
         }
         _ => {
@@ -1619,7 +1619,7 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
             }
             b's' => {
                 // C: luaL_tolstring(L, arg, &l);
-                let s = state.to_string_coerced(arg)?.to_vec();
+                let s = state.to_string_coerced(arg).unwrap_or_default();
                 // TODO(port): width/precision/flags not applied for %s
                 buf.extend_from_slice(&s);
                 state.pop_n(1); // luaL_tolstring pushes a value

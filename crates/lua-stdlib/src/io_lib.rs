@@ -372,7 +372,7 @@ fn new_pre_file(state: &mut LuaState) -> Result<(), LuaError> {
     // C: p->closef = NULL;
     // C: luaL_setmetatable(L, LUA_FILEHANDLE);
     // TODO(port): allocate typed LuaUserData containing LStream, set metatable
-    state.new_userdata_typed::<LStream>(0)?;
+    state.new_userdata_typed(LUA_FILE_HANDLE, std::mem::size_of::<LStream>(), 0)?;
     state.set_metatable_by_name(LUA_FILE_HANDLE)?;
     Ok(())
 }
@@ -539,8 +539,8 @@ fn f_gc(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn io_open(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: const char *filename = luaL_checkstring(L, 1);
     // C: const char *mode = luaL_optstring(L, 2, "r");
-    let filename: &[u8] = state.check_arg_string(1)?;
-    let mode: &[u8] = state.opt_arg_string(2, b"r")?;
+    let filename: Vec<u8> = state.check_arg_string(1)?;
+    let mode: Vec<u8> = state.opt_arg_string(2, b"r")?;
     // C: luaL_argcheck(L, l_checkmode(md), 2, "invalid mode");
     if !check_mode(mode) {
         return Err(LuaError::arg_error(2, "invalid mode"));
@@ -566,8 +566,8 @@ pub fn io_open(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn io_popen(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: luaL_argcheck(L, l_checkmodep(mode), 2, "invalid mode");
     // C: p->f = l_popen(L, filename, mode); p->closef = &io_pclose;
-    let filename: &[u8] = state.check_arg_string(1)?;
-    let mode: &[u8] = state.opt_arg_string(2, b"r")?;
+    let filename: Vec<u8> = state.check_arg_string(1)?;
+    let mode: Vec<u8> = state.opt_arg_string(2, b"r")?;
     if !check_mode_popen(mode) {
         return Err(LuaError::arg_error(2, "invalid mode"));
     }
@@ -623,8 +623,8 @@ fn g_iofile(state: &mut LuaState, key: &[u8], mode: &[u8]) -> Result<usize, LuaE
     if !matches!(state.type_at(1), LuaType::None | LuaType::Nil) {
         if state.type_at(1) == LuaType::String {
             // C: opencheck(L, filename, mode);
-            let filename: &[u8] = state.check_arg_string(1)?;
-            opencheck(state, filename, mode)?;
+            let filename = state.check_arg_string(1)?;
+            opencheck(state, &filename, mode)?;
         } else {
             // C: tofile(L);  /* check that it's a valid file handle */
             // C: lua_pushvalue(L, 1);
@@ -708,15 +708,12 @@ fn read_number(
     // C: if (lua_stringtonumber(L, rn.buff)) return 1; else { lua_pushnil(L); return 0; }
     // TODO(port): state.string_to_number(bytes) — parses bytes into LuaValue::Int or Float
     let bytes = rn.as_bytes();
-    match state.string_to_number(bytes)? {
-        Some(v) => {
-            state.push(v);
-            Ok(true)
-        }
-        None => {
-            state.push(LuaValue::Nil);
-            Ok(false)
-        }
+    let pushed = state.string_to_number_push(&bytes)?;
+    if pushed != 0 {
+        Ok(true)
+    } else {
+        state.push(LuaValue::Nil)?;
+        Ok(false)
     }
 }
 
@@ -846,7 +843,7 @@ fn g_read(
         n = first + 1;
     } else {
         // C: luaL_checkstack(L, nargs+LUA_MINSTACK, "too many arguments");
-        state.ensure_stack(nargs as usize + 20, "too many arguments")?;
+        state.ensure_stack((nargs as i32) + 20, "too many arguments")?;
         let mut remaining = nargs;
         while remaining > 0 && success {
             // C: if (lua_type(L, n) == LUA_TNUMBER)
@@ -861,8 +858,8 @@ fn g_read(
             } else {
                 // C: const char *p = luaL_checkstring(L, n);
                 // C: if (*p == '*') p++;  /* skip optional '*' (compat) */
-                let s: &[u8] = state.check_arg_string(n)?;
-                let p = if s.first() == Some(&b'*') { &s[1..] } else { s };
+                let s: Vec<u8> = state.check_arg_string(n)?;
+                let p: &[u8] = if s.first() == Some(&b'*') { &s[1..] } else { &s[..] };
                 match p.first() {
                     // C: case 'n': success = read_number(L, f); break;
                     Some(&b'n') => {
@@ -969,8 +966,8 @@ fn g_write(
         } else {
             // C: const char *s = luaL_checklstring(L, arg, &l);
             // C: status = status && (fwrite(s, sizeof(char), l, f) == l);
-            let s: &[u8] = state.check_arg_string(idx)?;
-            match file.write_bytes(s) {
+            let s: Vec<u8> = state.check_arg_string(idx)?;
+            match file.write_bytes(&s) {
                 Ok(n) => overall_ok = overall_ok && n == s.len(),
                 Err(_) => overall_ok = false,
             }
@@ -1116,7 +1113,7 @@ fn aux_lines(state: &mut LuaState, toclose: bool) -> Result<(), LuaError> {
     // C: lua_rotate(L, 2, 3);  /* move three values to their positions */
     state.rotate(2, 3);
     // C: lua_pushcclosure(L, io_readline, 3 + n);
-    state.push_c_closure(io_readline, (3 + n) as usize);
+    state.push_c_closure(io_readline, (3 + n) as i32)?;
     Ok(())
 }
 
@@ -1145,9 +1142,9 @@ pub fn io_lines(state: &mut LuaState) -> Result<usize, LuaError> {
     } else {
         // C: const char *filename = luaL_checkstring(L, 1);
         // C: opencheck(L, filename, "r"); lua_replace(L, 1);
-        let filename: &[u8] = state.check_arg_string(1)?;
-        opencheck(state, filename, b"r")?;
-        state.replace(1);
+        let filename = state.check_arg_string(1)?;
+        opencheck(state, &filename, b"r")?;
+        state.replace(1)?;
         true
     };
 
@@ -1188,9 +1185,9 @@ fn io_readline(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     // C: lua_settop(L, 1);
-    state.set_top(1);
+    state.set_top(1)?;
     // C: luaL_checkstack(L, n, "too many arguments");
-    state.ensure_stack(n, "too many arguments")?;
+    state.ensure_stack(n as i32, "too many arguments")?;
 
     // C: for (i = 1; i <= n; i++) lua_pushvalue(L, lua_upvalueindex(3 + i));
     for i in 1..=n {

@@ -140,7 +140,7 @@ impl LuaState {
     pub fn raw_set(&mut self, idx: i32) -> Result<(), LuaError> { todo!("phase-b: raw_set") }
     pub fn raw_get_i(&mut self, idx: i32, n: i64) -> Result<LuaType, LuaError> { todo!("phase-b: raw_get_i") }
     pub fn raw_set_i(&mut self, idx: i32, n: i64) -> Result<(), LuaError> { todo!("phase-b: raw_set_i") }
-    pub fn raw_equal(&mut self, idx1: i32, idx2: i32) -> bool { todo!("phase-b: raw_equal") }
+    pub fn raw_equal(&mut self, idx1: i32, idx2: i32) -> Result<bool, LuaError> { todo!("phase-b: raw_equal") }
     pub fn raw_len(&mut self, idx: i32) -> i64 { todo!("phase-b: raw_len") }
     pub fn get_i(&mut self, idx: i32, n: i64) -> Result<LuaType, LuaError> { todo!("phase-b: get_i") }
     pub fn get_metafield(&mut self, idx: i32, name: &[u8]) -> Result<LuaType, LuaError> { todo!("phase-b: get_metafield") }
@@ -179,7 +179,7 @@ impl LuaState {
     // ── Misc / debug ────────────────────────────────────────────────────
     pub fn warning(&mut self, msg: &[u8], to_cont: bool) -> Result<(), LuaError> { todo!("phase-b: warning") }
     pub fn write_output(&mut self, msg: &[u8]) -> Result<(), LuaError> { todo!("phase-b: write_output") }
-    pub fn set_warn_fn(&mut self, f: Option<lua_CFunction>, ud: Option<LuaValue>) { todo!("phase-b: set_warn_fn") }
+    pub fn set_warn_fn(&mut self, f: Option<lua_CFunction>, ud: Option<LuaValue>) -> Result<(), LuaError> { todo!("phase-b: set_warn_fn") }
     pub fn set_funcs<F: Copy>(&mut self, funcs: &[(&[u8], F)], nup: i32) -> Result<(), LuaError> { todo!("phase-b: set_funcs") }
     pub fn set_global(&mut self, name: &[u8]) -> Result<(), LuaError> { todo!("phase-b: set_global") }
     pub fn set_upvalue(&mut self, fidx: i32, n: i32) -> Result<Option<Vec<u8>>, LuaError> { todo!("phase-b: set_upvalue") }

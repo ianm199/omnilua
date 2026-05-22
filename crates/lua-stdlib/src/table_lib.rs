@@ -73,7 +73,7 @@ fn check_tab(state: &mut LuaState, arg: i32, what: u32) -> Result<(), LuaError> 
     // `n` tracks how many items have been pushed (MT + checked field values).
     let mut n: i32 = 1;
     // TODO(port): state.get_metatable returns bool (pushes MT if found); verify method name
-    let has_mt = state.get_metatable(arg);
+    let has_mt = state.get_metatable(arg)?;
     let mut ok = has_mt;
 
     // Short-circuit: each field is only checked if all previous checks passed.
@@ -351,7 +351,7 @@ pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
     let last = aux_getn(state, 1, TAB_R)?;
     // TODO(port): state.opt_arg_lstring(n, default) → luaL_optlstring; verify method name
     // Clone the separator before any stack-mutating calls that might invalidate it.
-    let sep: Vec<u8> = state.opt_arg_lstring(2, b"")?.to_vec();
+    let sep: Vec<u8> = state.opt_arg_lstring(2, Some(b""))?.unwrap_or_default();
     let mut i = state.opt_arg_integer(3, 1)?;
     let last = state.opt_arg_integer(4, last)?;
 

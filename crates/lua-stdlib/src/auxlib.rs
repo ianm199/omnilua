@@ -209,7 +209,7 @@ fn push_global_func_name(
 fn push_func_name(state: &mut LuaState, ar: &mut LuaDebug) -> Result<(), LuaError> {
     if push_global_func_name(state, ar)? {
         // C: lua_pushfstring(L, "function '%s'", lua_tostring(L, -1));
-        let name = state.peek_bytes(-1).unwrap_or(b"?").to_vec();
+        let name = state.peek_bytes(-1).unwrap_or_else(|| b"?".to_vec());
         state.push_fstring(format_args!("function '{}'", BStr(&name)))?;
         // C: lua_remove(L, -2);
         state.remove(-2)?;
@@ -350,7 +350,7 @@ pub fn arg_error(
     }
     let fname = if ar.name.is_none() {
         if push_global_func_name(state, &mut ar)? {
-            state.peek_bytes(-1).unwrap_or(b"?").to_vec()
+            state.peek_bytes(-1).unwrap_or_else(|| b"?".to_vec())
         } else {
             b"?".to_vec()
         }
@@ -381,7 +381,7 @@ pub fn type_error_arg(
     //    else
     //      typearg = luaL_typename(L, arg);
     let typearg: Vec<u8> = if get_metafield(state, arg, b"__name")? == LuaType::String {
-        let bytes = state.peek_bytes(-1).unwrap_or(b"?").to_vec();
+        let bytes = state.peek_bytes(-1).unwrap_or_else(|| b"?".to_vec());
         state.pop_n(1);
         bytes
     } else if state.type_at(arg) == LuaType::LightUserData {
@@ -928,7 +928,7 @@ pub fn gsub<'a>(
     add_gsub(&mut b, s, pat, repl);
     push_result(state, &mut b)?;
     // C: return lua_tostring(L, -1);
-    Ok(state.peek_bytes(-1).unwrap_or(b"").to_vec())
+    Ok(state.peek_bytes(-1).unwrap_or_default())
 }
 
 /// Find `needle` in `haystack`, returning the byte offset or `None`.
@@ -964,7 +964,7 @@ pub fn lua_ref(state: &mut LuaState, t: i32) -> Result<i32, LuaError> {
         state.raw_set_i(t, FREELIST_REF)?;
     } else {
         // C: lua_assert(lua_isinteger(L, -1)); ref = (int)lua_tointeger(L, -1);
-        debug_assert!(state.type_at(-1) == LuaType::Integer);
+        debug_assert!(state.type_at(-1) == LuaType::Number);
         ref_val = state.to_integer_x(-1).unwrap_or(0) as i32;
     }
     state.pop_n(1); // remove element from stack
@@ -991,7 +991,7 @@ pub fn lua_unref(state: &mut LuaState, t: i32, r: i32) -> Result<(), LuaError> {
         let t = state.abs_index(t);
         // C: lua_rawgeti(L, t, freelist);
         state.raw_get_i(t, FREELIST_REF)?;
-        debug_assert!(state.type_at(-1) == LuaType::Integer);
+        debug_assert!(state.type_at(-1) == LuaType::Number);
         // C: lua_rawseti(L, t, ref);  /* t[ref] = t[freelist] */
         state.raw_set_i(t, r as i64)?;
         // C: lua_pushinteger(L, ref); lua_rawseti(L, t, freelist);
@@ -1182,7 +1182,7 @@ pub fn to_lua_string(state: &mut LuaState, idx: i32) -> Result<Vec<u8>, LuaError
                 // C: int tt = luaL_getmetafield(L, idx, "__name");
                 let tt = get_metafield(state, idx, b"__name")?;
                 let kind: Vec<u8> = if tt == LuaType::String {
-                    state.peek_bytes(-1).unwrap_or(b"?").to_vec()
+                    state.peek_bytes(-1).unwrap_or_else(|| b"?".to_vec())
                 } else {
                     state.type_name_at(idx).to_vec()
                 };
@@ -1198,7 +1198,7 @@ pub fn to_lua_string(state: &mut LuaState, idx: i32) -> Result<Vec<u8>, LuaError
         }
     }
     // C: return lua_tolstring(L, -1, len);
-    Ok(state.peek_bytes(-1).unwrap_or(b"").to_vec())
+    Ok(state.peek_bytes(-1).unwrap_or_default())
 }
 
 /// Register the functions in `l` into the table at `-(nup + 1)`, giving each
@@ -1329,7 +1329,7 @@ pub fn new_state() -> Result<LuaState, LuaError> {
 fn default_panic_handler(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: const char *msg = (lua_type(L, -1) == LUA_TSTRING) ? lua_tostring(L, -1) : "...";
     let msg = if state.type_at(-1) == LuaType::String {
-        state.peek_bytes(-1).unwrap_or(b"?").to_vec()
+        state.peek_bytes(-1).unwrap_or_else(|| b"?".to_vec())
     } else {
         b"error object is not a string".to_vec()
     };
@@ -1365,11 +1365,11 @@ fn warn_cont(state: &mut LuaState, message: &[u8], tocont: bool) -> Result<(), L
     eprint!("{}", BStr(message));
     if tocont {
         // C: lua_setwarnf(L, warnfcont, L);
-        state.set_warn_fn(warn_cont)?;
+        state.set_warn_fn(Some(warn_cont), None)?;
     } else {
         eprintln!(); // finish message with end-of-line
         // C: lua_setwarnf(L, warnfon, L);
-        state.set_warn_fn(warn_on)?;
+        state.set_warn_fn(Some(warn_on), None)?;
     }
     Ok(())
 }
@@ -1389,9 +1389,9 @@ fn check_control(
     }
     let cmd = &message[1..];
     if cmd == b"off" {
-        state.set_warn_fn(warn_off)?;
+        state.set_warn_fn(Some(warn_off), None)?;
     } else if cmd == b"on" {
-        state.set_warn_fn(warn_on)?;
+        state.set_warn_fn(Some(warn_on), None)?;
     }
     Ok(true)
 }

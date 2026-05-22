@@ -421,7 +421,7 @@ pub(crate) fn os_clock(state: &mut LuaState) -> Result<usize, LuaError> {
 pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: size_t slen; const char *s = luaL_optlstring(L, 1, "%c", &slen);
     // Clone to Vec<u8> so that `s` does not borrow from `state`.
-    let format: Vec<u8> = state.opt_arg_lstring(1, b"%c")?.to_vec();
+    let format: Vec<u8> = state.opt_arg_lstring(1, Some(b"%c"))?.unwrap_or_default();
     let s: &[u8] = &format[..];
 
     // C: time_t t = luaL_opt(L, l_checktime, 2, time(NULL));

@@ -582,10 +582,10 @@ pub fn ll_searchpath(state: &mut LuaState) -> Result<usize, LuaError> {
     let name = state.check_arg_string(1)?.to_vec();
     let path = state.check_arg_string(2)?.to_vec();
     // C: luaL_optstring(L, 3, ".")
-    let sep = state.opt_arg_string(3, b".").to_vec();
+    let sep = state.opt_arg_string(3, b".")?;
     // C: luaL_optstring(L, 4, LUA_DIRSEP)
     let dirsep_default = [LUA_DIRSEP];
-    let dirsep = state.opt_arg_string(4, &dirsep_default).to_vec();
+    let dirsep = state.opt_arg_string(4, &dirsep_default)?;
 
     let found = searchpath(state, &name, &path, &sep, &dirsep);
     if found.is_some() {

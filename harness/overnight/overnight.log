@@ -57,3 +57,5 @@ Per-file outputs: harness/oracle/results/*.translator.json + *.hooks.log
 [2026-05-16T04:22:43Z]   → pass 1: dispatching compiler-fixer (budget $6)
 [2026-05-16T04:36:38Z]   → pass 2: dispatching compiler-fixer (budget $6)
 [2026-05-16T04:44:39Z]   pass 2: 483 → 114 errors, $5.820823000000001
+[2026-05-16T04:44:39Z]   committed: 1b5d874 Phase C compiler-fixer pass 2: lua-stdlib 483 → 114 errors
+[2026-05-16T04:44:39Z]   → pass 3: dispatching compiler-fixer (budget $6)

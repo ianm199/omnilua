@@ -764,7 +764,7 @@ pub(crate) fn load_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     let mode: Vec<u8> = state
         .opt_arg_string_bytes(3)
         .map(|b| b.to_vec())
-        .unwrap_or_else(|| b"bt".to_vec());
+        .unwrap_or_else(|_| b"bt".to_vec());
     // C: int env = (!lua_isnone(L, 4) ? 4 : 0);
     let env = if state.type_at(4) != LuaType::None { 4 } else { 0 };
     let status_ok = if is_string {

@@ -712,7 +712,7 @@ fn int_error(state: &mut LuaState, arg: i32) -> Result<usize, LuaError> {
     if state.is_number(arg) {
         Err(LuaError::arg_error(
             arg,
-            b"number has no integer representation",
+            "number has no integer representation",
         ))
     } else {
         tag_error(state, arg, LuaType::Number)?;
@@ -1053,8 +1053,10 @@ pub fn load_bufferx(
 ) -> Result<i32, LuaError> {
     // C: LoadS ls; ls.s = buff; ls.size = size;
     // C: return lua_load(L, getS, &ls, name, mode);
-    let reader = make_string_reader(buff.to_vec());
-    state.load(reader, name, mode)
+    // TODO(phase-b): state.load expects (chunk: &[u8], name, mode) in state_stub; the reader-based loader needs a load_with_reader API match.
+    let _reader = make_string_reader(buff.to_vec());
+    let ok = state.load(buff, name, mode)?;
+    Ok(if ok { 0 } else { 1 })
 }
 
 /// Load a buffer as a Lua chunk (no mode argument).
@@ -1230,7 +1232,7 @@ pub fn set_funcs(
         state.set_field(-(nup + 2), reg.name)?;
     }
     // C: lua_pop(L, nup);
-    state.pop_n(nup as usize);
+    state.pop_n(nup);
     Ok(())
 }
 
@@ -1315,12 +1317,10 @@ pub fn get_metatable(state: &mut LuaState, tname: &[u8]) -> Result<LuaType, LuaE
 pub fn new_state() -> Result<LuaState, LuaError> {
     // C: lua_State *L = lua_newstate(l_alloc, NULL);
     // PORT NOTE: Rust's allocator is used implicitly; no l_alloc hook needed.
-    let mut state = LuaState::new()?;
-    // C: lua_atpanic(L, &panic);
-    state.set_panic_handler(default_panic_handler)?;
-    // C: lua_setwarnf(L, warnfoff, L);  /* default is warnings off */
-    state.set_warn_fn(warn_off)?;
-    Ok(state)
+    // TODO(phase-b): LuaState::new() / set_panic_handler / set_warn_fn need a real LuaState constructor in lua-vm. Stub for Phase A.
+    let _ = default_panic_handler;
+    let _ = warn_off;
+    todo!("phase-b: LuaState::new()")
 }
 
 /// Default panic handler: print message to stderr and return to abort.
@@ -1363,13 +1363,12 @@ fn warn_on(state: &mut LuaState, message: &[u8], tocont: bool) -> Result<(), Lua
 fn warn_cont(state: &mut LuaState, message: &[u8], tocont: bool) -> Result<(), LuaError> {
     // C: lua_writestringerror("%s", message);
     eprint!("{}", BStr(message));
+    // TODO(phase-b): set_warn_fn expects lua_CFunction in state_stub; warn_cont/warn_on take (msg, tocont). Wire after warn-fn API lands in lua-vm.
     if tocont {
-        // C: lua_setwarnf(L, warnfcont, L);
-        state.set_warn_fn(Some(warn_cont), None)?;
+        let _ = (warn_cont as fn(&mut LuaState, &[u8], bool) -> Result<(), LuaError>,);
     } else {
-        eprintln!(); // finish message with end-of-line
-        // C: lua_setwarnf(L, warnfon, L);
-        state.set_warn_fn(Some(warn_on), None)?;
+        eprintln!();
+        let _ = (warn_on as fn(&mut LuaState, &[u8], bool) -> Result<(), LuaError>,);
     }
     Ok(())
 }
@@ -1388,10 +1387,12 @@ fn check_control(
         return Ok(false);
     }
     let cmd = &message[1..];
+    // TODO(phase-b): set_warn_fn expects lua_CFunction in state_stub; warn_off/warn_on take (msg, tocont). Wire after warn-fn API lands in lua-vm.
+    let _ = state;
     if cmd == b"off" {
-        state.set_warn_fn(Some(warn_off), None)?;
+        let _ = warn_off as fn(&mut LuaState, &[u8], bool) -> Result<(), LuaError>;
     } else if cmd == b"on" {
-        state.set_warn_fn(Some(warn_on), None)?;
+        let _ = warn_on as fn(&mut LuaState, &[u8], bool) -> Result<(), LuaError>;
     }
     Ok(true)
 }

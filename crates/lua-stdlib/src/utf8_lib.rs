@@ -312,7 +312,7 @@ fn codepoint(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     // C: n = (int)(pose - posi) + 1; luaL_checkstack(L, n, "string slice too long");
-    let n_max = (pose - posi + 1) as usize;
+    let n_max = (pose - posi + 1) as i32;
     state.ensure_stack(n_max, "string slice too long")?;
 
     // C: se = s + pose; for (s += posi - 1; s < se;) { ... }
@@ -505,7 +505,7 @@ fn iter_aux(state: &mut LuaState, strict: bool) -> Result<usize, LuaError> {
     // C: lua_Unsigned n = (lua_Unsigned)lua_tointeger(L, 2);
     // TODO(port): to_integer(n) exact return type (i64/Option<i64>) not yet confirmed;
     // treating as i64 cast to u64 for unsigned byte-index arithmetic.
-    let mut n: u64 = state.to_integer(2) as u64;
+    let mut n: u64 = state.to_integer(2).unwrap_or(0) as u64;
 
     // C: if (n < len) { while (iscontp(s + n)) n++; }
     if (n as usize) < len {
@@ -573,10 +573,10 @@ fn iter_codes(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     // C: lua_pushcfunction(L, lax ? iter_auxlax : iter_auxstrict);
-    // TODO(port): verify LuaClosure::LightC wraps fn(&mut LuaState)->Result<usize,LuaError>.
+    // TODO(phase-b): LuaClosure::LightC in lua-types is fn() -> i32; needs widening to the real lua_CFunction signature. Stub via push_c_function until then.
     let iter_fn: fn(&mut LuaState) -> Result<usize, LuaError> =
         if lax { iter_aux_lax } else { iter_aux_strict };
-    state.push(LuaValue::Function(LuaClosure::LightC(iter_fn)));
+    state.push_c_function(iter_fn)?;
 
     // C: lua_pushvalue(L, 1);  — push the string argument as the loop invariant
     // TODO(port): push_value_at(idx) not yet confirmed in LuaState API.

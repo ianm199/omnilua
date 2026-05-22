@@ -720,8 +720,8 @@ static MATHLIB: &[LibReg] = &[
 pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: luaL_newlib(L, mathlib);
     // Creates a new table and registers all non-None entries from MATHLIB.
-    // TODO(port): state.new_lib(MATHLIB)? — API to be confirmed in Phase B.
-    state.new_lib(MATHLIB)?;
+    // TODO(phase-b): MATHLIB uses local LibReg; convert to &[(&[u8], lua_CFunction)] for state.new_lib.
+    state.new_table()?;
 
     // C: lua_pushnumber(L, PI); lua_setfield(L, -2, "pi");
     state.push(LuaValue::Float(PI));

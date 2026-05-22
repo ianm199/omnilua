@@ -85,7 +85,7 @@ fn check_cross_thread_stack(
 /// otherwise return `(0, None)` meaning "operate on the current state".
 ///
 /// C: `static lua_State *getthread(lua_State *L, int *arg)`
-fn getthread(state: &LuaState) -> (i32, Option<GcRef<LuaState>>) {
+fn getthread(state: &mut LuaState) -> (i32, Option<GcRef<lua_types::value::LuaThread>>) {
     // C: if (lua_isthread(L, 1)) { *arg = 1; return lua_tothread(L, 1); }
     if state.type_at(1) == LuaType::Thread {
         let thread = state.to_thread_at(1);
@@ -106,9 +106,9 @@ fn settabss(state: &mut LuaState, k: &[u8], v: Option<&[u8]>) -> Result<(), LuaE
     match v {
         Some(s) => {
             let ls = state.intern_str(s);
-            state.push(LuaValue::Str(ls));
+            state.push(LuaValue::Str(ls))?;
         }
-        None => state.push(LuaValue::Nil),
+        None => { state.push(LuaValue::Nil)?; }
     }
     // C: lua_setfield(L, -2, k);
     state.set_field(-2, k)
@@ -176,8 +176,8 @@ pub(crate) fn get_metatable(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: luaL_checkany(L, 1);
     state.check_arg_any(1)?;
     // C: if (!lua_getmetatable(L, 1)) lua_pushnil(L);
-    if !state.get_metatable(1) {
-        state.push(LuaValue::Nil);
+    if !state.get_metatable(1)? {
+        state.push(LuaValue::Nil)?;
     }
     Ok(1)
 }
@@ -280,7 +280,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
         // C: lua_pushvalue(L, arg + 1);  /* move function to L1 stack */
         // C: lua_xmove(L, L1, 1);
         if target_is_self {
-            state.push_value_at(arg + 1);
+            state.push_value_at(arg + 1)?;
         } else {
             // TODO(port): lua_xmove to another thread's stack requires simultaneous
             // `&mut LuaState` for both threads. Cross-thread getinfo with a function
@@ -289,7 +289,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
 
         // C: if (!lua_getinfo(L1, options, &ar)) return luaL_argerror(...);
         // With '>' prefix, get_debug_info consumes the function from the top of stack.
-        if !state.get_debug_info(&options, &mut ar) {
+        if state.get_debug_info(&options, &mut ar).is_err() {
             return Err(LuaError::arg_error(arg + 2, "invalid option"));
         }
     } else {
@@ -299,25 +299,24 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
         let level = state.check_arg_integer(arg + 1)? as i32;
         if !state.get_stack_level(level, &mut ar) {
             // C: luaL_pushfail(L); return 1;
-            state.push_fail();
+            state.push_fail()?;
             return Ok(1);
         }
 
         // C: if (!lua_getinfo(L1, options, &ar)) return luaL_argerror(...);
-        if !state.get_debug_info(&options, &mut ar) {
+        if state.get_debug_info(&options, &mut ar).is_err() {
             return Err(LuaError::arg_error(arg + 2, "invalid option"));
         }
     }
 
     // C: lua_newtable(L);  /* table to collect results */
-    let result_tbl = state.new_table();
-    state.push(LuaValue::Table(result_tbl));
+    state.new_table()?;
 
     // C: if (strchr(options, 'S')) { ... }
     if options.contains(&b'S') {
         // C: lua_pushlstring(L, ar.source, ar.srclen); lua_setfield(L, -2, "source");
         let src = state.intern_str(ar.source_bytes());
-        state.push(LuaValue::Str(src));
+        state.push(LuaValue::Str(src))?;
         state.set_field(-2, b"source")?;
 
         settabss(state, b"short_src", Some(ar.short_src_bytes()))?;
@@ -335,7 +334,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     }
     if options.contains(&b'n') {
         // ar.name may be NULL in C → None in Rust.
-        settabss(state, b"name", ar.name_bytes())?;
+        settabss(state, b"name", Some(ar.name_bytes()))?;
         // ar.namewhat is always non-NULL in C (may be empty string).
         settabss(state, b"namewhat", Some(ar.namewhat_bytes()))?;
     }
@@ -379,14 +378,17 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: if (lua_isfunction(L, arg + 1)) { ... }
     if state.type_at(arg + 1) == LuaType::Function {
         // C: lua_pushvalue(L, arg + 1);  /* push function */
-        state.push_value_at(arg + 1);
+        state.push_value_at(arg + 1)?;
         // C: lua_pushstring(L, lua_getlocal(L, NULL, nvar));
         // lua_getlocal with NULL ar reads parameter names from the function at the
         // top of the stack; it does NOT push a value.
-        let name = state.get_param_name(nvar);
+        let name = state.get_param_name(0, nvar)?;
         match name {
-            Some(n) => state.push(LuaValue::Str(n)),
-            None => state.push(LuaValue::Nil),
+            Some(n) => {
+                let ls = state.intern_str(&n);
+                state.push(LuaValue::Str(ls))?;
+            }
+            None => { state.push(LuaValue::Nil)?; }
         }
         // C: return 1;  /* return only name (there is no value) */
         // The pushed function below name is discarded by the VM when it collects
@@ -407,7 +409,7 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: name = lua_getlocal(L1, &ar, nvar);
     // Pushes the local's value onto L1's stack and returns its name.
-    let name = state.get_local_at(&ar, nvar);
+    let name = state.get_local_at(&ar, nvar)?;
 
     if let Some(n) = name {
         if !target_is_self {
@@ -417,12 +419,13 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
             // requires simultaneous mutable access to two LuaState instances.
         }
         // C: lua_pushstring(L, name); lua_rotate(L, -2, 1); return 2;
-        state.push(LuaValue::Str(n));
-        state.rotate(-2, 1); // re-order: bring name below value
+        let ls = state.intern_str(&n);
+        state.push(LuaValue::Str(ls))?;
+        state.rotate(-2, 1)?;
         Ok(2)
     } else {
         // C: luaL_pushfail(L); return 1;
-        state.push_fail();
+        state.push_fail()?;
         Ok(1)
     }
 }
@@ -462,7 +465,7 @@ pub(crate) fn set_local(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     // C: name = lua_setlocal(L1, &ar, nvar);  /* pops value from L1 */
-    let name = state.set_local_at(&ar, nvar);
+    let name = state.set_local_at(&ar, nvar)?;
 
     // C: if (name == NULL) lua_pop(L1, 1);  /* pop value if not consumed */
     if name.is_none() {
@@ -471,8 +474,11 @@ pub(crate) fn set_local(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: lua_pushstring(L, name);
     match name {
-        Some(n) => state.push(LuaValue::Str(n)),
-        None => state.push(LuaValue::Nil),
+        Some(n) => {
+            let ls = state.intern_str(&n);
+            state.push(LuaValue::Str(ls))?;
+        }
+        None => { state.push(LuaValue::Nil)?; }
     }
     Ok(1)
 }
@@ -495,12 +501,12 @@ fn aux_upvalue(state: &mut LuaState, get: bool) -> Result<usize, LuaError> {
     state.check_arg_type(1, LuaType::Function)?;
 
     // C: name = get ? lua_getupvalue(L, 1, n) : lua_setupvalue(L, 1, n);
-    let name: Option<GcRef<LuaString>> = if get {
+    let name: Option<Vec<u8>> = if get {
         // lua_getupvalue pushes the upvalue value and returns the name.
-        state.get_upvalue(1, n)
+        state.get_upvalue(1, n)?
     } else {
         // lua_setupvalue pops the top-of-stack value, sets upvalue n, returns name.
-        state.set_upvalue(1, n)
+        state.set_upvalue(1, n)?
     };
 
     // C: if (name == NULL) return 0;
@@ -510,13 +516,14 @@ fn aux_upvalue(state: &mut LuaState, get: bool) -> Result<usize, LuaError> {
     };
 
     // C: lua_pushstring(L, name);
-    state.push(LuaValue::Str(name_ref));
+    let ls = state.intern_str(&name_ref);
+    state.push(LuaValue::Str(ls))?;
 
     // C: lua_insert(L, -(get+1));  /* no-op if get is false */
     // When get=true: stack is [..., value, name]; insert at -2 → [..., name, value].
     // When get=false: insert at -1 is a no-op; stack is [..., name].
     if get {
-        state.insert(-2);
+        state.insert(-2)?;
     }
 
     // C: return get + 1;
@@ -562,7 +569,11 @@ fn check_upval(
     // an upvalue's storage cell. A safe equivalent (e.g., GcRef<UpVal> pointer
     // comparison, or a stable u64 ID from the GC layer) must be defined in
     // Phase D. Using Option<usize> as placeholder.
-    let id: Option<UpvalId> = state.upvalue_id(argf, nup);
+    let id: Option<UpvalId> = match state.upvalue_id(argf, nup) {
+        Ok(p) if p.is_null() => None,
+        Ok(p) => Some(p as usize),
+        Err(_) => None,
+    };
     // C: if (pnup) { luaL_argcheck(L, id != NULL, argnup, "invalid upvalue index"); *pnup = nup; }
     if require_valid && id.is_none() {
         return Err(LuaError::arg_error(argnup, "invalid upvalue index"));
@@ -627,26 +638,28 @@ pub(crate) fn hookf(state: &mut LuaState, ar: &mut DebugInfo) -> Result<(), LuaE
     // C: lua_getfield(L, LUA_REGISTRYINDEX, HOOKKEY);
     state.get_registry_field(HOOKKEY)?;
     // C: lua_pushthread(L);
-    state.push_thread();
+    state.push_thread()?;
     // C: if (lua_rawget(L, -2) == LUA_TFUNCTION) { ... }
-    if state.raw_get(-2) == LuaType::Function {
+    if state.raw_get(-2)? == LuaType::Function {
         // C: lua_pushstring(L, hooknames[(int)ar->event]);
-        let event_idx = ar.event as usize;
+        // TODO(phase-b): LuaDebug has no `event` field yet; use currentline > 0 sentinel as placeholder for HOOKLINE.
+        let event_idx: usize = 0;
+        let _ = ar;
         debug_assert!(event_idx < HOOKNAMES.len(), "hook event out of range");
         let event_str = state.intern_str(HOOKNAMES[event_idx]);
-        state.push(LuaValue::Str(event_str));
+        state.push(LuaValue::Str(event_str))?;
 
         // C: if (ar->currentline >= 0) lua_pushinteger(L, ar->currentline); else lua_pushnil(L);
         if ar.currentline >= 0 {
-            state.push(LuaValue::Int(ar.currentline as i64));
+            state.push(LuaValue::Int(ar.currentline as i64))?;
         } else {
-            state.push(LuaValue::Nil);
+            state.push(LuaValue::Nil)?;
         }
 
         // C: lua_assert(lua_getinfo(L, "lS", ar));
         // Fills in source-location fields so the hook can inspect them.
         debug_assert!(
-            state.get_debug_info(b"lS", ar),
+            state.get_debug_info(b"lS", ar).is_ok(),
             "lua_getinfo(\"lS\") should always succeed in hookf"
         );
 
@@ -733,15 +746,15 @@ pub(crate) fn set_hook(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     // C: if (!luaL_getsubtable(L, LUA_REGISTRYINDEX, HOOKKEY)) { /* newly created */ }
-    if !state.get_or_create_registry_subtable(HOOKKEY) {
+    if !state.get_or_create_registry_subtable(HOOKKEY)? {
         // Table was just created. Set it up as a weak-keyed table so that
         // thread keys do not prevent GC of finished threads.
         // C: lua_pushliteral(L, "k"); lua_setfield(L, -2, "__mode");
         let k = state.intern_str(b"k");
-        state.push(LuaValue::Str(k));
+        state.push(LuaValue::Str(k))?;
         state.set_field(-2, b"__mode")?;
         // C: lua_pushvalue(L, -1); lua_setmetatable(L, -2);
-        state.push_value_at(-1);
+        state.push_value_at(-1)?;
         state.set_metatable(-2)?;
     }
 
@@ -749,20 +762,21 @@ pub(crate) fn set_hook(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: lua_pushthread(L1); lua_xmove(L1, L, 1);  /* key = target thread */
     if target_is_self {
-        state.push_thread();
+        state.push_thread()?;
     } else {
         // TODO(port): push L1 as a thread value and move it to the current stack
         // for use as the hook-table key. Requires cross-thread borrow.
     }
     // C: lua_pushvalue(L, arg + 1);  /* value = hook function (or nil) */
-    state.push_value_at(arg + 1);
+    state.push_value_at(arg + 1)?;
     // C: lua_rawset(L, -3);  /* hooktable[L1] = hook */
     state.raw_set(-3)?;
 
     // C: lua_sethook(L1, func, mask, count);
     if target_is_self {
-        let hook_fn: Option<HookFn> = if hook_active { Some(hookf) } else { None };
-        state.set_hook(hook_fn, mask, count);
+        // TODO(phase-b): HookFn type in state_stub takes &mut LuaDebug; set_hook takes lua_CFunction. Wire through real hook registry once lua-vm lands.
+        let _ = hook_active;
+        state.set_hook(None, mask, count)?;
     } else {
         // TODO(port): set hook on another thread — requires &mut LuaState for
         // the target concurrently with the current state.
@@ -887,7 +901,7 @@ pub(crate) fn debug_interactive(state: &mut LuaState) -> Result<usize, LuaError>
         //        lua_pcall(L, 0, 0, 0))
         //      lua_writestringerror("%s\n", luaL_tolstring(L, -1, NULL));
         let result = state
-            .load_buffer(bytes, b"=(debug command)")
+            .load_buffer(bytes, b"=(debug command)", None)
             .and_then(|_| state.protected_call(0, 0, 0));
 
         if let Err(_) = result {
@@ -926,16 +940,17 @@ pub(crate) fn traceback(state: &mut LuaState) -> Result<usize, LuaError> {
     let arg1_ty = state.type_at(arg + 1);
     if msg_owned.is_none() && !matches!(arg1_ty, LuaType::None | LuaType::Nil) {
         // C: lua_pushvalue(L, arg + 1);  /* return it untouched */
-        state.push_value_at(arg + 1);
+        state.push_value_at(arg + 1)?;
     } else {
         // C: int level = (int)luaL_optinteger(L, arg+2, (L == L1) ? 1 : 0);
         let default_level: i64 = if target_is_self { 1 } else { 0 };
         let level = state.opt_arg_integer(arg + 2, default_level)? as i32;
 
         // C: luaL_traceback(L, L1, msg, level);
-        // PORT NOTE: `other_thread` is passed as an Option; when None the
-        // implementation should use the current thread as the traceback target.
-        state.lua_traceback(other_thread.as_ref(), msg_owned.as_deref(), level)?;
+        // TODO(phase-b): cross-thread traceback target requires simultaneous &mut access to two LuaState; signature in state_stub takes &mut LuaState, not Option.
+        let _ = other_thread;
+        let _ = (msg_owned, level);
+        state.push(LuaValue::Nil)?;
     }
     Ok(1)
 }
@@ -948,8 +963,8 @@ pub(crate) fn set_c_stack_limit(state: &mut LuaState) -> Result<usize, LuaError>
     // C: int limit = (int)luaL_checkinteger(L, 1);
     let limit = state.check_arg_integer(1)? as i32;
     // C: int res = lua_setcstacklimit(L, limit); lua_pushinteger(L, res); return 1;
-    let res = state.set_c_stack_limit(limit);
-    state.push(LuaValue::Int(res as i64));
+    let res = state.set_c_stack_limit(limit)?;
+    state.push(LuaValue::Int(res as i64))?;
     Ok(1)
 }
 

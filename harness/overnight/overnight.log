@@ -79,3 +79,5 @@ Full results: harness/oracle/results/pilot.jsonl
 Per-file outputs: harness/oracle/results/*.translator.json + *.hooks.log
 [2026-05-16T05:15:25Z]   committed: 83ba7fa Phase D: wire lua-gc/src/lib.rs
 [2026-05-16T05:15:25Z]   lua-gc starting errors: 66
+[2026-05-16T05:21:53Z] morning report written: harness/overnight/MORNING_REPORT.md
+[2026-05-16T05:21:53Z] ═══════ Overnight complete ═══════

@@ -407,8 +407,8 @@ pub(crate) fn rawequal_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_any(1)?;
     state.check_arg_any(2)?;
     // C: lua_pushboolean(L, lua_rawequal(L, 1, 2));
-    let eq = state.raw_equal(1, 2);
-    state.push(LuaValue::Bool(eq));
+    let eq = state.raw_equal(1, 2)?;
+    state.push(LuaValue::Bool(eq))?;
     Ok(1)
 }
 

@@ -313,7 +313,7 @@ fn checkclib(state: &mut LuaState, path: &[u8]) -> Option<LibHandle> {
     // TODO(port): lua_touserdata extracts a *mut c_void (light userdata). In
     // Rust we store LibHandle(usize). When a real implementation stores a pointer
     // as a LuaValue::LightUserData, the extraction needs to recover the handle.
-    let handle = state.to_light_userdata(-1).map(LibHandle);
+    let handle = state.to_light_userdata(-1).map(|p| LibHandle(p as usize));
     // C: lua_pop(L, 2);
     state.pop_n(2);
     handle
@@ -356,7 +356,7 @@ fn gctm(state: &mut LuaState) -> Result<usize, LuaError> {
         // C: lsys_unloadlib(lua_touserdata(L, -1));
         // TODO(port): see checkclib — extracting a real *mut c_void handle needs
         // LightUserData support and unsafe casting.
-        if let Some(handle) = state.to_light_userdata(-1).map(LibHandle) {
+        if let Some(handle) = state.to_light_userdata(-1).map(|p| LibHandle(p as usize)) {
             lsys_unloadlib(handle);
         }
         // C: lua_pop(L, 1);
@@ -399,7 +399,8 @@ fn lookforfunc(state: &mut LuaState, path: &[u8], sym: &[u8]) -> Result<i32, Lua
     let f = lsys_sym(state, reg.unwrap(), sym);
     if let Some(func) = f {
         // C: lua_pushcfunction(L, f);
-        state.push(LuaValue::Function(LuaClosure::LightC(func)));
+        // TODO(phase-b): LuaClosure::LightC currently typed fn() -> i32 in lua-types; use push_c_function until widened.
+        state.push_c_function(func)?;
         Ok(0)
     } else {
         // C: return ERRFUNC;
@@ -609,17 +610,17 @@ pub fn ll_searchpath(state: &mut LuaState) -> Result<usize, LuaError> {
 fn findfile(state: &mut LuaState, name: &[u8], pname: &[u8], dirsep: u8) -> Option<Vec<u8>> {
     // C: lua_getfield(L, lua_upvalueindex(1), pname);
     // The package table is upvalue #1 for the searcher closures.
-    state.get_field(state.upvalue_index(1), pname);
+    let uv = state.upvalue_index(1);
+    let _ = state.get_field(uv, pname);
     // C: path = lua_tostring(L, -1);
-    let path_opt = state.to_bytes(-1).map(|b: &[u8]| b.to_vec());
-    if path_opt.is_none() {
+    let path_opt: Option<Vec<u8>> = state.to_bytes(-1);
+    let Some(path) = path_opt else {
         // C: if (l_unlikely(path == NULL)) luaL_error(L, "'package.%s' must be a string", pname);
         // TODO(port): Cannot return Err here without changing the signature.
         //             For now pop the nil and return None (error is silently dropped).
         state.pop_n(1);
         return None;
-    }
-    let path = path_opt.unwrap();
+    };
     state.pop_n(1);
     searchpath(state, name, &path, b".", &[dirsep])
 }
@@ -642,8 +643,8 @@ fn checkload(state: &mut LuaState, stat: bool, filename: &[u8]) -> Result<usize,
         // the loader error message (stack top). In Rust we read those byte slices.
         // TODO(port): state.to_bytes(1) and state.to_bytes(-1) borrow from the
         //             stack simultaneously; in Phase B use index-snapshot clones.
-        let modname = state.to_bytes(1).unwrap_or(b"?").to_vec();
-        let loader_err = state.to_bytes(-1).unwrap_or(b"?").to_vec();
+        let modname = state.to_bytes(1).unwrap_or_else(|| b"?".to_vec());
+        let loader_err = state.to_bytes(-1).unwrap_or_else(|| b"?".to_vec());
 
         let mut msg = b"error loading module '".to_vec();
         msg.extend_from_slice(&modname);
@@ -808,7 +809,7 @@ fn searcher_preload(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: lua_getfield(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
     state.get_field_registry(b"_PRELOAD");
     // C: if (lua_getfield(L, -1, name) == LUA_TNIL) { ... }
-    let ty = state.get_field(-1, &name);
+    let ty = state.get_field(-1, &name)?;
     if ty == LuaType::Nil {
         // C: lua_pushfstring(L, "no field package.preload['%s']", name);
         let mut msg = b"no field package.preload['".to_vec();
@@ -843,7 +844,8 @@ fn searcher_preload(state: &mut LuaState) -> Result<usize, LuaError> {
 fn findloader(state: &mut LuaState, name: &[u8]) -> Result<(), LuaError> {
     // C: if (lua_getfield(L, lua_upvalueindex(1), "searchers") != LUA_TTABLE)
     //        luaL_error(L, "'package.searchers' must be a table");
-    let ty = state.get_field(state.upvalue_index(1), b"searchers");
+    let uv = state.upvalue_index(1);
+    let ty = state.get_field(uv, b"searchers")?;
     if ty != LuaType::Table {
         return Err(LuaError::runtime(format_args!(
             "'package.searchers' must be a table"
@@ -903,7 +905,7 @@ fn findloader(state: &mut LuaState, name: &[u8]) -> Result<(), LuaError> {
             state.pop_n(1);
             // C: luaL_addvalue(&msg)  -- append r1 (now at -1) to msg, pop it
             if let Some(bytes) = state.to_bytes(-1) {
-                msg_buf.extend_from_slice(bytes);
+                msg_buf.extend_from_slice(&bytes);
             }
             state.pop_n(1);
         } else {
@@ -975,7 +977,7 @@ pub fn ll_require(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     // C: if (lua_getfield(L, 2, name) == LUA_TNIL) { ... module set no value }
-    let ty = state.get_field(2, &name);
+    let ty = state.get_field(2, &name)?;
     if ty == LuaType::Nil {
         // C: lua_pushboolean(L, 1); lua_copy(L, -1, -2); lua_setfield(L, 2, name);
         state.push(LuaValue::Bool(true));
@@ -1037,7 +1039,8 @@ fn createclibstable(state: &mut LuaState) -> Result<(), LuaError> {
     // C: lua_createtable(L, 0, 1);  -- metatable for CLIBS
     state.create_table(0, 1);
     // C: lua_pushcfunction(L, gctm);
-    state.push(LuaValue::Function(LuaClosure::LightC(gctm)));
+    // TODO(phase-b): LuaClosure::LightC currently typed fn() -> i32 in lua-types; use push_c_function until widened.
+    state.push_c_function(gctm)?;
     // C: lua_setfield(L, -2, "__gc");
     state.set_field(-2, b"__gc")?;
     // C: lua_setmetatable(L, -2);

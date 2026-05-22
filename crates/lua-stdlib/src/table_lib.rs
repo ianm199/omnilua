@@ -318,13 +318,13 @@ fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), Lu
         // TODO(port): state.type_name_str_at(-1) returns &'static str for the base type name
         let type_name = state.type_name_str_at(-1);
         return Err(LuaError::runtime(format_args!(
-            "invalid value ({}) at index {} in table for 'concat'",
+            "invalid value ({:?}) at index {} in table for 'concat'",
             type_name, idx
         )));
     }
     // C: luaL_addvalue(b) — convert top to string bytes, append, then pop
     // TODO(port): state.to_bytes_at(-1) converts via Lua's tostring coercion; verify method name
-    let bytes = state.to_bytes_at(-1)?;
+    let bytes = state.to_bytes_at(-1).ok_or_else(|| LuaError::runtime(format_args!("invalid value at index {}", idx)))?;
     buf.extend_from_slice(&bytes);
     state.pop_n(1);
     Ok(())

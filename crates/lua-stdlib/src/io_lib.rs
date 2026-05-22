@@ -542,7 +542,7 @@ pub fn io_open(state: &mut LuaState) -> Result<usize, LuaError> {
     let filename: Vec<u8> = state.check_arg_string(1)?;
     let mode: Vec<u8> = state.opt_arg_string(2, b"r")?;
     // C: luaL_argcheck(L, l_checkmode(md), 2, "invalid mode");
-    if !check_mode(mode) {
+    if !check_mode(&mode) {
         return Err(LuaError::arg_error(2, "invalid mode"));
     }
     new_file(state)?;
@@ -558,7 +558,7 @@ pub fn io_open(state: &mut LuaState) -> Result<usize, LuaError> {
             // TODO(port): store _f in the just-allocated LStream.file
             Ok(1)
         }
-        Err(e) => file_result(state, false, Some(filename), e),
+        Err(e) => file_result(state, false, Some(&filename), e),
     }
 }
 
@@ -568,7 +568,7 @@ pub fn io_popen(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: p->f = l_popen(L, filename, mode); p->closef = &io_pclose;
     let filename: Vec<u8> = state.check_arg_string(1)?;
     let mode: Vec<u8> = state.opt_arg_string(2, b"r")?;
-    if !check_mode_popen(mode) {
+    if !check_mode_popen(&mode) {
         return Err(LuaError::arg_error(2, "invalid mode"));
     }
     new_pre_file(state)?;

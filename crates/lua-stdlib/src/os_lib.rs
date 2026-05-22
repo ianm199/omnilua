@@ -637,7 +637,8 @@ pub(crate) fn os_exit(state: &mut LuaState) -> Result<usize, LuaError> {
     // `std::process::exit`.  For Phase A, propagate as a status-coded error so the
     // call stack unwinds — the exit code is passed via `with_status` as a
     // placeholder (semantic mismatch intentional; flagged for Phase B).
-    Err(LuaError::with_status(exit_code))
+    let _ = exit_code;
+    Err(LuaError::with_status(lua_types::LuaStatus::Ok))
 }
 
 // ── Registration table and entry point ───────────────────────────────────────

@@ -4007,12 +4007,12 @@ fn test_then_block(
     if ls.t.token == TK_BREAK {
         let line = ls.linenumber;
         // C: luaK_goiffalse(ls->fs, &v) — jumps if condition is true
-        // TODO(port): lua_code::go_if_false(ls.fs.as_mut().unwrap(), &mut v)?;
-        let _ = line;
+        cg_go_if_false(ls.fs.as_mut().unwrap(), line, &mut v)?;
         lex_next(ls, state)?; // skip 'break'
         enter_block(ls, false);
         // C: newgotoentry(ls, "break", line, v.t)
-        // TODO(port): new_goto_entry(ls, state, break_str, line, v.t)?;
+        let break_str = state.intern_str(b"break")?;
+        new_goto_entry(ls, state, break_str, line, v.t)?;
         // C: while (testnext(ls, ';')) {} -- skip semicolons
         while test_next(ls, state, b';' as TokenKind)? {}
         if block_follow(ls, false) {

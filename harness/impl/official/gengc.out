@@ -3,8 +3,4 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing generational garbage collection
-
-thread 'main' (10112971) panicked at crates/lua-stdlib/src/state_stub.rs:172:85:
-not yet implemented: phase-b-reconcile: gc_gen
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-b-reconcile: gc_gen
+[err] pcall_k failed: Runtime: attempt to call a string value

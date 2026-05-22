@@ -6,5 +6,9 @@ testing (parts of) table library
 testing unpack
 testing pack
 testing sort
-DEBUG try_func_tm: call_error func_idx=StackIdx(22) offender=Nil
-[err] pcall_k failed: Runtime: attempt to call a nil value
+sorting 5000 random elements in 0 msec.
+re-sorting 5000 sorted elements in 0 msec.
+Invert-sorting other 5000 elements in 0 msec., with 62333 comparisons
+sorting 5000 equal elements in 0 msec.
+OK
+[ok] execution completed, status=Ok

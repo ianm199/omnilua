@@ -1939,8 +1939,14 @@ impl<'a> GcHandle<'a> {
     /// Phase-B stub for `luaC_step(L)`.
     pub fn step(&self) { /* phase-b no-op */ }
 
-    /// Phase-B stub for changing GC modes (incremental/generational).
-    pub fn change_mode(&self, _mode: GcKind) { /* phase-b no-op */ }
+    /// Set the GC kind (incremental/generational).
+    ///
+    /// C: `luaC_changemode(L, newmode)` in `lgc.c` — in Phases A–C the heap
+    /// itself is `Rc`-based, so the only observable effect is the mode flag
+    /// returned by `lua_gc(LUA_GCGEN)` / `lua_gc(LUA_GCINC)` on the next call.
+    pub fn change_mode(&self, mode: GcKind) {
+        self._state.global_mut().gckind = mode as u8;
+    }
 
     /// Phase-B stub for `luaC_fix(L, o)` — pin an object so GC won't collect it.
     pub fn fix_object<T: ?Sized>(&self, _o: &GcRef<T>) { /* phase-b no-op */ }

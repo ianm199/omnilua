@@ -318,8 +318,8 @@ fn value_is_reachable(v: &LuaValue, is_reachable: &dyn Fn(usize) -> bool) -> boo
             LuaClosure::C(x) => is_reachable(x.identity()),
             LuaClosure::LightC(_) => true,
         },
-        LuaValue::Str(s) => is_reachable(s.identity()),
-        LuaValue::Nil
+        LuaValue::Str(_)
+        | LuaValue::Nil
         | LuaValue::Bool(_)
         | LuaValue::Int(_)
         | LuaValue::Float(_)

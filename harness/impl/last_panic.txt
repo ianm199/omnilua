@@ -1,1 +1,1 @@
-ci_base
+proto_code

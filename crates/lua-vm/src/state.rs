@@ -1378,7 +1378,9 @@ impl LuaState {
     pub fn call_order_tm<T, U, V>(&mut self, _p1: T, _p2: U, _tm: V) -> Result<bool, LuaError> { todo!("phase-b: call_order_tm") }
     pub fn call_order_i_tm<T, U, V, W, X>(&mut self, _p1: T, _p2: U, _inv: V, _isf: W, _tm: X) -> Result<bool, LuaError> { todo!("phase-b: call_order_i_tm") }
 
-    pub fn proto_code<T, P>(&mut self, _cl: T, _pc: P) -> lua_types::opcode::Instruction { todo!("phase-b: proto_code") }
+    pub fn proto_code(&mut self, cl: &GcRef<lua_types::closure::LuaLClosure>, pc: u32) -> lua_types::opcode::Instruction {
+        cl.proto.code[pc as usize]
+    }
     pub fn proto_const<T, I>(&mut self, _cl: &T, _idx: I) -> LuaValue { todo!("phase-b: proto_const") }
     pub fn get_proto_instr<T, P>(&mut self, _ci: T, _pc: P) -> lua_types::opcode::Instruction { todo!("phase-b: get_proto_instr") }
     pub fn dump_proto(&self, _proto: &GcRef<LuaProto>, _writer: &mut dyn FnMut(&[u8]) -> Result<(), LuaError>, _strip: bool) -> Result<(), LuaError> { todo!("phase-b: dump_proto") }

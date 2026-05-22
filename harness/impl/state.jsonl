@@ -221,3 +221,6 @@
 {"ts":"2026-05-16T19:13:22Z","action":"dispatch_done","detail":"type=implement func=ci_savedpc cost=0.33615425","total_cost":0.00}
 {"ts":"2026-05-16T19:13:23Z","action":"panic_detected","detail":"func=ci_base iter=21","total_cost":0.00}
 {"ts":"2026-05-16T19:13:23Z","action":"dispatch_start","detail":"type=implement func=ci_base iter=21","total_cost":0.00}
+{"ts":"2026-05-16T19:14:26Z","action":"dispatch_done","detail":"type=implement func=ci_base cost=0.5580062499999999","total_cost":0.00}
+{"ts":"2026-05-16T19:14:27Z","action":"panic_detected","detail":"func=proto_code iter=22","total_cost":0.00}
+{"ts":"2026-05-16T19:14:27Z","action":"dispatch_start","detail":"type=implement func=proto_code iter=22","total_cost":0.00}

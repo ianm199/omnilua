@@ -697,12 +697,13 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
             } else {
                 // C: s++;  /* skip '%' */
                 pos += 1;
-                if pos >= s.len() {
-                    break;
-                }
                 // C: char cc[4]; cc[0] = '%';
                 let mut cc = [0u8; 4];
                 cc[0] = b'%';
+                // Pass the remaining slice even if empty: checkoption's loop
+                // condition (oplen <= convlen) fails immediately on an empty
+                // slice, which causes it to raise "invalid conversion specifier"
+                // matching C behaviour for a trailing bare '%'.
                 let conv = &s[pos..];
                 // C: s = checkoption(L, s, se - s, cc + 1);
                 let after = check_strftime_option(state, conv, &mut cc)?;

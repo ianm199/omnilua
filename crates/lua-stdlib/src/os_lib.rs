@@ -341,14 +341,48 @@ pub(crate) fn os_rename(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 /// Generates a unique temporary file name and pushes it as a string.
 /// Raises a runtime error if generation fails.
-pub(crate) fn os_tmpname(_state: &mut LuaState) -> Result<usize, LuaError> {
-    // C: char buff[LUA_TMPNAMBUFSIZE]; int err; lua_tmpnam(buff, err);
-    // TODO(port): `tmpnam` / `mkstemp` require OS file-system access banned from
-    // lua-stdlib.  Phase B should implement via a capability hook supplied by
-    // the host (e.g. lua-cli registers a tmpnam provider).
-    Err(LuaError::runtime(format_args!(
-        "unable to generate a unique filename"
-    )))
+///
+/// PORT NOTE: The C reference implementation uses POSIX `mkstemp` (which both
+/// generates a name and atomically creates the file) when `LUA_USE_POSIX` is
+/// defined, falling back to ISO C `tmpnam` otherwise.  Replicating `mkstemp`
+/// exactly requires `std::fs`, but Lua semantics only require that the
+/// returned path is currently unique and usable for subsequent `io.open`.
+/// We compose the system temp directory with a process / time / counter
+/// suffix, which matches the `tmpnam` branch of the reference.
+pub(crate) fn os_tmpname(state: &mut LuaState) -> Result<usize, LuaError> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let mut dir: Vec<u8> = {
+        let path = std::env::temp_dir();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            path.as_os_str().as_bytes().to_vec()
+        }
+        #[cfg(not(unix))]
+        {
+            path.to_string_lossy().as_bytes().to_vec()
+        }
+    };
+    if dir.last().copied() != Some(b'/') && dir.last().copied() != Some(b'\\') {
+        dir.push(b'/');
+    }
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let suffix = format!("lua_{:x}_{:x}", nanos, n);
+    dir.extend_from_slice(suffix.as_bytes());
+
+    // C: lua_pushstring(L, buff);
+    state.push_string(&dir)?;
+    Ok(1)
 }
 
 /// C: `static int os_getenv(lua_State *L)`
@@ -685,7 +719,7 @@ pub fn open_os(state: &mut LuaState) -> Result<usize, LuaError> {
 //   source:        src/loslib.c  (430 lines, 12 functions)
 //   target_crate:  lua-stdlib
 //   confidence:    medium
-//   todos:         15
+//   todos:         18
 //   port_notes:    4
 //   unsafe_blocks: 0
 //   notes:         Logic structure faithful; all OS calls that require banned

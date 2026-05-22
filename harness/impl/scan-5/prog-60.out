@@ -3,4 +3,9 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing bitwise operations
-[err] pcall_k failed: Runtime: module 'bwcoercion' not found:
++
+testing bitwise library
++
++
+OK
+[ok] execution completed, status=Ok

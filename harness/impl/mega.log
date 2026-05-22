@@ -658,3 +658,22 @@
 [2026-05-18T02:03:52Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: coroutines not yet implemented (Phase E)): reference/lua-c/testes/literals.lua
 [2026-05-18T02:03:52Z mega]   [O4.D4] DEBUG dispatch on file: reference/lua-c/testes/locals.lua [parallel]
 [2026-05-18T02:07:46Z mega]   [O4.D5] DEBUG dispatch on file: reference/lua-c/testes/calls.lua [parallel]
+[2026-05-18T02:15:37Z mega]   [O4.D4] DEBUG done. iter cost=$1.8690434999999999  total=$16.8569
+[2026-05-18T02:15:37Z mega]   [O4.D3] DEBUG done. iter cost=$1.4793205000000003  total=$18.3362
+[2026-05-18T02:15:37Z mega]   [O4.D2] DEBUG done. iter cost=$3.60999525  total=$21.9462
+[2026-05-18T02:15:37Z mega]   [O4.D5] DEBUG done. iter cost=$3.5108182500000003  total=$25.4570
+[2026-05-18T02:15:37Z mega]   [O4.D1] DEBUG done. iter cost=$4.604728000000001  total=$30.0617
+[2026-05-18T02:15:37Z mega] ─── outer round 5 (spent: $30.0617) ───
+[2026-05-18T02:16:08Z mega]   scan: 62/75 programs pass cleanly
+[2026-05-18T02:16:09Z mega]   surface scan returned 0 unique stub blockers
+[2026-05-18T02:16:09Z mega]   no stub blockers — falling back to DEBUG agents on failing programs
+[2026-05-18T02:16:09Z mega]   skip stuck prog (same sig 2 rounds: unknown): reference/lua-c/testes/closure.lua
+[2026-05-18T02:16:09Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: attempt to call a boolean value): reference/lua-c/testes/pm.lua
+[2026-05-18T02:16:09Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 202: assertion failed!): reference/lua-c/testes/strings.lua
+[2026-05-18T02:16:09Z mega]   [O5.D1] DEBUG dispatch on file: reference/lua-c/testes/math.lua [parallel]
+[2026-05-18T02:16:09Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: coroutines not yet implemented (Phase E)): reference/lua-c/testes/literals.lua
+[2026-05-18T02:16:09Z mega]   [O5.D2] DEBUG dispatch on file: reference/lua-c/testes/locals.lua [parallel]
+[2026-05-18T02:16:09Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: coroutines not yet implemented (Phase E)): reference/lua-c/testes/calls.lua
+[2026-05-18T02:16:09Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 234: assertion failed!): reference/lua-c/testes/constructs.lua
+[2026-05-18T02:16:09Z mega]   [O5.D3] DEBUG dispatch on file: reference/lua-c/testes/nextvar.lua [parallel]
+[2026-05-18T02:16:09Z mega]   [O5.D4] DEBUG dispatch on file: reference/lua-c/testes/files.lua [parallel]

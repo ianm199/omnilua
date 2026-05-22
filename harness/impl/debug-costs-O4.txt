@@ -1,3 +1,5 @@
 4 1.8690434999999999 reference/lua-c/testes/locals.lua
 3 1.4793205000000003 reference/lua-c/testes/math.lua
 2 3.60999525 reference/lua-c/testes/sort.lua
+5 3.5108182500000003 reference/lua-c/testes/calls.lua
+1 4.604728000000001 reference/lua-c/testes/goto.lua

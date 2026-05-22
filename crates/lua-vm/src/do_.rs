@@ -575,6 +575,23 @@ fn try_func_tm(state: &mut LuaState, func_idx: StackIdx) -> Result<StackIdx, Lua
     // C: if (l_unlikely(ttisnil(tm))) luaG_callerror(L, s2v(func))
     if matches!(tm, LuaValue::Nil) {
         let offender = state.get_at(func_idx).clone();
+        let cur_ci = state.current_ci_idx();
+        if let Some(cl) = state.ci_lua_closure(cur_ci) {
+            let p = &cl.proto;
+            let pc = state.ci_savedpc(cur_ci) as i32 - 1;
+            let line = if pc >= 0 && (pc as usize) < p.lineinfo.len() {
+                let mut l = p.linedefined;
+                for i in 0..=(pc as usize) {
+                    l += p.lineinfo[i] as i32;
+                }
+                l
+            } else { -1 };
+            let src = p.source.as_ref().map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned()).unwrap_or_default();
+            let short = if src.len() > 40 { format!("...{}", &src[src.len()-40..]) } else { src };
+            eprintln!("DBG call_error: pc={} line={} src={:?} func_idx={:?}", pc, line, short, func_idx);
+        } else {
+            eprintln!("DBG call_error: non-lua ci, func_idx={:?}", func_idx);
+        }
         return Err(LuaError::call_error(&offender));
     }
 

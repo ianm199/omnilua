@@ -23,4 +23,5 @@ DBG: after tonumber overflow tests (line 371)
 DBG: after invalid tonumber tests (line 470)
 DBG: after hex/float numerals (line 526)
 DBG: after mod operator tests (line 557)
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:601: assertion failed!
+DBG call_error: pc=4161 line=667 src="...(random, maxint, minint))\n\n\n\nprint('OK')" func_idx=StackIdx(16)
+[err] pcall_k failed: Runtime: attempt to call a nil value

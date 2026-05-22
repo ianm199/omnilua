@@ -1199,3 +1199,42 @@
 [2026-05-18T20:37:43Z mega]   skip prog (in SKIP_TESTS): reference/lua-c/testes/nextvar.lua
 [2026-05-18T20:37:43Z mega]   skip stuck prog (no progress 2 rounds, sig=unknown): reference/lua-c/testes/files.lua
 [2026-05-18T20:37:43Z mega]   skip stuck prog (no progress 2 rounds, sig=unknown): reference/lua-c/testes/errors.lua
+[2026-05-18T20:52:45Z mega]   → committed 0ef22fd (debug/reference/lua-c/testes/literals.lua )
+[2026-05-18T20:52:45Z mega]   [O6.D2] DEBUG done. iter cost=$4.700254999999999  total=$48.9241
+[2026-05-18T20:52:45Z mega]   [O6.D1] DEBUG done. iter cost=$[2026-05-18T20:52:45Z  total=$48.9241
+[2026-05-18T20:52:45Z mega]   [O6.D3.316630699999999] DEBUG done. iter cost=$reference/lua-c/testes/literals.lua  total=$48.9241
+[2026-05-18T20:52:45Z mega] ─── outer round 7 (spent: $48.9241) ───
+[2026-05-18T20:52:46Z mega]   BUILD BROKEN at top of round — abort. See harness/impl/build-O7.err
+warning: unused import: `std::rc::Rc`
+   --> crates/lua-types/src/value.rs:353:9
+    |
+353 |     use std::rc::Rc;
+    |         ^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `same_rc` is never used
+   --> crates/lua-types/src/value.rs:352:4
+    |
+352 | fn same_rc(a: &LuaValue, b: &LuaValue) -> bool {
+    |    ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `CallInfoIdx`, `CallInfo`, and `GlobalState`
+  --> crates/lua-vm/src/api.rs:16:44
+   |
+16 | use crate::state::{LuaState, LuaCFunction, GlobalState, CallInfo, CallInfoIdx, StackIdx,
+   |                                            ^^^^^^^^^^^  ^^^^^^^^  ^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `UpVal`
+  --> crates/lua-vm/src/api.rs:21:70
+   |
+21 |     LuaValue, LuaType, LuaError, LuaString, LuaUserData, LuaClosure, UpVal,
+   |                                                                      ^^^^^
+
+[2026-05-18T20:52:46Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T20:52:46Z mega] mega-loop end. Total cost: $48.9241  Outer rounds: 7
+[2026-05-18T20:52:46Z mega] ═════════════════════════════════════════════════════════════════

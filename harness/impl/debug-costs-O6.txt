@@ -1,0 +1,3 @@
+2 4.700254999999999 reference/lua-c/testes/locals.lua [opus]
+1 [2026-05-18T20:52:45Z mega]   → committed 0ef22fd (debug/reference/lua-c/testes/literals.lua )
+3.316630699999999 reference/lua-c/testes/literals.lua [sonnet]

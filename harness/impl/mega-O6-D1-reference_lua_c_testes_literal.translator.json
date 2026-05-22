@@ -1,0 +1,79 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": 429,
+  "duration_ms": 899294,
+  "duration_api_ms": 796946,
+  "num_turns": 101,
+  "result": "You've hit your org's monthly usage limit",
+  "stop_reason": "stop_sequence",
+  "session_id": "6b16fc70-38c9-4bd6-8a69-d7cf42477553",
+  "total_cost_usd": 3.316630699999999,
+  "usage": {
+    "input_tokens": 96,
+    "cache_creation_input_tokens": 109794,
+    "cache_read_input_tokens": 7333654,
+    "output_tokens": 46863,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 109794,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 167,
+        "cache_read_input_tokens": 123158,
+        "cache_creation_input_tokens": 230,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 230
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1484,
+      "outputTokens": 18,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001574,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-sonnet-4-6": {
+      "inputTokens": 96,
+      "outputTokens": 46863,
+      "cacheReadInputTokens": 7333654,
+      "cacheCreationInputTokens": 109794,
+      "webSearchRequests": 0,
+      "costUSD": 3.315056699999999,
+      "contextWindow": 600000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01QnM1bkkPg6rwS2PUfBxxw7",
+      "tool_input": {
+        "command": "target/debug/lua-rs reference/lua-c/testes/literals.lua 2>/tmp/stderr.txt; echo \"EXIT: $?\"; cat /tmp/stderr.txt",
+        "timeout": 30000,
+        "description": "Run with stderr captured separately"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "ad48fc66-7235-44cd-926a-466cc3f18b54"
+}

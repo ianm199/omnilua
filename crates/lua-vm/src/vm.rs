@@ -324,20 +324,27 @@ fn int_fits_float(i: i64) -> bool {
 fn str_to_number(obj: &LuaValue) -> Option<LuaValue> {
     // C: if (!cvt2num(obj)) return 0;
     // cvt2num(o) = matches!(o, LuaValue::Str(_))
-    if !matches!(obj, LuaValue::Str(_)) {
-        return None;
-    }
     let s = match obj {
         LuaValue::Str(ts) => ts.as_bytes().to_vec(),
         _ => return None,
     };
     // C: return (luaO_str2num(getstr(st), result) == tsslen(st) + 1)
-    // TODO(port): call state.str2num(&s) — needs access to LuaState for
-    // luaO_str2num; placeholder returns None until string->num parsing lands.
-    // The full form is: parse the byte slice as a Lua numeral, return Some if
-    // the entire slice was consumed.
-    let _ = s;
+    // Trim whitespace as Lua allows spaces around numerals in coercions.
+    let trimmed = trim_whitespace(&s);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut result = LuaValue::Nil;
+    if crate::object::str2num(trimmed, &mut result) != 0 {
+        return Some(result);
+    }
     None
+}
+
+fn trim_whitespace(s: &[u8]) -> &[u8] {
+    let start = s.iter().position(|&b| !b.is_ascii_whitespace()).unwrap_or(s.len());
+    let end = s.iter().rposition(|&b| !b.is_ascii_whitespace()).map(|i| i + 1).unwrap_or(0);
+    if start <= end { &s[start..end] } else { &s[0..0] }
 }
 
 // ─── Number coercion (public API matching lvm.h exports) ────────────────────
@@ -360,6 +367,15 @@ pub(crate) fn tonumber_(obj: &LuaValue) -> Option<f64> {
         };
     }
     None
+}
+
+/// C: `#define tonumber(o,n)  (ttisfloat(o) ? (*(n) = fltvalue(o), 1) : luaV_tonumber_(o,n))`
+/// Full numeric coercion including the float fast-path that `tonumber_` omits.
+fn tonumber(obj: &LuaValue) -> Option<f64> {
+    if let LuaValue::Float(f) = obj {
+        return Some(*f);
+    }
+    tonumber_(obj)
 }
 
 /// C: `int luaV_flttointeger(lua_Number n, lua_Integer *p, F2Imod mode)`
@@ -442,7 +458,7 @@ fn forlimit(
     }
     // C: not coercible to int; try float
     // C: if (!tonumber(lim, &flim)) luaG_forerror(L, lim, "limit");
-    let flim = match tonumber_(lim) {
+    let flim = match tonumber(lim) {
         Some(f) => f,
         None => return Err(LuaError::for_error(lim, "limit")),
     };
@@ -506,15 +522,15 @@ pub(crate) fn forprep(state: &mut LuaState, ra: StackIdx) -> Result<bool, LuaErr
         Ok(false)
     } else {
         // C: float loop — coerce all three values to floats
-        let limit_f = match tonumber_(&plimit) {
+        let limit_f = match tonumber(&plimit) {
             Some(f) => f,
             None => return Err(crate::debug::for_error(state, &plimit, b"limit")),
         };
-        let step_f = match tonumber_(&pstep) {
+        let step_f = match tonumber(&pstep) {
             Some(f) => f,
             None => return Err(crate::debug::for_error(state, &pstep, b"step")),
         };
-        let init_f = match tonumber_(&pinit) {
+        let init_f = match tonumber(&pinit) {
             Some(f) => f,
             None => return Err(crate::debug::for_error(state, &pinit, b"initial value")),
         };
@@ -1002,8 +1018,6 @@ pub(crate) fn concat(state: &mut LuaState, total: i32) -> Result<(), LuaError> {
         let top1_stringlike = matches!(v_tm1, LuaValue::Str(_))
             || matches!(v_tm1, LuaValue::Int(_) | LuaValue::Float(_));
         if !top2_coercible || !top1_stringlike {
-            let s1 = if let LuaValue::Str(s) = &v_tm1 { String::from_utf8_lossy(s.as_bytes()).to_string() } else { format!("{:?}", v_tm1) };
-            eprintln!("[DBG concat] top-2-type={:?} top-1={}", std::mem::discriminant(&v_tm2), s1);
             state.try_concat_tm(&v_tm1, &v_tm2)?;
             // C: n stays at 2; the shared `total -= n-1; L->top.p -= n-1`
             // at the bottom of the do-while runs for this branch too.
@@ -2497,34 +2511,12 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     // C: l_tforcall: { push func/state/ctrl; call; goto l_tforloop }
                     OpCode::TForCall => {
                         let ra = base + i.arg_a();
-                        // DEBUG: snapshot the iter slot (ra+0) BEFORE the call
-                        let dbg_iter = state.get_at(ra).clone();
-                        if let LuaValue::Function(lua_types::closure::LuaClosure::C(ref cl)) = dbg_iter {
-                            static FC_PREV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
-                            let prev = FC_PREV.swap(cl.func, std::sync::atomic::Ordering::Relaxed);
-                            if prev != usize::MAX && cl.func != prev {
-                                eprintln!("[DBG TFORCALL ITER CHANGED] ra={} old_func_idx={} new_func_idx={}", ra.0, prev, cl.func);
-                            }
-                        }
-                        let dbg_state_slot = state.get_at(ra + 1).clone();
-                        let dbg_ctrl = state.get_at(ra + 2).clone();
                         for k in 0..3u32 {
                             let v = state.get_at(ra + k as i32).clone();
                             state.set_at(ra + 4 + k as i32, v);
                         }
                         state.set_top(ra + 4 + 3);
                         state.set_ci_savedpc(ci, pc);
-                        // DEBUG: check what we're calling
-                        {
-                            let f_at_ra4 = state.get_at(ra + 4);
-                            if !matches!(f_at_ra4, LuaValue::Function(_)) {
-                                eprintln!("[DBG TFORCALL PRE-CALL] CALLING NON-FUNCTION! type={:?}", std::mem::discriminant(&f_at_ra4));
-                            } else if let LuaValue::Function(ref f) = f_at_ra4 {
-                                // Print function type (Lua closure vs C closure)
-                                let is_c = matches!(f, lua_types::closure::LuaClosure::C(_));
-                                eprintln!("[DBG TFORCALL PRE-CALL] calling {} function, ra={}, ra+4={}", if is_c {"C"} else {"Lua"}, ra.0, (ra+4).0);
-                            }
-                        }
                         state.call_at(ra + 4, i.arg_c() as i32)?;
                         trap = state.ci_trap(ci);
                         base = state.ci_base(ci); // updatestack
@@ -2533,17 +2525,6 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         pc += 1;
                         debug_assert!(tfl_i.opcode() == OpCode::TForLoop);
                         let tfl_ra = base + tfl_i.arg_a();
-                        // DEBUG: check what the result is
-                        {
-                            let res = state.get_at(tfl_ra + 4);
-                            if matches!(res, LuaValue::Table(_)) {
-                                eprintln!("[DBG TFORCALL] Result is Table! tfl_ra={} ra+4={} base={} top={}", tfl_ra.0, (ra+4).0, base.0, state.top_idx().0);
-                                eprintln!("[DBG] iter was {:?}, state_slot was {:?}, ctrl was {:?}",
-                                    std::mem::discriminant(&dbg_iter),
-                                    std::mem::discriminant(&dbg_state_slot),
-                                    std::mem::discriminant(&dbg_ctrl));
-                            }
-                        }
                         if !matches!(state.get_at(tfl_ra + 4), LuaValue::Nil) {
                             let v = state.get_at(tfl_ra + 4).clone();
                             state.set_at(tfl_ra + 2, v);

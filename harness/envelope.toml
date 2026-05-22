@@ -1,0 +1,56 @@
+schema_version = 1
+target = "lua"
+upstream_commit = "5.4.7"
+rust_binary = "target/debug/lua-rs"
+
+[[capability]]
+id = "lua-official-suite-pass"
+description = "All 44 PUC-Rio Lua 5.4.7 official tests pass under user-mode (_U=true) via harness/run_official_all.sh."
+phase = 6
+owners = ["lua-vm", "lua-gc", "lua-stdlib", "lua-coro", "lua-cli"]
+architecture_objects = ["LuaState", "GlobalState", "Heap", "CallInfo", "Coroutine", "UpVal", "Table"]
+fixtures = ["api", "attrib", "big", "bitwise", "bwcoercion", "calls", "closure", "code", "constructs", "coroutine", "cstack", "db", "errors", "events", "files", "gc", "gengc", "goto", "heavy", "literals", "locals", "main", "math", "nextvar", "pm", "sort", "strings", "tpack", "tracegc", "utf8", "vararg", "verybig"]
+benchmarks = []
+security_cases = []
+
+[[capability]]
+id = "yield-through-c-frames"
+description = "Resume side of coroutines correctly continues C-frames marked CIST_YPCALL / CIST_CLSRET via finishCcall, supporting yield-through-pcall and yield-in-__close."
+phase = 6
+owners = ["lua-vm", "lua-coro"]
+architecture_objects = ["CallInfo", "Coroutine", "LuaState"]
+fixtures = ["coroutine", "locals"]
+benchmarks = []
+security_cases = []
+
+[[capability]]
+id = "gc-cycle-convergence"
+description = "GC trace fixed-point converges on cyclic references through thread upvalue mirrors (twups / cross_thread_upvals); barrier predicates (keep_invariant, is_sweep_phase) reflect real phase state."
+phase = 6
+owners = ["lua-gc", "lua-vm"]
+architecture_objects = ["Heap", "GlobalState", "UpVal"]
+fixtures = ["gc", "gengc", "all"]
+benchmarks = []
+security_cases = []
+
+[[capability]]
+id = "debug-line-hook-timing"
+description = "Line-hook events fire only on Lua-frame instructions, not during C-frame transitions."
+phase = 6
+owners = ["lua-vm"]
+architecture_objects = ["CallInfo", "LuaState"]
+fixtures = ["db"]
+benchmarks = []
+security_cases = []
+
+[[non_claim]]
+id = "luajit-performance"
+description = "No LuaJIT-level performance. We match reference Lua interpreter speed."
+
+[[non_claim]]
+id = "c-extension-abi"
+description = "No drop-in compatibility with C Lua extension ABI (LuaSocket, LFS, etc.). Out of scope; possibly future lua-sys shim."
+
+[[non_claim]]
+id = "lua-5-1-or-jit-targets"
+description = "OpenResty, Neovim, WoW use LuaJIT or Lua 5.1, not 5.4. Not in scope."

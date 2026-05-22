@@ -3775,14 +3775,14 @@ fn restassign(
         if nexps != nvars {
             adjust_assign(ls, state, nvars, nexps, &mut e)?;
         } else {
-            let line = ls.linenumber;
+            let line = ls.lastline;
             let fs = ls.fs.as_mut().unwrap();
             cg_set_one_ret(fs, &mut e);
             cg_storevar(fs, line, &lh.v, &mut e)?;
             return Ok(());
         }
     }
-    let line = ls.linenumber;
+    let line = ls.lastline;
     let fs = ls.fs.as_mut().unwrap();
     let freereg = fs.freereg as i32 - 1;
     let mut e = ExprDesc::default();
@@ -4124,7 +4124,7 @@ fn test_then_block(
             jf = cg_jump(ls.fs.as_mut().unwrap(), ls.linenumber);
         }
     } else {
-        let line = ls.linenumber;
+        let line = ls.lastline;
         cg_go_if_true(ls.fs.as_mut().unwrap(), line, &mut v)?;
         enter_block(ls, false);
         jf = v.f;
@@ -4135,7 +4135,7 @@ fn test_then_block(
 
     if ls.t.token == TK_ELSE || ls.t.token == TK_ELSEIF {
         // C: luaK_concat(fs, escapelist, luaK_jump(fs))
-        let line = ls.linenumber;
+        let line = ls.lastline;
         let j = cg_jump(ls.fs.as_mut().unwrap(), line);
         cg_concat(ls.fs.as_mut().unwrap(), escapelist, j)?;
     }
@@ -4362,7 +4362,7 @@ fn retstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         }
     }
     // C: luaK_ret(fs, first, nret)
-    let line = ls.linenumber;
+    let line = ls.lastline;
     cg_emit_return(ls.fs.as_mut().unwrap(), line, first, nret);
     // C: testnext(ls, ';')
     test_next(ls, state, b';' as TokenKind)?;

@@ -1,0 +1,40 @@
+{
+  "captured_ts": "2026-05-22T03:29:44.175480Z",
+  "kind": "runner_result",
+  "packet": "baseline-db",
+  "result": {
+    "artifacts": [],
+    "evidence": {
+      "command": [
+        "bash",
+        "harness/run_official_test.sh",
+        "reference/lua-c/testes/db.lua"
+      ],
+      "cwd": ".",
+      "kind": "external_suite",
+      "returncode": 1,
+      "stderr": "",
+      "stdout": "FAIL  reference/lua-c/testes/db.lua  (cause=runtime-error, reached_exec=0)\n--- first 5 lines of failure context ---\n2:lua: pcall_k failed: Runtime: harness/impl/official/db.combined.lua:51: assertion failed!\n--- (full output at harness/impl/official/db.out) ---\n",
+      "timed_out": false,
+      "timeout_s": 180
+    },
+    "measurements": [
+      {
+        "capability": "debug-line-hook-timing",
+        "denominator": 1,
+        "fixture": "db",
+        "metric": "official_test_pass",
+        "name": "lua-test-db",
+        "numerator": 0,
+        "target": "rust-vs-reference"
+      }
+    ],
+    "method": "oracle-diff",
+    "runner_id": "lua-test-db",
+    "schema_version": 1,
+    "status": "fail",
+    "summary": "lua-test-db: exit 1",
+    "surface": "correctness"
+  },
+  "role": "runner"
+}

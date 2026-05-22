@@ -33,14 +33,7 @@ if [ ! -x "$BIN" ]; then
     exit 2
 fi
 
-PREAMBLE='_soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = arg or {}
-_G = _G or _ENV
-if _VERSION == nil then _VERSION = "Lua 5.4" end
-'
+PREAMBLE_EXPR='_soft=true; _port=true; _nomsg=true; _U=false; arg=arg or {}; _G=_G or _ENV; if _VERSION==nil then _VERSION="Lua 5.4" end'
 
 export LUA_PATH="$TESTES_DIR/?.lua;$TESTES_DIR/?/init.lua;./?.lua;./?/init.lua"
 export LUA_RS_VERBOSE=1
@@ -54,22 +47,21 @@ for test_file in "$TESTES_DIR"/*.lua; do
 
     combined="$OUT_DIR/$base.combined.lua"
     outfile="$OUT_DIR/$base.out"
-    case "$base" in
-        db|cstack)
-            cp "$test_file" "$combined" ;;
-        *)
-            { printf '%s\n' "$PREAMBLE"; cat "$test_file"; } > "$combined" ;;
-    esac
+    {
+        printf -- '-- harness preamble (passed via -e, NOT prepended; preserves test file line numbers):\n'
+        printf -- '-- %s\n\n' "$PREAMBLE_EXPR"
+        cat "$test_file"
+    } > "$combined"
     case "$base" in
         all) run_cwd="$TESTES_DIR" ;;
         *)   run_cwd="$ROOT" ;;
     esac
 
     if command -v gtimeout >/dev/null 2>&1; then
-        ( cd "$run_cwd" && gtimeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" "$combined" > "$outfile" 2>&1 )
+        ( cd "$run_cwd" && gtimeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" -e "$PREAMBLE_EXPR" "$test_file" > "$outfile" 2>&1 )
         rc=$?
     else
-        ( cd "$run_cwd" && "$BIN" "$combined" > "$outfile" 2>&1 ) &
+        ( cd "$run_cwd" && "$BIN" -e "$PREAMBLE_EXPR" "$test_file" > "$outfile" 2>&1 ) &
         pid=$!
         ( sleep "$TEST_TIMEOUT_S" && kill -9 "$pid" 2>/dev/null ) &
         wpid=$!

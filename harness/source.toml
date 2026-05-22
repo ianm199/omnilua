@@ -1,0 +1,19 @@
+schema_version = 1
+
+[source]
+name = "lua"
+repo = "https://www.lua.org/ftp/lua-5.4.7.tar.gz"
+commit = "5.4.7"
+license = "MIT"
+source_dir = "reference/lua-c"
+primary_file = "reference/lua-c/lua.c"
+c_loc = 28000
+
+[build]
+command = "make macosx -C reference/lua-5.4.7"
+binary = "reference/lua-5.4.7/src/lua"
+
+[tests]
+official_suite = "./harness/run_official_all.sh"
+single_test = "./harness/run_official_test.sh"
+smoke_set = "./harness/run_one_test.sh"

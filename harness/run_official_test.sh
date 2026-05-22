@@ -41,17 +41,13 @@ BASE="$(basename "$TEST_FILE" .lua)"
 COMBINED="$OUT_DIR/$BASE.combined.lua"
 OUTFILE="$OUT_DIR/$BASE.out"
 
-PREAMBLE='-- harness preamble: emulate the globals lua-c testes/all.lua sets
-_soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = arg or {}
-_G = _G or _ENV
-if _VERSION == nil then _VERSION = "Lua 5.4" end
-'
+PREAMBLE_EXPR='_soft=true; _port=true; _nomsg=true; _U=false; arg=arg or {}; _G=_G or _ENV; if _VERSION==nil then _VERSION="Lua 5.4" end'
 
-{ printf '%s\n' "$PREAMBLE"; cat "$TEST_FILE"; } > "$COMBINED"
+{
+    printf -- '-- harness preamble (passed via -e, NOT prepended; preserves test file line numbers):\n'
+    printf -- '-- %s\n\n' "$PREAMBLE_EXPR"
+    cat "$TEST_FILE"
+} > "$COMBINED"
 
 TESTES_DIR="$(cd "$(dirname "$TEST_FILE")" && pwd)"
 export LUA_PATH="$TESTES_DIR/?.lua;$TESTES_DIR/?/init.lua;./?.lua;./?/init.lua"
@@ -60,11 +56,11 @@ run_with_timeout() {
     local src_file="$1"
     local out_file="$2"
     if command -v gtimeout >/dev/null 2>&1; then
-        gtimeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" "$src_file" > "$out_file" 2>&1
+        gtimeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" -e "$PREAMBLE_EXPR" "$src_file" > "$out_file" 2>&1
     elif command -v timeout >/dev/null 2>&1; then
-        timeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" "$src_file" > "$out_file" 2>&1
+        timeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" -e "$PREAMBLE_EXPR" "$src_file" > "$out_file" 2>&1
     else
-        ( "$BIN" "$src_file" > "$out_file" 2>&1 ) &
+        ( "$BIN" -e "$PREAMBLE_EXPR" "$src_file" > "$out_file" 2>&1 ) &
         local pid=$!
         ( sleep "$TEST_TIMEOUT_S" && kill -9 "$pid" 2>/dev/null ) &>/dev/null &
         local watcher=$!
@@ -77,7 +73,7 @@ run_with_timeout() {
 }
 
 rc=0
-run_with_timeout "$COMBINED" "$OUTFILE" || rc=$?
+run_with_timeout "$TEST_FILE" "$OUTFILE" || rc=$?
 
 reached_exec=0
 grep -qE "^\[4/4\] Executing chunk" "$OUTFILE" && reached_exec=1

@@ -1,0 +1,40 @@
+{
+  "captured_ts": "2026-05-22T03:32:53.624157Z",
+  "kind": "runner_result",
+  "packet": "baseline-gengc",
+  "result": {
+    "artifacts": [],
+    "evidence": {
+      "command": [
+        "bash",
+        "harness/run_official_test.sh",
+        "reference/lua-c/testes/gengc.lua"
+      ],
+      "cwd": ".",
+      "kind": "external_suite",
+      "returncode": 1,
+      "stderr": "",
+      "stdout": "FAIL  reference/lua-c/testes/gengc.lua  (cause=runtime-error, reached_exec=0)\n--- first 5 lines of failure context ---\n3:lua: pcall_k failed: Runtime: harness/impl/official/gengc.combined.lua:131: assertion failed!\n--- (full output at harness/impl/official/gengc.out) ---\n",
+      "timed_out": false,
+      "timeout_s": 180
+    },
+    "measurements": [
+      {
+        "capability": "gc-cycle-convergence",
+        "denominator": 1,
+        "fixture": "gengc",
+        "metric": "official_test_pass",
+        "name": "lua-test-gengc",
+        "numerator": 0,
+        "target": "rust-vs-reference"
+      }
+    ],
+    "method": "oracle-diff",
+    "runner_id": "lua-test-gengc",
+    "schema_version": 1,
+    "status": "fail",
+    "summary": "lua-test-gengc: exit 1",
+    "surface": "correctness"
+  },
+  "role": "runner"
+}

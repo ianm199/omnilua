@@ -1,0 +1,84 @@
+schema_version = 1
+
+[[runner]]
+id = "lua-test-db"
+kind = "external_suite"
+surface = "correctness"
+method = "oracle-diff"
+metric = "official_test_pass"
+target = "rust-vs-reference"
+fixture = "db"
+command = ["bash", "harness/run_official_test.sh", "reference/lua-c/testes/db.lua"]
+timeout_s = 180
+capabilities = ["debug-line-hook-timing"]
+
+[[runner]]
+id = "lua-test-gc"
+kind = "external_suite"
+surface = "correctness"
+method = "oracle-diff"
+metric = "official_test_pass"
+target = "rust-vs-reference"
+fixture = "gc"
+command = ["bash", "harness/run_official_test.sh", "reference/lua-c/testes/gc.lua"]
+timeout_s = 360
+capabilities = ["gc-cycle-convergence"]
+
+[[runner]]
+id = "lua-test-gengc"
+kind = "external_suite"
+surface = "correctness"
+method = "oracle-diff"
+metric = "official_test_pass"
+target = "rust-vs-reference"
+fixture = "gengc"
+command = ["bash", "harness/run_official_test.sh", "reference/lua-c/testes/gengc.lua"]
+timeout_s = 180
+capabilities = ["gc-cycle-convergence"]
+
+[[runner]]
+id = "lua-test-coroutine"
+kind = "external_suite"
+surface = "correctness"
+method = "oracle-diff"
+metric = "official_test_pass"
+target = "rust-vs-reference"
+fixture = "coroutine"
+command = ["bash", "harness/run_official_test.sh", "reference/lua-c/testes/coroutine.lua"]
+timeout_s = 180
+capabilities = ["yield-through-c-frames"]
+
+[[runner]]
+id = "lua-test-locals"
+kind = "external_suite"
+surface = "correctness"
+method = "oracle-diff"
+metric = "official_test_pass"
+target = "rust-vs-reference"
+fixture = "locals"
+command = ["bash", "harness/run_official_test.sh", "reference/lua-c/testes/locals.lua"]
+timeout_s = 180
+capabilities = ["yield-through-c-frames"]
+
+[[runner]]
+id = "lua-test-all"
+kind = "external_suite"
+surface = "correctness"
+method = "oracle-diff"
+metric = "official_test_pass"
+target = "rust-vs-reference"
+fixture = "all"
+command = ["bash", "harness/run_official_test.sh", "reference/lua-c/testes/all.lua"]
+timeout_s = 600
+capabilities = ["gc-cycle-convergence"]
+
+[[runner]]
+id = "lua-official-suite"
+kind = "external_suite"
+surface = "correctness"
+method = "official-suite"
+metric = "official_suite_pass"
+target = "rust"
+command = ["bash", "harness/run_official_all.sh"]
+timeout_s = 1800
+capabilities = ["lua-official-suite-pass"]

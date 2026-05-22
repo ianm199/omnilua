@@ -1,0 +1,40 @@
+{
+  "captured_ts": "2026-05-22T03:33:29.780538Z",
+  "kind": "runner_result",
+  "packet": "baseline-gc",
+  "result": {
+    "artifacts": [],
+    "evidence": {
+      "command": [
+        "bash",
+        "harness/run_official_test.sh",
+        "reference/lua-c/testes/gc.lua"
+      ],
+      "cwd": ".",
+      "kind": "external_suite",
+      "returncode": 1,
+      "stderr": "",
+      "stdout": "FAIL  reference/lua-c/testes/gc.lua  (cause=unknown, reached_exec=0)\n--- first 5 lines of failure context ---\ntesting incremental garbage collection\ncreating many objects\nfunctions with errors\nlong strings\nsteps\n--- (full output at harness/impl/official/gc.out) ---\n",
+      "timed_out": false,
+      "timeout_s": 360
+    },
+    "measurements": [
+      {
+        "capability": "gc-cycle-convergence",
+        "denominator": 1,
+        "fixture": "gc",
+        "metric": "official_test_pass",
+        "name": "lua-test-gc",
+        "numerator": 0,
+        "target": "rust-vs-reference"
+      }
+    ],
+    "method": "oracle-diff",
+    "runner_id": "lua-test-gc",
+    "schema_version": 1,
+    "status": "fail",
+    "summary": "lua-test-gc: exit 1",
+    "surface": "correctness"
+  },
+  "role": "runner"
+}

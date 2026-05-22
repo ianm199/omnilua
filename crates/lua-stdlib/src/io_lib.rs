@@ -1154,10 +1154,57 @@ pub fn io_write(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `file:write(...)`. C: `f_write`.
 pub fn f_write(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: FILE *f = tofile(L); lua_pushvalue(L, 1); return g_write(L, f, 2);
-    // TODO(port): borrow split — extract file, then push value, then call g_write.
-    Err(LuaError::runtime(format_args!(
-        "TODO(port): borrow split needed for f_write"
-    )))
+    let p_rc = tofile(state)?;
+
+    // Step 1: collect args 2..=n as owned byte chunks before borrowing the file.
+    let n = state.top();
+    let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(n.saturating_sub(1) as usize);
+    for i in 2..=(n as i32) {
+        if state.type_at(i) == LuaType::Number {
+            let s = if state.is_integer(i) {
+                let ival = state.to_integer(i).unwrap_or(0);
+                format!("{}", ival).into_bytes()
+            } else {
+                let fval = state.to_number(i).unwrap_or(0.0);
+                // TODO(port): proper %.14g formatting (significant digits).
+                format!("{:.14e}", fval).into_bytes()
+            };
+            chunks.push(s);
+        } else {
+            let bytes: Vec<u8> = state.check_arg_string(i)?;
+            chunks.push(bytes);
+        }
+    }
+
+    // Step 2: write through the file with the LStream borrow scoped tightly.
+    let result: io::Result<()> = {
+        let mut p = p_rc.borrow_mut();
+        let fh = p.file.as_mut().expect("open stream has no file handle");
+        let mut r: io::Result<()> = Ok(());
+        for chunk in &chunks {
+            match fh.write_bytes(chunk) {
+                Ok(written) if written == chunk.len() => {}
+                Ok(_) => {
+                    r = Err(io::Error::new(io::ErrorKind::Other, "short write"));
+                    break;
+                }
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            }
+        }
+        r
+    };
+
+    // Step 3: on success return the file handle (arg 1); on failure use file_result.
+    match result {
+        Ok(()) => {
+            state.push_value_at(1);
+            Ok(1)
+        }
+        Err(e) => file_result(state, false, None, e),
+    }
 }
 
 // ── Seek / setvbuf / flush ───────────────────────────────────────────────────

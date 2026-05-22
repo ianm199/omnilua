@@ -329,9 +329,14 @@ impl LuaStateStubExt for LuaState {
     fn push_c_function(&mut self, f: lua_CFunction) -> Result<(), LuaError> {
         let idx: LuaCFnPtr = {
             let mut g = self.global_mut();
-            let i = g.c_functions.len();
-            g.c_functions.push(f);
-            i
+            match g.c_functions.iter().position(|&existing| existing == f) {
+                Some(i) => i,
+                None => {
+                    let i = g.c_functions.len();
+                    g.c_functions.push(f);
+                    i
+                }
+            }
         };
         self.push(LuaValue::Function(LuaClosure::LightC(idx)));
         Ok(())

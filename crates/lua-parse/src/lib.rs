@@ -674,6 +674,8 @@ fn cg_posfix_fold(
     e2: &mut ExprDesc,
     line: i32,
 ) -> Result<(), LuaError> {
+    cg_discharge_vars(fs, line, e2)?;
+
     let promote = |k: ExprKind, u: &ExprPayload| -> Option<f64> {
         match k {
             ExprKind::KInt => Some(u.ival as f64),

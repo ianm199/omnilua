@@ -1326,17 +1326,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     base = state.ci_base(ci); // updatebase
                 }
                 let i: Instruction = state.proto_code(&cl, pc);
-                let _dbg_pc_orig = pc;
                 pc += 1;
 
                 debug_assert!(base == state.ci_base(ci));
-
-                if cl.proto.maxstacksize < 60 && _dbg_pc_orig == 440 {
-                    for dbg_pc in 430..460u32 {
-                        let dbg_i: Instruction = cl.proto.code[dbg_pc as usize];
-                        eprintln!("DBG_DUMP pc={} raw=0x{:08x} op={:?} A={} B={} C={} sBx={} k={}", dbg_pc, dbg_i.raw(), dbg_i.opcode(), dbg_i.arg_a(), dbg_i.arg_b(), dbg_i.arg_c(), dbg_i.arg_s_bx(), dbg_i.arg_k());
-                    }
-                }
 
                 // C: vmdispatch(GET_OPCODE(i))
                 match i.opcode() {
@@ -2146,11 +2138,6 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         if (falsy as i32) == i.arg_k() {
                             pc += 1;
                         } else {
-                            eprintln!(
-                                "DBG TestSet ra={} base={} arg_a={} arg_b={} pc={} raw={:#x} maxstack={}",
-                                ra.0, base.0, i.arg_a(), i.arg_b(), pc, i.raw(),
-                                cl.proto.maxstacksize
-                            );
                             state.set_at(ra, rb_v);
                             let next = state.proto_code(&cl, pc);
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;

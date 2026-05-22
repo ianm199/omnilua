@@ -3,41 +3,50 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing numbers and math lib
+DUMP pc=0 raw=0x00000039 op=Eq A=0 B=0 C=0 sBx=-65535 sJ=-16777215 k=0
+DUMP pc=1 raw=0x80000038 op=Jmp A=0 B=0 C=128 sBx=1 sJ=1 k=0
+DUMP pc=2 raw=0x00000086 op=LFalseSkip A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=3 raw=0x00000087 op=LoadTrue A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=4 raw=0x000200c8 op=Return1 A=1 B=2 C=0 sBx=-65531 sJ=-16776190 k=0
+DUMP pc=5 raw=0x000100c7 op=Return0 A=1 B=1 C=0 sBx=-65533 sJ=-16776702 k=0
+DUMP pc=0 raw=0x00000039 op=Eq A=0 B=0 C=0 sBx=-65535 sJ=-16777215 k=0
+DUMP pc=1 raw=0x80000038 op=Jmp A=0 B=0 C=128 sBx=1 sJ=1 k=0
+DUMP pc=2 raw=0x00000086 op=LFalseSkip A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=3 raw=0x00000087 op=LoadTrue A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=4 raw=0x000200c8 op=Return1 A=1 B=2 C=0 sBx=-65531 sJ=-16776190 k=0
+DUMP pc=5 raw=0x000100c7 op=Return0 A=1 B=1 C=0 sBx=-65533 sJ=-16776702 k=0
 64-bit integers, 53-bit (mantissa) floats
-DBG_DUMP pc=430 raw=0x00090680 op=Move A=13 B=9 C=0 sBx=-65517 k=0
-DBG_DUMP pc=431 raw=0x02020644 op=Call A=12 B=2 C=2 sBx=-64507 k=0
-DBG_DUMP pc=432 raw=0x000c7fc3 op=TestSet A=255 B=12 C=0 sBx=-65511 k=0
-DBG_DUMP pc=433 raw=0x7fffff38 op=Jmp A=254 B=255 C=127 sBx=0 k=1
-DBG_DUMP pc=434 raw=0x00040600 op=Move A=12 B=4 C=0 sBx=-65527 k=0
-DBG_DUMP pc=435 raw=0x000a0680 op=Move A=13 B=10 C=0 sBx=-65515 k=0
-DBG_DUMP pc=436 raw=0x00020644 op=Call A=12 B=2 C=0 sBx=-65531 k=0
-DBG_DUMP pc=437 raw=0x010005c4 op=Call A=11 B=0 C=1 sBx=-65023 k=0
-DBG_DUMP pc=438 raw=0x0a00058b op=GetTabUp A=11 B=0 C=10 sBx=-60415 k=0
-DBG_DUMP pc=439 raw=0x1f0b058e op=GetField A=11 B=11 C=31 sBx=-49641 k=0
-DBG_DUMP pc=440 raw=0x80010601 op=LoadI A=12 B=1 C=128 sBx=3 k=0
-DBG_DUMP pc=441 raw=0x030205c4 op=Call A=11 B=2 C=3 sBx=-63995 k=0
-DBG_DUMP pc=442 raw=0x000c0500 op=Move A=10 B=12 C=0 sBx=-65511 k=0
-DBG_DUMP pc=443 raw=0x000b0480 op=Move A=9 B=11 C=0 sBx=-65513 k=0
-DBG_DUMP pc=444 raw=0x1000058b op=GetTabUp A=11 B=0 C=16 sBx=-57343 k=0
-DBG_DUMP pc=445 raw=0x00080600 op=Move A=12 B=8 C=0 sBx=-65519 k=0
-DBG_DUMP pc=446 raw=0x00090680 op=Move A=13 B=9 C=0 sBx=-65517 k=0
-DBG_DUMP pc=447 raw=0x80010701 op=LoadI A=14 B=1 C=128 sBx=3 k=0
-DBG_DUMP pc=448 raw=0x02030644 op=Call A=12 B=3 C=2 sBx=-64505 k=0
-DBG_DUMP pc=449 raw=0x000c7fc3 op=TestSet A=255 B=12 C=0 sBx=-65511 k=0
-DBG_DUMP pc=450 raw=0x7fffff38 op=Jmp A=254 B=255 C=127 sBx=0 k=1
-DBG_DUMP pc=451 raw=0x00080600 op=Move A=12 B=8 C=0 sBx=-65519 k=0
-DBG_DUMP pc=452 raw=0x000a0680 op=Move A=13 B=10 C=0 sBx=-65515 k=0
-DBG_DUMP pc=453 raw=0x7fff8702 op=LoadF A=14 B=255 C=127 sBx=0 k=1
-DBG_DUMP pc=454 raw=0x00030644 op=Call A=12 B=3 C=0 sBx=-65529 k=0
-DBG_DUMP pc=455 raw=0x010005c4 op=Call A=11 B=0 C=1 sBx=-65023 k=0
-DBG_DUMP pc=456 raw=0x0a00058b op=GetTabUp A=11 B=0 C=10 sBx=-60415 k=0
-DBG_DUMP pc=457 raw=0x1f0b058e op=GetField A=11 B=11 C=31 sBx=-49641 k=0
-DBG_DUMP pc=458 raw=0x00000600 op=Move A=12 B=0 C=0 sBx=-65535 k=0
-DBG_DUMP pc=459 raw=0x030205c4 op=Call A=11 B=2 C=3 sBx=-63995 k=0
-DBG TestSet ra=258 base=3 arg_a=255 arg_b=12 pc=450 raw=0xc7fc3 maxstack=39
+DUMP pc=0 raw=0x00000039 op=Eq A=0 B=0 C=0 sBx=-65535 sJ=-16777215 k=0
+DUMP pc=1 raw=0x80000038 op=Jmp A=0 B=0 C=128 sBx=1 sJ=1 k=0
+DUMP pc=2 raw=0x00000086 op=LFalseSkip A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=3 raw=0x00000087 op=LoadTrue A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=4 raw=0x000200c8 op=Return1 A=1 B=2 C=0 sBx=-65531 sJ=-16776190 k=0
+DUMP pc=5 raw=0x000100c7 op=Return0 A=1 B=1 C=0 sBx=-65533 sJ=-16776702 k=0
+DUMP pc=0 raw=0x00000039 op=Eq A=0 B=0 C=0 sBx=-65535 sJ=-16777215 k=0
+DUMP pc=1 raw=0x80000038 op=Jmp A=0 B=0 C=128 sBx=1 sJ=1 k=0
+DUMP pc=2 raw=0x00000086 op=LFalseSkip A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=3 raw=0x00000087 op=LoadTrue A=1 B=0 C=0 sBx=-65535 sJ=-16777214 k=0
+DUMP pc=4 raw=0x000200c8 op=Return1 A=1 B=2 C=0 sBx=-65531 sJ=-16776190 k=0
+DUMP pc=5 raw=0x000100c7 op=Return0 A=1 B=1 C=0 sBx=-65533 sJ=-16776702 k=0
+DUMP pc=0 raw=0x00010039 op=Eq A=0 B=1 C=0 sBx=-65533 sJ=-16776703 k=0
+DUMP pc=1 raw=0x800004b8 op=Jmp A=9 B=0 C=128 sBx=1 sJ=10 k=0
+DUMP pc=2 raw=0x0000010b op=GetTabUp A=2 B=0 C=0 sBx=-65535 sJ=-16777213 k=0
+DUMP pc=3 raw=0x0102010e op=GetField A=2 B=2 C=1 sBx=-65019 sJ=-16645117 k=0
+DUMP pc=4 raw=0x00000180 op=Move A=3 B=0 C=0 sBx=-65535 sJ=-16777212 k=0
+DUMP pc=5 raw=0x02020144 op=Call A=2 B=2 C=2 sBx=-64507 sJ=-16514045 k=0
+DUMP pc=6 raw=0x0000018b op=GetTabUp A=3 B=0 C=0 sBx=-65535 sJ=-16777212 k=0
+DUMP pc=7 raw=0x0103018e op=GetField A=3 B=3 C=1 sBx=-65017 sJ=-16644604 k=0
+DUMP pc=8 raw=0x00010200 op=Move A=4 B=1 C=0 sBx=-65533 sJ=-16776699 k=0
+DUMP pc=9 raw=0x020201c4 op=Call A=3 B=2 C=2 sBx=-64507 sJ=-16514044 k=0
+DUMP pc=10 raw=0x00038139 op=Eq A=2 B=3 C=0 sBx=-65528 sJ=-16775421 k=1
+DUMP pc=11 raw=0x80000038 op=Jmp A=0 B=0 C=128 sBx=1 sJ=1 k=0
+DUMP pc=12 raw=0x00000106 op=LFalseSkip A=2 B=0 C=0 sBx=-65535 sJ=-16777213 k=0
+DUMP pc=13 raw=0x00000107 op=LoadTrue A=2 B=0 C=0 sBx=-65535 sJ=-16777213 k=0
+DUMP pc=14 raw=0x00020148 op=Return1 A=2 B=2 C=0 sBx=-65531 sJ=-16776189 k=0
+DUMP pc=15 raw=0x00010147 op=Return0 A=2 B=1 C=0 sBx=-65533 sJ=-16776701 k=0
 DBG set_at OOB: idx=258 stack.len=85 stack_last=80 top=16 ci=CallInfoIdx(1)
 
-thread 'main' (7574608) panicked at crates/lua-vm/src/state.rs:1149:19:
+thread 'main' (7600801) panicked at crates/lua-vm/src/state.rs:1149:19:
 index out of bounds: the len is 85 but the index is 258
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 [panic] index out of bounds: the len is 85 but the index is 258

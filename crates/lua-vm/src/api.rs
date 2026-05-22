@@ -1134,9 +1134,20 @@ pub fn push_cclosure(
     // register `f` in the per-state registry and store the resulting index.
     let idx: lua_types::closure::LuaCFnPtr = {
         let mut g = state.global_mut();
-        let i = g.c_functions.len();
-        g.c_functions.push(f);
-        i
+        if n == 0 {
+            match g.c_functions.iter().position(|&existing| existing == f) {
+                Some(i) => i,
+                None => {
+                    let i = g.c_functions.len();
+                    g.c_functions.push(f);
+                    i
+                }
+            }
+        } else {
+            let i = g.c_functions.len();
+            g.c_functions.push(f);
+            i
+        }
     };
     if n == 0 {
         state.push(LuaValue::Function(LuaClosure::LightC(idx)));

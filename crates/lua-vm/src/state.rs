@@ -1229,7 +1229,13 @@ impl LuaState {
         }
         crate::vm::finish_set(self, t.clone(), k, v, true)
     }
-    pub fn table_raw_set<T, K>(&mut self, _t: T, _k: K, _v: LuaValue) -> Result<(), LuaError> { todo!("phase-b: table_raw_set") }
+    pub fn table_raw_set(&mut self, t: &LuaValue, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
+        let LuaValue::Table(tbl) = t else {
+            return Err(LuaError::type_error(t, "index"));
+        };
+        let tbl = tbl.clone();
+        tbl.raw_set(self, &k, v)
+    }
     pub fn table_array_set<T>(&mut self, _t: T, _idx: usize, _v: LuaValue) -> Result<(), LuaError> { todo!("phase-b: table_array_set") }
     pub fn table_ensure_array<T>(&mut self, _t: T, _n: usize) -> Result<(), LuaError> { todo!("phase-b: table_ensure_array") }
     pub fn table_length<T>(&mut self, _t: T) -> Result<i64, LuaError> { todo!("phase-b: table_length") }

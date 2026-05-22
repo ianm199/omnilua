@@ -49,3 +49,6 @@
 {"ts":"2026-05-16T14:15:24Z","action":"dispatch_done","detail":"func=set_field cost=0.5875934999999998","total_cost":0.00}
 {"ts":"2026-05-16T14:15:24Z","action":"panic_detected","detail":"func=table_set_with_tm iter=11","total_cost":0.00}
 {"ts":"2026-05-16T14:15:24Z","action":"dispatch_start","detail":"func=table_set_with_tm iter=11","total_cost":0.00}
+{"ts":"2026-05-16T14:18:21Z","action":"dispatch_done","detail":"func=table_set_with_tm cost=0.9699242499999999","total_cost":0.00}
+{"ts":"2026-05-16T14:18:21Z","action":"panic_detected","detail":"func=table_raw_set iter=12","total_cost":0.00}
+{"ts":"2026-05-16T14:18:21Z","action":"dispatch_start","detail":"func=table_raw_set iter=12","total_cost":0.00}

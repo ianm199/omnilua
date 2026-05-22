@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 52375,
+  "duration_api_ms": 52025,
+  "ttft_ms": 2518,
+  "num_turns": 9,
+  "result": "Build is green.\n\n**Report:**\n\n- **File:** `crates/lua-vm/src/state.rs` line 435 (now lines 435–445).\n- **What it does:** `<GcRef<LuaTable> as LuaTableRefExt>::metatable()` now returns `None` rather than panicking. The placeholder `lua_types::value::LuaTable` has no storage fields (its definition is `{ _private: () }`), so there's nowhere to read a metatable from. The implementation mirrors the established pattern in `get()` directly below it (lines 437–446) — both bottom out at \"placeholder has no storage; faithful pre-reconcile answer is the empty value\" with a `TODO(port)` pointing at the same reconciliation task (type-vocabulary.tsv: LuaTable audit→enforce). Matches C semantics: `luaH_new` initializes `Table.metatable` to NULL, and no `setmetatable` path currently reaches placeholder tables.\n- **Inner todo!() calls:** None — the body is now allocation-free and panic-free.\n- **`cargo build -p lua-cli`:** ✅ green (`Finished dev profile in 0.74s`).",
+  "stop_reason": "end_turn",
+  "session_id": "114ecb90-9187-45a7-b3d4-a02a56740c22",
+  "total_cost_usd": 0.4517875,
+  "usage": {
+    "input_tokens": 14,
+    "cache_creation_input_tokens": 30828,
+    "cache_read_input_tokens": 381833,
+    "output_tokens": 2674,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 30828,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 393,
+        "cache_read_input_tokens": 49147,
+        "cache_creation_input_tokens": 580,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 580
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1196,
+      "outputTokens": 16,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001276,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 14,
+      "outputTokens": 2674,
+      "cacheReadInputTokens": 381833,
+      "cacheCreationInputTokens": 30828,
+      "webSearchRequests": 0,
+      "costUSD": 0.45051149999999995,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "5f8708fd-6fe5-4494-a422-f4527e033af8"
+}

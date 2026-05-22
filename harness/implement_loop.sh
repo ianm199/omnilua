@@ -78,10 +78,15 @@ extract_panic_loc() {
 
 dispatch_implement_agent() {
     local func="$1"
-    local out_json="$OUT_DIR/iter-$ITER-$func.translator.json"
-    local transcript="$OUT_DIR/iter-$ITER-$func.transcript.jsonl"
+    local loc="${2:-}"
+    local safe_name; safe_name=$(echo "$func" | tr -c 'A-Za-z0-9_' '_' | cut -c1-40)
+    local out_json="$OUT_DIR/iter-$ITER-$safe_name.translator.json"
+    local transcript="$OUT_DIR/iter-$ITER-$safe_name.transcript.jsonl"
 
-    local prompt="You are an Implement-stub agent. Scope: implement exactly one function: \`$func\`.
+    local prompt="You are an Implement-stub agent. Scope: replace exactly one todo!() call.
+
+Target todo!() description: \`$func\`
+Panic location: $loc
 
 The Lua 5.4 → Rust port has reached the stage where lua-cli builds but
 panics at runtime on todo!() stubs. Your job is to replace ONE specific
@@ -89,10 +94,13 @@ todo!() with a real implementation.
 
 Process:
 
-1. Find where \`$func\` is defined. If it has a Type::method form, search
-   for the method inside the impl block:
-   - For 'LuaTable::get' → grep -rn 'impl LuaTable' then read the body
-   - For plain 'require_lib' → grep -rn 'fn require_lib' crates/lua-vm/src/ crates/lua-stdlib/src/
+1. Open the panic location ($loc) and read 30-50 lines of context around
+   the todo!(). Identify the function/method that contains it.
+
+2. If the description has a Type::method form, search:
+   grep -rn 'impl <TypeName>' crates/lua-vm/src/ crates/lua-stdlib/src/
+   For plain names, search:
+   grep -rn 'fn <name>' crates/lua-vm/src/ crates/lua-stdlib/src/
 
 2. Read the C source for context. The canonical mapping is in
    ANALYSES/file_deps.txt; typical Lua functions live in:

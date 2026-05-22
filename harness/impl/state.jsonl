@@ -25,3 +25,6 @@
 {"ts":"2026-05-16T14:04:55Z","action":"dispatch_done","detail":"func=table_metatable cost=0.9253142499999999","total_cost":0.00}
 {"ts":"2026-05-16T14:04:55Z","action":"panic_detected","detail":"func=LuaTable iter=3","total_cost":0.00}
 {"ts":"2026-05-16T14:04:55Z","action":"dispatch_start","detail":"func=LuaTable iter=3","total_cost":0.00}
+{"ts":"2026-05-16T14:05:50Z","action":"dispatch_done","detail":"func=LuaTable cost=0.4517875","total_cost":0.00}
+{"ts":"2026-05-16T14:05:50Z","action":"panic_detected","detail":"func=fast_tm_table iter=4","total_cost":0.00}
+{"ts":"2026-05-16T14:05:50Z","action":"dispatch_start","detail":"func=fast_tm_table iter=4","total_cost":0.00}

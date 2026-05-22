@@ -57,3 +57,7 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 [2026-05-16T14:04:55Z] ─── iter 3  (spent: $0.00) ───
 [2026-05-16T14:04:55Z]   blocked on: LuaTable
 [2026-05-16T14:04:55Z]   dispatching agent for LuaTable (budget $10)
+[2026-05-16T14:05:50Z]   agent done. iter cost=$0.4517875  total=$0.00
+[2026-05-16T14:05:50Z] ─── iter 4  (spent: $0.00) ───
+[2026-05-16T14:05:50Z]   blocked on: fast_tm_table
+[2026-05-16T14:05:50Z]   dispatching agent for fast_tm_table (budget $10)

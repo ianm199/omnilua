@@ -137,6 +137,22 @@ Process:
    For plain names, search:
    grep -rn 'fn <name>' crates/lua-vm/src/ crates/lua-stdlib/src/
 
+2a. SPECIAL CASE — panic origin is crates/lua-stdlib/src/state_stub.rs:
+   That file is a Phase-B-reconcile shim. Its bodies are trait DEFAULT
+   methods on LuaStateStubExt. DO NOT edit the trait default itself.
+   Instead, ADD an inherent method on LuaState with the same name and a
+   compatible signature. Rust's inherent-method-wins resolution then
+   silences the trait default automatically.
+   Concrete pattern (see crates/lua-vm/src/api.rs near 'pub fn push_value'
+   and 'impl LuaState { pub fn push_copy ... }' for a worked example):
+     - Find or create an `impl LuaState { ... }` block in api.rs (or
+       state.rs near the existing Phase-B stub impls).
+     - Add `pub fn <name>(&mut self, ...) -> ... { ... }` with the same
+       parameter shape as the trait method.
+     - If a free function `<name>(state, ...)` already exists in api.rs,
+       the inherent method should just call it.
+   Verify by `cargo build -p lua-cli` — no edits to state_stub.rs needed.
+
 2. Read the C source for context. The canonical mapping is in
    ANALYSES/file_deps.txt; typical Lua functions live in:
    - reference/lua-5.4.7/src/lapi.c (lua_X functions on LuaState)

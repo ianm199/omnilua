@@ -128,9 +128,9 @@ warning: unused variable: `line`
     |     ^^^^ help: if this is intentional, prefix it with an underscore: `_line`
 
 warning: unused variable: `state`
-    --> crates/lua-vm/src/do_.rs:1567:5
+    --> crates/lua-vm/src/do_.rs:1566:5
      |
-1567 |     state: &mut LuaState,
+1566 |     state: &mut LuaState,
      |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
 
 warning: unused variable: `state`
@@ -156,9 +156,9 @@ warning: variable does not need to be mutable
     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
 warning: variable does not need to be mutable
-    --> crates/lua-vm/src/state.rs:2140:9
+    --> crates/lua-vm/src/state.rs:2121:9
      |
-2140 |     let mut status = if status == LuaStatus::Yield as i32 {
+2121 |     let mut status = if status == LuaStatus::Yield as i32 {
      |         ----^^^^^^
      |         |
      |         help: remove this `mut`
@@ -525,9 +525,9 @@ warning: function `pretailcall` is never used
     |               ^^^^^^^^^^^
 
 warning: function `call` is never used
-    --> crates/lua-vm/src/do_.rs:1020:15
+    --> crates/lua-vm/src/do_.rs:1019:15
      |
-1020 | pub(crate) fn call(
+1019 | pub(crate) fn call(
      |               ^^^^
 
 warning: constant `LUA_SIGNATURE` is never used
@@ -669,81 +669,81 @@ warning: function `new_c_closure` is never used
    |               ^^^^^^^^^^^^^
 
 warning: function `new_lua_closure` is never used
-   --> crates/lua-vm/src/func.rs:110:15
+   --> crates/lua-vm/src/func.rs:111:15
     |
-110 | pub(crate) fn new_lua_closure(
+111 | pub(crate) fn new_lua_closure(
     |               ^^^^^^^^^^^^^^^
 
 warning: function `new_open_upval` is never used
-   --> crates/lua-vm/src/func.rs:177:4
+   --> crates/lua-vm/src/func.rs:178:4
     |
-177 | fn new_open_upval(
+178 | fn new_open_upval(
     |    ^^^^^^^^^^^^^^
 
 warning: function `find_upval` is never used
-   --> crates/lua-vm/src/func.rs:224:15
+   --> crates/lua-vm/src/func.rs:225:15
     |
-224 | pub(crate) fn find_upval(state: &mut LuaState, level: StackIdx) -> GcRef<UpVal> {
+225 | pub(crate) fn find_upval(state: &mut LuaState, level: StackIdx) -> GcRef<UpVal> {
     |               ^^^^^^^^^^
 
 warning: function `check_close_mth` is never used
-   --> crates/lua-vm/src/func.rs:314:4
+   --> crates/lua-vm/src/func.rs:315:4
     |
-314 | fn check_close_mth(state: &mut LuaState, level: StackIdx) -> Result<(), LuaError> {
+315 | fn check_close_mth(state: &mut LuaState, level: StackIdx) -> Result<(), LuaError> {
     |    ^^^^^^^^^^^^^^^
 
 warning: function `new_tbc_upval` is never used
-   --> crates/lua-vm/src/func.rs:400:15
+   --> crates/lua-vm/src/func.rs:401:15
     |
-400 | pub(crate) fn new_tbc_upval(state: &mut LuaState, level: StackIdx) -> Result<(), LuaError> {
+401 | pub(crate) fn new_tbc_upval(state: &mut LuaState, level: StackIdx) -> Result<(), LuaError> {
     |               ^^^^^^^^^^^^^
 
 warning: function `unlink_upval` is never used
-   --> crates/lua-vm/src/func.rs:442:15
+   --> crates/lua-vm/src/func.rs:443:15
     |
-442 | pub(crate) fn unlink_upval(state: &mut LuaState, uv: &GcRef<UpVal>) {
+443 | pub(crate) fn unlink_upval(state: &mut LuaState, uv: &GcRef<UpVal>) {
     |               ^^^^^^^^^^^^
 
 warning: function `new_proto` is never used
-   --> crates/lua-vm/src/func.rs:587:15
+   --> crates/lua-vm/src/func.rs:588:15
     |
-587 | pub(crate) fn new_proto(state: &mut LuaState) -> GcRef<crate::state::LuaProto> {
+588 | pub(crate) fn new_proto(state: &mut LuaState) -> GcRef<crate::state::LuaProto> {
     |               ^^^^^^^^^
 
 warning: function `free_proto` is never used
-   --> crates/lua-vm/src/func.rs:621:15
+   --> crates/lua-vm/src/func.rs:622:15
     |
-621 | pub(crate) fn free_proto(_state: &mut LuaState, _f: GcRef<crate::state::LuaProto>) {
+622 | pub(crate) fn free_proto(_state: &mut LuaState, _f: GcRef<crate::state::LuaProto>) {
     |               ^^^^^^^^^^
 
 warning: function `get_local_name` is never used
-   --> crates/lua-vm/src/func.rs:650:15
+   --> crates/lua-vm/src/func.rs:651:15
     |
-650 | pub(crate) fn get_local_name(
+651 | pub(crate) fn get_local_name(
     |               ^^^^^^^^^^^^^^
 
-warning: function `dummy_c_function` is never used
-   --> crates/lua-vm/src/func.rs:697:4
+warning: constant `DUMMY_C_FUNCTION_IDX` is never used
+   --> crates/lua-vm/src/func.rs:698:7
     |
-697 | fn dummy_c_function() -> i32 { 0 }
-    |    ^^^^^^^^^^^^^^^^
+698 | const DUMMY_C_FUNCTION_IDX: crate::state::LuaCFnPtr = usize::MAX;
+    |       ^^^^^^^^^^^^^^^^^^^^
 
 warning: function `state_in_twups` is never used
-   --> crates/lua-vm/src/func.rs:708:4
+   --> crates/lua-vm/src/func.rs:709:4
     |
-708 | fn state_in_twups(state: &LuaState) -> bool {
+709 | fn state_in_twups(state: &LuaState) -> bool {
     |    ^^^^^^^^^^^^^^
 
 warning: methods `current_ci` and `debug_find_local` are never used
-   --> crates/lua-vm/src/func.rs:736:19
+   --> crates/lua-vm/src/func.rs:737:19
     |
-723 | impl LuaState {
+724 | impl LuaState {
     | ------------- methods in this implementation
 ...
-736 |     pub(crate) fn current_ci(&self) -> &crate::state::CallInfo {
+737 |     pub(crate) fn current_ci(&self) -> &crate::state::CallInfo {
     |                   ^^^^^^^^^^
 ...
-790 |     pub(crate) fn debug_find_local(
+791 |     pub(crate) fn debug_find_local(
     |                   ^^^^^^^^^^^^^^^^
 
 warning: constant `L_MAX_LEN_NUM` is never used
@@ -807,27 +807,27 @@ warning: constant `LUA_EXTRASPACE` is never used
     |       ^^^^^^^^^^^^^^
 
 warning: function `set_debt` is never used
-    --> crates/lua-vm/src/state.rs:1514:15
+    --> crates/lua-vm/src/state.rs:1495:15
      |
-1514 | pub(crate) fn set_debt(g: &mut GlobalState, mut debt: isize) {
+1495 | pub(crate) fn set_debt(g: &mut GlobalState, mut debt: isize) {
      |               ^^^^^^^^
 
 warning: function `inc_c_stack` is never used
-    --> crates/lua-vm/src/state.rs:1732:15
+    --> crates/lua-vm/src/state.rs:1713:15
      |
-1732 | pub(crate) fn inc_c_stack(state: &mut LuaState) -> Result<(), LuaError> {
+1713 | pub(crate) fn inc_c_stack(state: &mut LuaState) -> Result<(), LuaError> {
      |               ^^^^^^^^^^^
 
 warning: function `free_thread` is never used
-    --> crates/lua-vm/src/state.rs:2080:15
+    --> crates/lua-vm/src/state.rs:2061:15
      |
-2080 | pub(crate) fn free_thread(caller: &mut LuaState, thread: &mut LuaState) {
+2061 | pub(crate) fn free_thread(caller: &mut LuaState, thread: &mut LuaState) {
      |               ^^^^^^^^^^^
 
 warning: function `warn_error` is never used
-    --> crates/lua-vm/src/state.rs:2481:15
+    --> crates/lua-vm/src/state.rs:2463:15
      |
-2481 | pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
+2463 | pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
      |               ^^^^^^^^^^
 
 warning: type alias `LocalGcRef` is never used
@@ -1041,9 +1041,9 @@ warning: function `less_equal` is never used
     |               ^^^^^^^^^^
 
 warning: structure field `nCcalls` should have a snake case name
-   --> crates/lua-vm/src/state.rs:937:9
+   --> crates/lua-vm/src/state.rs:916:9
     |
-937 |     pub nCcalls: u32,
+916 |     pub nCcalls: u32,
     |         ^^^^^^^ help: convert the identifier to snake case: `n_ccalls`
     |
     = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
@@ -4528,6 +4528,8 @@ help: use `let _ = ...` to ignore the expression or result
 
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
-[3/4] Loading source (parse + compile)...
-[4/4] Executing chunk...
-[err] pcall_k failed: Runtime: attempt to call a nil value
+
+thread 'main' (4721792) panicked at crates/lua-stdlib/src/state_stub.rs:94:65:
+not yet implemented: phase-b-reconcile: push_copy
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[panic] not yet implemented: phase-b-reconcile: push_copy

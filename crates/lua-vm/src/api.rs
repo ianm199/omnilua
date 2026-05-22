@@ -328,6 +328,22 @@ pub fn push_value(state: &mut LuaState, idx: i32) {
     state.push(v);
 }
 
+/// Inherent `push_copy` so the `LuaStateStubExt::push_copy` default
+/// `todo!()` no longer fires. Phase-A `state.push_copy(idx)` call-sites
+/// (base.rs, etc.) duplicate the value at `idx` onto the top of the stack —
+/// the same semantics as `lua_pushvalue`.
+impl LuaState {
+    pub fn push_copy(&mut self, idx: i32) -> Result<(), LuaError> {
+        push_value(self, idx);
+        Ok(())
+    }
+
+    pub fn push_string(&mut self, s: &[u8]) -> Result<(), LuaError> {
+        push_lstring(self, s)?;
+        Ok(())
+    }
+}
+
 // ── access functions (stack → Rust) ──────────────────────────────────────────
 
 // C: LUA_API int lua_type (lua_State *L, int idx)

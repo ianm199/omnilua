@@ -156,9 +156,9 @@ warning: variable does not need to be mutable
     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
 warning: variable does not need to be mutable
-    --> crates/lua-vm/src/state.rs:2119:9
+    --> crates/lua-vm/src/state.rs:2121:9
      |
-2119 |     let mut status = if status == LuaStatus::Yield as i32 {
+2121 |     let mut status = if status == LuaStatus::Yield as i32 {
      |         ----^^^^^^
      |         |
      |         help: remove this `mut`
@@ -807,27 +807,27 @@ warning: constant `LUA_EXTRASPACE` is never used
     |       ^^^^^^^^^^^^^^
 
 warning: function `set_debt` is never used
-    --> crates/lua-vm/src/state.rs:1493:15
+    --> crates/lua-vm/src/state.rs:1495:15
      |
-1493 | pub(crate) fn set_debt(g: &mut GlobalState, mut debt: isize) {
+1495 | pub(crate) fn set_debt(g: &mut GlobalState, mut debt: isize) {
      |               ^^^^^^^^
 
 warning: function `inc_c_stack` is never used
-    --> crates/lua-vm/src/state.rs:1711:15
+    --> crates/lua-vm/src/state.rs:1713:15
      |
-1711 | pub(crate) fn inc_c_stack(state: &mut LuaState) -> Result<(), LuaError> {
+1713 | pub(crate) fn inc_c_stack(state: &mut LuaState) -> Result<(), LuaError> {
      |               ^^^^^^^^^^^
 
 warning: function `free_thread` is never used
-    --> crates/lua-vm/src/state.rs:2059:15
+    --> crates/lua-vm/src/state.rs:2061:15
      |
-2059 | pub(crate) fn free_thread(caller: &mut LuaState, thread: &mut LuaState) {
+2061 | pub(crate) fn free_thread(caller: &mut LuaState, thread: &mut LuaState) {
      |               ^^^^^^^^^^^
 
 warning: function `warn_error` is never used
-    --> crates/lua-vm/src/state.rs:2461:15
+    --> crates/lua-vm/src/state.rs:2463:15
      |
-2461 | pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
+2463 | pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
      |               ^^^^^^^^^^
 
 warning: type alias `LocalGcRef` is never used
@@ -1060,6 +1060,41 @@ help: use `let _ = ...` to ignore the resulting value
      |
 1322 |                         let _ = state.upvalue_set(&cl, b, v.clone());
      |                         +++++++
+
+warning: unreachable call
+    --> crates/lua-lex/src/lib.rs:1886:32
+     |
+1886 |                           return Err(todo!(
+     |  ________________________________^^^_-
+     | |                                |
+     | |                                unreachable call
+1887 | |                             "phase-b-reconcile: LuaString::extra accessor missing on canonical type"
+1888 | |                         ));
+     | |_________________________- any code following this expression is unreachable
+     |
+     = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `ls`
+   --> crates/lua-lex/src/lib.rs:842:5
+    |
+842 |     ls: &mut LexState,
+    |     ^^ help: if this is intentional, prefix it with an underscore: `_ls`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `syntax_error` is never used
+   --> crates/lua-lex/src/lib.rs:591:15
+    |
+591 | pub(crate) fn syntax_error(ls: &mut LexState, msg: &[u8]) -> LuaError {
+    |               ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `token2str` is never used
+   --> crates/lua-lex/src/lib.rs:670:15
+    |
+670 | pub(crate) fn token2str(_ls: &LexState, token: i32) -> Vec<u8> {
+    |               ^^^^^^^^^
 
 warning: unused import: `OpMode`
   --> crates/lua-code/src/codegen.rs:23:26
@@ -1838,41 +1873,6 @@ warning: function `finish` is never used
      |
 2357 | pub(crate) fn finish(
      |               ^^^^^^
-
-warning: unreachable call
-    --> crates/lua-lex/src/lib.rs:1886:32
-     |
-1886 |                           return Err(todo!(
-     |  ________________________________^^^_-
-     | |                                |
-     | |                                unreachable call
-1887 | |                             "phase-b-reconcile: LuaString::extra accessor missing on canonical type"
-1888 | |                         ));
-     | |_________________________- any code following this expression is unreachable
-     |
-     = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: unused variable: `ls`
-   --> crates/lua-lex/src/lib.rs:842:5
-    |
-842 |     ls: &mut LexState,
-    |     ^^ help: if this is intentional, prefix it with an underscore: `_ls`
-    |
-    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
-
-warning: function `syntax_error` is never used
-   --> crates/lua-lex/src/lib.rs:591:15
-    |
-591 | pub(crate) fn syntax_error(ls: &mut LexState, msg: &[u8]) -> LuaError {
-    |               ^^^^^^^^^^^^
-    |
-    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: function `token2str` is never used
-   --> crates/lua-lex/src/lib.rs:670:15
-    |
-670 | pub(crate) fn token2str(_ls: &LexState, token: i32) -> Vec<u8> {
-    |               ^^^^^^^^^
 
 warning: unused imports: `LuaStatus`, `arith::ArithOp`, `closure::LuaClosure`, and `gc::GcRef`
   --> crates/lua-stdlib/src/base.rs:8:5

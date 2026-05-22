@@ -14,6 +14,7 @@ pub mod object;
 pub mod state;
 pub mod string;
 pub mod table;
+pub mod trace_impls;
 pub mod tagmethods;
 pub mod undump;
 pub mod vm;

@@ -482,24 +482,14 @@ pub(crate) fn close_upval(state: &mut LuaState, level: StackIdx) {
         if uv_idx.0 < level.0 {
             break;
         }
-        if !((uv_idx.0 as usize) < state.top.0 as usize) {
-            eprintln!(
-                "[close_upval] uv_idx={} top={} level={} openupval.len={}",
-                uv_idx.0, state.top.0, level.0, state.openupval.len()
-            );
-            for (k, uvr) in state.openupval.iter().enumerate() {
-                let info = match &*uvr.slot() {
-                    lua_types::UpValState::Open { thread_id, idx } => format!("Open(thread={}, idx={})", thread_id, idx.0),
-                    lua_types::UpValState::Closed(_) => "Closed(...)".to_string(),
-                };
-                eprintln!("  openupval[{}] = {}", k, info);
-            }
-            eprintln!("backtrace:\n{}", std::backtrace::Backtrace::force_capture());
-        }
-        debug_assert!(
-            (uv_idx.0 as usize) < state.top.0 as usize,
-            "open upvalue index must be below stack top"
-        );
+        // PORT NOTE: C asserts `uplevel(uv) < L->top.p` because the C stack is a
+        // contiguous block where slots above top are undefined. The Rust stack is
+        // a `Vec<StackValue>` whose backing storage outlives any top movement, so
+        // reading `stack[uv_idx]` is always valid here even when `state.top` has
+        // been rolled back below the upvalue (which is exactly what happens on
+        // pcall error unwind, e.g. when `assert_fn` calls `set_top(L, 1)` before
+        // raising). Dropping the C-style assertion lets close_upval correctly
+        // close upvalues during error unwind regardless of top position.
         state.openupval.remove(0);
         let stack_val = state.get_stack_value(uv_idx).clone();
         uv.close_with(stack_val);

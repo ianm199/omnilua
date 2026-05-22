@@ -866,10 +866,48 @@ impl GlobalState {
     pub fn set_gc_genmajormul(&mut self, p: u8) { self.genmajormul = p; }
     pub fn gc_stop_flags(&self) -> u8 { self.gcstp }
     pub fn set_gc_stop_flags(&mut self, f: u8) { self.gcstp = f; }
-    pub fn set_gc_stop_user(&mut self) { todo!("phase-b: set_gc_stop_user") }
+    pub fn set_gc_stop_user(&mut self) {
+        // C: g->gcstp = GCSTPUSR;  (lapi.c:1143)
+        // GCSTPUSR (lgc.h:155) = 1 — bit set when GC is stopped by user (lua_gc(L, LUA_GCSTOP)).
+        self.gcstp = 1;
+    }
     pub fn clear_gc_stop(&mut self) { self.gcstp = 0; }
     pub fn is_gc_stopped_internally(&self) -> bool { self.gcstp != 0 }
-    pub fn tm_name<T>(&self, _tm: T) -> Option<GcRef<LuaString>> { todo!("phase-b: tm_name") }
+
+    /// Returns the interned `__xxx` name string for tag method `tm`, or
+    /// `None` if `tmname` has not yet been initialised (early bootstrap).
+    ///
+    /// C: `G(L)->tmname[tm]` (lookup via macro in ltm.h).
+    /// macros.tsv: `getshrstr(G(L)->tmname[tm]) → g.tm_name(tm)`.
+    ///
+    /// PORT NOTE: The lua-vm crate carries two distinct `TagMethod` enums
+    /// (one in `lua-types`, one in `crate::tagmethods`) with identical
+    /// `#[repr(u8)]` ordering. The [`TmIndex`] trait bridges them so callers
+    /// from either side can index `tmname` uniformly.
+    pub fn tm_name<T: TmIndex>(&self, tm: T) -> Option<GcRef<LuaString>> {
+        self.tmname.get(tm.tm_index()).cloned()
+    }
+}
+
+/// Discriminant-to-index conversion for the two parallel `TagMethod` enums.
+///
+/// Both `lua_types::tagmethod::TagMethod` and `crate::tagmethods::TagMethod`
+/// are `#[repr(u8)]` with the same ORDER TM layout, so casting through `u8`
+/// yields the correct `GlobalState.tmname` index for either type.
+pub trait TmIndex: Copy {
+    fn tm_index(self) -> usize;
+}
+impl TmIndex for lua_types::tagmethod::TagMethod {
+    fn tm_index(self) -> usize { self as u8 as usize }
+}
+impl TmIndex for crate::tagmethods::TagMethod {
+    fn tm_index(self) -> usize { self as u8 as usize }
+}
+impl TmIndex for usize {
+    fn tm_index(self) -> usize { self }
+}
+impl TmIndex for u8 {
+    fn tm_index(self) -> usize { self as usize }
 }
 
 use lua_types::tagmethod::TagMethod;

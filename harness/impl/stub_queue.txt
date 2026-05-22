@@ -1,1 +1,2 @@
-is_main_thread	crates/lua-vm/src/state.rs:1826:48
+tm_name	crates/lua-vm/src/state.rs:872:68
+trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc	crates/lua-vm/src/trace_impls.rs:30:9

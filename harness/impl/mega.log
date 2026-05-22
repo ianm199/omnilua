@@ -720,3 +720,28 @@
 [2026-05-18T02:55:03Z mega]   skip stuck prog (same sig 2 rounds: panicked at crates/lua-parse/src/lib.rs:629): reference/lua-c/testes/errors.lua
 [2026-05-18T02:55:03Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 426: assertion failed!): reference/lua-c/testes/attrib.lua
 [2026-05-18T02:55:03Z mega]   [O7.D4] DEBUG dispatch on file: reference/lua-c/testes/events.lua [parallel]
+[2026-05-18T03:10:57Z mega]   → committed 229c5b2 (debug/reference/lua-c/testes/files.lua )
+[2026-05-18T03:20:20Z mega] loaded 79 test programs (with expected outputs)
+[2026-05-18T03:20:20Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T03:20:20Z mega] mega-loop start. 79 test programs.
+[2026-05-18T03:20:20Z mega]   MAX_OUTER=1  MAX_PER_OUTER=0  PER_AGENT_BUDGET=$20.00  SESSION_BUDGET=$0.01
+[2026-05-18T03:20:20Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T03:20:20Z mega] ─── outer round 1 (spent: $0) ───
+[2026-05-18T03:20:23Z mega]   scan: 60/79 programs pass cleanly
+[2026-05-18T03:20:23Z mega]   surface scan returned 2 unique stub blockers
+[2026-05-18T03:20:23Z mega]   grouped into 0 disjoint-file agents (parallel cap 3)
+[2026-05-18T03:20:23Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T03:20:23Z mega] mega-loop end. Total cost: $0  Outer rounds: 1
+[2026-05-18T03:20:23Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T03:20:58Z mega] loaded 79 test programs (with expected outputs)
+[2026-05-18T03:20:58Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T03:20:58Z mega] mega-loop start. 79 test programs.
+[2026-05-18T03:20:58Z mega]   MAX_OUTER=30  MAX_PER_OUTER=5  PER_AGENT_BUDGET=$10  SESSION_BUDGET=$300
+[2026-05-18T03:20:58Z mega] ═════════════════════════════════════════════════════════════════
+[2026-05-18T03:20:58Z mega] ─── outer round 1 (spent: $0) ───
+[2026-05-18T03:21:01Z mega]   scan: 60/79 programs pass cleanly
+[2026-05-18T03:21:01Z mega]   surface scan returned 2 unique stub blockers
+[2026-05-18T03:21:01Z mega]   grouped into 2 disjoint-file agents (parallel cap 4)
+[2026-05-18T03:21:01Z mega]   [O1.1] dispatch on 'tm_name' @ crates/lua-vm/src/state.rs:872:68 (budget $10) [parallel]
+[2026-05-18T03:21:01Z mega]   [O1.2] dispatch on 'trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc' @ crates/lua-vm/src/trace_impls.rs:30:9 (budget $10) [parallel]
+[2026-05-18T03:25:09Z mega]   → committed b680cf8 (impl/trace GlobalState — l_registry, mainthread, strt p)

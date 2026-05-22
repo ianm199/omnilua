@@ -2,9 +2,5 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing scanner
-
-thread 'main' (7645077) panicked at crates/lua-vm/src/vm.rs:180:36:
-not yet implemented: phase-b: is_mm_mode
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-b: is_mm_mode
+testing strings and string library
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:231: assertion failed!

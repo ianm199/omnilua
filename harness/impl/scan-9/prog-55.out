@@ -2,8 +2,5 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-
-thread 'main' (7645031) panicked at crates/lua-stdlib/src/state_stub.rs:268:94:
-not yet implemented: phase-b-reconcile: upvalue_id
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-b-reconcile: upvalue_id
+OK
+[ok] execution completed, status=Ok

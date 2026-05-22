@@ -849,3 +849,18 @@
 [2026-05-18T06:06:26Z mega]   surface scan returned 1 unique stub blockers
 [2026-05-18T06:06:26Z mega]   grouped into 1 disjoint-file agents (parallel cap 4)
 [2026-05-18T06:06:26Z mega]   [O8.1] dispatch on 'load_with_reader' @ crates/lua-stdlib/src/state_stub.rs:184:112 (budget $10) [parallel]
+[2026-05-18T06:14:51Z mega]   [O8.1] agent done. iter cost=$4.00029825  total=$59.2311
+[2026-05-18T06:14:51Z mega] ─── outer round 9 (spent: $59.2311) ───
+[2026-05-18T06:14:55Z mega]   scan: 66/79 programs pass cleanly
+[2026-05-18T06:14:55Z mega]   surface scan returned 0 unique stub blockers
+[2026-05-18T06:14:55Z mega]   no stub blockers — falling back to DEBUG agents on failing programs
+[2026-05-18T06:14:56Z mega]   [O9.D1] DEBUG dispatch on file: reference/lua-c/testes/gc.lua [parallel]
+[2026-05-18T06:14:56Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: attempt to call a string value): reference/lua-c/testes/gengc.lua
+[2026-05-18T06:14:56Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 231: assertion failed!): reference/lua-c/testes/strings.lua
+[2026-05-18T06:14:56Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 820: assertion failed!): reference/lua-c/testes/math.lua
+[2026-05-18T06:14:56Z mega]   [O9.D2] DEBUG dispatch on file: reference/lua-c/testes/literals.lua [parallel]
+[2026-05-18T06:14:56Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 270: assertion failed!): reference/lua-c/testes/locals.lua
+[2026-05-18T06:14:56Z mega]   [O9.D3] DEBUG dispatch on file: reference/lua-c/testes/calls.lua [parallel]
+[2026-05-18T06:14:56Z mega]   [O9.D4] DEBUG dispatch on file: reference/lua-c/testes/constructs.lua [parallel]
+[2026-05-18T06:14:56Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: coroutine.yield: coroutines not yet implemented (Phase E)): reference/lua-c/testes/nextvar.lua
+[2026-05-18T06:14:56Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: field 'year' missing in date table): reference/lua-c/testes/files.lua

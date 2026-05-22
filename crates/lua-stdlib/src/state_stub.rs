@@ -178,7 +178,10 @@ pub trait LuaStateStubExt {
     fn arith(&mut self, op: ArithOp) -> Result<(), LuaError> { todo!("phase-b-reconcile: arith") }
 
     fn load(&mut self, chunk: &[u8], name: &[u8], mode: Option<&[u8]>) -> Result<bool, LuaError> { todo!("phase-b-reconcile: load") }
-    fn load_buffer_ex<M: ?Sized>(&mut self, buf: &[u8], name: &[u8], mode: &M) -> Result<bool, LuaError> { todo!("phase-b-reconcile: load_buffer_ex") }
+    fn load_buffer_ex<M: ?Sized>(&mut self, buf: &[u8], name: &[u8], mode: &M) -> Result<bool, LuaError>
+    where
+        M: AsRef<[u8]>,
+    { let _ = (buf, name, mode); todo!("phase-b-reconcile: load_buffer_ex") }
     fn load_file(&mut self, path: Option<&[u8]>) -> Result<bool, LuaError> { todo!("phase-b-reconcile: load_file") }
     fn load_file_ex(&mut self, path: Option<&[u8]>, mode: Option<&[u8]>) -> Result<bool, LuaError> { todo!("phase-b-reconcile: load_file_ex") }
     fn load_with_reader<F, M: ?Sized>(&mut self, reader: F, name: &[u8], mode: &M) -> Result<bool, LuaError>
@@ -974,11 +977,14 @@ impl LuaStateStubExt for LuaState {
         lua_vm::api::load(self, reader, Some(name), mode)
     }
 
-    fn load_buffer_ex<M: ?Sized>(&mut self, buf: &[u8], name: &[u8], mode: &M) -> Result<bool, LuaError> {
-        let _ = mode;
+    fn load_buffer_ex<M: ?Sized>(&mut self, buf: &[u8], name: &[u8], mode: &M) -> Result<bool, LuaError>
+    where
+        M: AsRef<[u8]>,
+    {
         let mut remaining = Some(buf.to_vec());
         let reader: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || remaining.take());
-        let status = lua_vm::api::load(self, reader, Some(name), None)?;
+        let mode_bytes = mode.as_ref();
+        let status = lua_vm::api::load(self, reader, Some(name), Some(mode_bytes))?;
         Ok(status == LuaStatus::Ok)
     }
 

@@ -440,6 +440,18 @@ impl LuaState {
         Ok(())
     }
 
+    /// Fetch the metatable registered under `name` in the registry and assign
+    /// it as the metatable of the value currently on top of the stack. The
+    /// fetched metatable is popped after assignment, leaving the original top
+    /// value in place.
+    ///
+    /// C: `LUALIB_API void luaL_setmetatable(lua_State *L, const char *tname)`
+    pub fn set_metatable_by_name(&mut self, name: &[u8]) -> Result<(), LuaError> {
+        get_field(self, LUA_REGISTRYINDEX, name)?;
+        set_metatable(self, -2)?;
+        Ok(())
+    }
+
     /// Ensure `registry[name]` is a table; push it onto the stack.
     /// Returns `true` if the table already existed, `false` if newly created.
     ///

@@ -145,3 +145,7 @@ help: use `let _ = ...` to ignore the resulting value
 [2026-05-16T14:32:25Z] ─── iter 1  (spent: $0.00) ───
 [2026-05-16T14:32:25Z]   blocked on: precall light C
 [2026-05-16T14:32:25Z]   dispatching agent for precall light C at  (budget $10)
+[2026-05-16T14:34:09Z]   agent done. iter cost=$0.7278322500000001  total=$0.00
+[2026-05-16T14:34:09Z] ─── iter 2  (spent: $0.00) ───
+[2026-05-16T14:34:09Z]   blocked on: check_stack
+[2026-05-16T14:34:09Z]   dispatching agent for check_stack at crates/lua-vm/src/state.rs:1113:70 (budget $10)

@@ -1,1 +1,1 @@
-precall light C
+check_stack

@@ -1110,7 +1110,14 @@ impl LuaState {
     pub fn stack_set_nil(&mut self, _idx: impl Into<StackIdxConv>) { todo!("phase-b: stack_set_nil") }
     pub fn stack_resize(&mut self, _size: usize) -> Result<(), LuaError> { todo!("phase-b: stack_resize") }
     pub fn stack_available(&mut self) -> usize { todo!("phase-b: stack_available") }
-    pub fn check_stack(&mut self, _n: i32) -> Result<(), LuaError> { todo!("phase-b: check_stack") }
+    pub fn check_stack(&mut self, n: i32) -> Result<(), LuaError> {
+        debug_assert!(n >= 0, "negative 'n'");
+        let free = (self.stack_last.0 as i32) - (self.top.0 as i32);
+        if free <= n {
+            self.grow_stack(n, true)?;
+        }
+        Ok(())
+    }
     pub fn grow_stack(&mut self, _n: i32, _raiseerror: bool) -> Result<(), LuaError> { todo!("phase-b: grow_stack") }
 
     pub fn get_ci(&self, idx: CallInfoIdx) -> &CallInfo { &self.call_info[idx.as_usize()] }

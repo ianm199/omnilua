@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 101958,
+  "duration_api_ms": 102170,
+  "ttft_ms": 2167,
+  "num_turns": 18,
+  "result": "Build is green (only warnings, no errors).\n\n**Report**\n\n- **File modified**: `crates/lua-vm/src/do_.rs`, lines 884–911 (the `LuaClosure::LightC` arm inside `precall`).\n- **What it does now**: Ports the C source `luaD_precall` LUA_VLCF case (`precallC(L, func, nresults, fvalue(s2v(func)))`). Inlines the `precall_c` scaffolding because `LuaCFnPtr` (lua-types placeholder, `fn() -> i32`) doesn't take `&mut LuaState`, so the generic `precall_c` helper which expects `LuaCFunction` can't be used. The arm: checks stack for `LUA_MINSTACK`, runs GC step, builds a `CallInfo` with `CIST_C`, fires `LUA_HOOKCALL` if armed, invokes `f()`, runs `poscall`, and returns `Ok(None)` so the caller skips VM execution.\n- **No new `todo!()` calls** inside this arm. The placeholder light C function (state_stub.rs:319) just returns 0, so subsequent panic will likely surface in whatever the caller of `open_libs` expects to have happened (e.g. missing globals when running Lua) or in another sibling stub like `precall_c C closure` (line 882) / `pretailcall` (lines 801, 805).\n- **`cargo build -p lua-cli`**: green (warnings only, no errors).",
+  "stop_reason": "end_turn",
+  "session_id": "f045e3cd-45ab-4c06-9f3b-9cbd19c5e0cb",
+  "total_cost_usd": 0.7278322500000001,
+  "usage": {
+    "input_tokens": 17,
+    "cache_creation_input_tokens": 41895,
+    "cache_read_input_tokens": 577145,
+    "output_tokens": 7041,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 41895,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 497,
+        "cache_read_input_tokens": 60123,
+        "cache_creation_input_tokens": 671,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 671
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1226,
+      "outputTokens": 16,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001306,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 17,
+      "outputTokens": 7041,
+      "cacheReadInputTokens": 577145,
+      "cacheCreationInputTokens": 41895,
+      "webSearchRequests": 0,
+      "costUSD": 0.72652625,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "2964bfa4-5108-47fb-a172-c7a62b8b8aad"
+}

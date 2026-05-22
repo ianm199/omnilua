@@ -76,3 +76,6 @@
 {"ts":"2026-05-16T14:32:25Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
 {"ts":"2026-05-16T14:32:25Z","action":"panic_detected","detail":"func=precall light C iter=1","total_cost":0.00}
 {"ts":"2026-05-16T14:32:25Z","action":"dispatch_start","detail":"func=precall light C loc= iter=1","total_cost":0.00}
+{"ts":"2026-05-16T14:34:09Z","action":"dispatch_done","detail":"func=precall light C cost=0.7278322500000001","total_cost":0.00}
+{"ts":"2026-05-16T14:34:09Z","action":"panic_detected","detail":"func=check_stack iter=2","total_cost":0.00}
+{"ts":"2026-05-16T14:34:09Z","action":"dispatch_start","detail":"func=check_stack loc=crates/lua-vm/src/state.rs:1113:70 iter=2","total_cost":0.00}

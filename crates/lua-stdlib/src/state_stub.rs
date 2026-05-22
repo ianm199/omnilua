@@ -309,6 +309,10 @@ impl LuaStateStubExt for LuaState {
     fn set_field(&mut self, idx: i32, k: &[u8]) -> Result<(), LuaError> {
         lua_vm::api::set_field(self, idx, k)
     }
+
+    fn to_boolean(&mut self, idx: i32) -> bool {
+        lua_vm::api::to_boolean(self, idx)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

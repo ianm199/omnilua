@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 75040,
+  "duration_api_ms": 74595,
+  "ttft_ms": 6409,
+  "num_turns": 15,
+  "result": "Build is green.\n\n**Report**\n\n- **File modified**: `crates/lua-vm/src/state.rs` lines 459–460 (both `LuaTable::raw_set` and the sibling `raw_set_int`, which would surface as the next `todo!()`).\n- **What `raw_set` now does**: Returns `Ok(())` as a faithful no-op. The `LuaValue::Table` variant carries `GcRef<lua_types::value::LuaTable>`, a placeholder with `_private: ()` and no storage. The symmetric `get` method just above (lines 447–456) is already a no-op returning `Nil` for the same reason — `raw_set` mirrors that pattern with a matching PORT NOTE pointing at the `LuaTable` reconciliation task in `type-vocabulary.tsv`.\n- **`todo!()` calls in the new impl**: none — it's a pure `Ok(())`.\n- **Build status**: `cargo build -p lua-cli` is green (warnings only, no errors).",
+  "stop_reason": "end_turn",
+  "session_id": "233046fe-1f3f-4404-8885-7c5d745a95e9",
+  "total_cost_usd": 0.58492175,
+  "usage": {
+    "input_tokens": 15,
+    "cache_creation_input_tokens": 39335,
+    "cache_read_input_tokens": 476584,
+    "output_tokens": 3976,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 39335,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 337,
+        "cache_read_input_tokens": 57624,
+        "cache_creation_input_tokens": 610,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 610
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1216,
+      "outputTokens": 19,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001311,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 15,
+      "outputTokens": 3976,
+      "cacheReadInputTokens": 476584,
+      "cacheCreationInputTokens": 39335,
+      "webSearchRequests": 0,
+      "costUSD": 0.5836107500000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "d2047a36-7c9b-4351-96d0-f447aa33e60f"
+}

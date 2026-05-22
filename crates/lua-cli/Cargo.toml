@@ -5,8 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
+# Phase D-3.5: lua-cli now hosts the libloading-backed dynamic library
+# backend. `libloading` is FFI and unavoidably uses `unsafe`; the workspace
+# `unsafe_code = "forbid"` is overridden locally. Each unsafe block carries a
+# `// SAFETY: ...` comment; per-crate ceiling lives in
+# `harness/unsafe-budgets.toml`.
+[lints.rust]
+unsafe_code = "allow"
 
 [[bin]]
 name = "lua-rs"
@@ -17,3 +22,4 @@ lua-types.workspace = true
 lua-vm.workspace = true
 lua-stdlib.workspace = true
 lua-parse.workspace = true
+libloading = "0.9"

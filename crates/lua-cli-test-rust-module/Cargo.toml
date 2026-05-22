@@ -1,0 +1,28 @@
+[package]
+name = "lua-cli-test-rust-module"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Test fixture: a tiny Rust-native cdylib used by Phase D-3.5 acceptance tests
+# to exercise the `dynlib_*_hook` path through `package.loadlib`. Exports one
+# symbol whose signature matches the Rust-native module ABI used by
+# `DynamicSymbol::RustNative`:
+#   fn(&mut LuaState) -> Result<usize, LuaError>
+#
+# The output is a cdylib so `libloading` can `dlopen` it.
+
+[lib]
+crate-type = ["cdylib"]
+
+# Phase D-3.5 test fixture: `#[no_mangle]` is required so `dlsym` resolves the
+# exported symbol by stable name, and rustc lints it under the same gate as
+# `unsafe_code`. The workspace `unsafe_code = "forbid"` is overridden locally
+# for this single attribute.
+[lints.rust]
+unsafe_code = "allow"
+
+[dependencies]
+lua-types.workspace = true
+lua-vm.workspace = true

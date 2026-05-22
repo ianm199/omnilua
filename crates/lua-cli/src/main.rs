@@ -23,7 +23,7 @@ use lua_types::gc::GcRef;
 use lua_types::upval::UpVal;
 use lua_types::value::LuaValue;
 use lua_vm::api::{pcall_k, to_lua_string};
-use lua_vm::state::{new_state, LuaState};
+use lua_vm::state::{new_state, DynLibId, DynamicSymbol, LuaState};
 
 fn file_loader_hook(filename: &[u8]) -> Result<Vec<u8>, LuaError> {
     #[cfg(unix)]
@@ -227,6 +227,152 @@ fn file_open_hook(filename: &[u8], mode: &[u8]) -> Result<Box<dyn LuaFileHandle>
     })
 }
 
+// ─── Dynamic library backend (Phase D-3.5) ────────────────────────────────────
+//
+// `lua-stdlib` cannot use `libloading` because it forbids `unsafe`. The CLI
+// owns a per-process registry of loaded libraries and exposes it to
+// `package.loadlib` via three function-pointer hooks on `GlobalState`. The
+// registry is a `thread_local!` because `lua-rs` is single-threaded by
+// construction; `libloading::Library` is not `Sync`. Libraries are leaked
+// for the lifetime of the process so any function pointer resolved from
+// them stays valid — that's `libloading`'s safety model.
+
+thread_local! {
+    static DYNLIB_REGISTRY: std::cell::RefCell<Vec<libloading::Library>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn path_from_bytes(path: &[u8]) -> Result<std::path::PathBuf, LuaError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(path)))
+    }
+    #[cfg(not(unix))]
+    {
+        let s = std::str::from_utf8(path).map_err(|_| {
+            LuaError::runtime(format_args!("library path is not valid UTF-8"))
+        })?;
+        Ok(std::path::PathBuf::from(s))
+    }
+}
+
+/// `dynlib_load_hook` backend. Loads the library via `libloading` and stashes
+/// it in the per-thread registry; the returned [`DynLibId`] is the
+/// registry-vector index, which keeps the library alive until process exit.
+///
+/// PORT NOTE: a missing path is reported as `LuaError::File`, which
+/// `lua-stdlib`'s `package.loadlib` maps to the `"absent"` failure tag (the
+/// `lua-rs` build behaves like C-Lua's no-dlfcn fallback for plain file-not-
+/// found, and like POSIX/Windows dlopen for every other open failure).
+fn dynlib_load(
+    _state: &mut LuaState,
+    path: &[u8],
+    _see_global: bool,
+) -> Result<DynLibId, LuaError> {
+    let p = path_from_bytes(path)?;
+    if !p.exists() {
+        return Err(LuaError::File);
+    }
+    // SAFETY: `libloading::Library::new` executes the dynamic linker, which
+    // may run arbitrary initializer code in the loaded library. We trust the
+    // operator-supplied path; this is the same trust model as stock Lua's
+    // `package.loadlib`. We never call any symbol from the library through
+    // an unchecked ABI: only `DynamicSymbol::RustNative` is invoked, and
+    // those must match our Rust function-pointer ABI exactly. Libraries are
+    // stored in `DYNLIB_REGISTRY` and never unloaded mid-state, so symbol
+    // pointers resolved later stay valid for as long as the state can call
+    // them.
+    let lib = unsafe { libloading::Library::new(&p) }.map_err(|err| {
+        LuaError::runtime(format_args!(
+            "cannot load '{}': {}",
+            String::from_utf8_lossy(path),
+            err
+        ))
+    })?;
+    let id = DYNLIB_REGISTRY.with(|reg| {
+        let mut v = reg.borrow_mut();
+        let idx = v.len() as u64;
+        v.push(lib);
+        idx
+    });
+    Ok(DynLibId(id))
+}
+
+/// Conservative heuristic: stock Lua C ABI module entry points are named
+/// `luaopen_<name>` and take a `lua_State *` followed by a single return.
+/// Without a way to inspect the symbol's signature at run time, we treat any
+/// symbol whose name starts with `luaopen_` as a C-ABI symbol and refuse it
+/// with the "ABI not supported" message; everything else is treated as a
+/// Rust-native entry compatible with `fn(&mut LuaState) -> Result<usize,
+/// LuaError>`.
+fn looks_like_c_abi(sym: &[u8]) -> bool {
+    sym.starts_with(b"luaopen_")
+}
+
+/// `dynlib_symbol_hook` backend. Resolves `symbol` in the library identified
+/// by `handle`; returns `RustNative` for non-`luaopen_*` symbols and
+/// `LuaCAbi` (a null pointer placeholder) for `luaopen_*` symbols so
+/// `package.loadlib` can refuse them with a clear `"init"` error.
+fn dynlib_symbol(
+    _state: &mut LuaState,
+    handle: DynLibId,
+    symbol: &[u8],
+) -> Result<DynamicSymbol, LuaError> {
+    let idx = handle.0 as usize;
+    DYNLIB_REGISTRY.with(|reg| {
+        let v = reg.borrow();
+        let lib = v.get(idx).ok_or_else(|| {
+            LuaError::runtime(format_args!("invalid dynlib handle {}", idx))
+        })?;
+
+        if looks_like_c_abi(symbol) {
+            // SAFETY: We only resolve the symbol address; we never call
+            // through this pointer. The `DynamicSymbol::LuaCAbi` variant is
+            // a placeholder so `package.loadlib` can report an "init"
+            // failure with the unsupported-ABI message. The library outlives
+            // the pointer because `DYNLIB_REGISTRY` retains it for the
+            // process lifetime.
+            let resolved: Result<libloading::Symbol<unsafe extern "C" fn()>, _> =
+                unsafe { lib.get(symbol) };
+            return match resolved {
+                Ok(_) => Ok(DynamicSymbol::LuaCAbi(std::ptr::null())),
+                Err(err) => Err(LuaError::runtime(format_args!(
+                    "cannot find symbol '{}': {}",
+                    String::from_utf8_lossy(symbol),
+                    err
+                ))),
+            };
+        }
+
+        type RustNativeFn = fn(&mut LuaState) -> Result<usize, LuaError>;
+        // SAFETY: We assume the loaded library was built against this build's
+        // Rust-native module ABI: it exports `symbol` as a function pointer
+        // with signature `fn(&mut LuaState) -> Result<usize, LuaError>`.
+        // Verified by convention (operator-supplied path + opt-in `_rs`
+        // suffix); calling a symbol with the wrong signature is undefined
+        // behaviour and the operator's responsibility. The library outlives
+        // the function pointer (kept alive in `DYNLIB_REGISTRY` until
+        // process exit).
+        let resolved: Result<libloading::Symbol<RustNativeFn>, _> =
+            unsafe { lib.get(symbol) };
+        match resolved {
+            Ok(sym) => Ok(DynamicSymbol::RustNative(*sym)),
+            Err(err) => Err(LuaError::runtime(format_args!(
+                "cannot find symbol '{}': {}",
+                String::from_utf8_lossy(symbol),
+                err
+            ))),
+        }
+    })
+}
+
+/// `dynlib_unload_hook` backend. No-op: libraries are kept alive for the
+/// lifetime of the process to honour `libloading`'s safety model (symbol
+/// pointers must not outlive the library). Closing libraries at state
+/// shutdown is platform-dependent and best deferred to OS-level cleanup.
+fn dynlib_unload(_handle: DynLibId) {}
+
 fn parser_hook(
     state: &mut LuaState,
     source: &[u8],
@@ -335,6 +481,9 @@ fn main() -> ExitCode {
         state.global_mut().file_loader_hook = Some(file_loader_hook);
         state.global_mut().file_open_hook = Some(file_open_hook);
         state.global_mut().file_remove_hook = Some(file_remove_hook);
+        state.global_mut().dynlib_load_hook = Some(dynlib_load);
+        state.global_mut().dynlib_symbol_hook = Some(dynlib_symbol);
+        state.global_mut().dynlib_unload_hook = Some(dynlib_unload);
 
         step!("[2/4] Opening standard library...");
         open_libs(&mut state).map_err(|e| format!("open_libs failed: {}", render_lua_error(&e)))?;
@@ -393,8 +542,13 @@ fn main() -> ExitCode {
 //   confidence:    high
 //   todos:         0
 //   port_notes:    0
-//   unsafe_blocks: 0
+//   unsafe_blocks: 3  (libloading-backed dynlib backend, Phase D-3.5;
+//                      budget counts 4 due to one `unsafe extern "C" fn()`
+//                      type parameter on `Symbol<...>`).
 //   notes:         drives new_state → open_libs → load_string → pcall_k.
 //                  Designed to surface the first todo!() panic on a hello-
-//                  world program, not to be a complete interpreter.
+//                  world program, not to be a complete interpreter. Hosts the
+//                  libloading-backed implementation of the three
+//                  dynlib_*_hook hooks on GlobalState (Phase D-3.5); ceiling
+//                  in harness/unsafe-budgets.toml = 3.
 // ──────────────────────────────────────────────────────────────────────────

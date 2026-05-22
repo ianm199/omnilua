@@ -623,6 +623,69 @@ pub type FileOpenHook =
 /// reaches the filesystem via this hook. Returns `Ok(())` on success.
 pub type FileRemoveHook = fn(filename: &[u8]) -> Result<(), LuaError>;
 
+/// Opaque handle to a dynamically loaded library, allocated by a
+/// [`DynLibLoadHook`] backend and stored in `package._CLIBS`.
+///
+/// The handle is a backend-owned `u64`; the embedder is free to use it as an
+/// index into a `Vec<libloading::Library>` or a `HashMap` key. `lua-stdlib`
+/// stores the value verbatim and never inspects it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DynLibId(pub u64);
+
+/// Resolved dynamic-library symbol.
+///
+/// Only `RustNative` is callable by this build of the VM. `LuaCAbi` resolves
+/// to a real C function pointer compiled against stock Lua 5.4's `lua_State *`
+/// ABI but cannot be safely invoked here — it is reported as an `"init"`
+/// failure with a clear message. `Unsupported` carries an embedder-provided
+/// reason byte-string.
+pub enum DynamicSymbol {
+    /// Function pointer that follows this build's Rust-native module ABI:
+    /// `fn(&mut LuaState) -> Result<usize, LuaError>`.
+    RustNative(LuaCFunction),
+    /// Symbol exported against stock Lua 5.4's C ABI. The function pointer is
+    /// resolved but never called from this build, since `lua_State *` is not
+    /// our `LuaState`. Kept as a payload so a future C-ABI facade can pick it
+    /// up; the embedder is responsible for ensuring the underlying library
+    /// outlives this value.
+    LuaCAbi(*const ()),
+    /// Embedder-provided refusal reason, e.g. "symbol resolved but ABI version
+    /// mismatch". Reported verbatim as an `"init"` failure.
+    Unsupported { reason: Vec<u8> },
+}
+
+/// Function-pointer signature for loading a dynamic library, installed on
+/// [`GlobalState::dynlib_load_hook`] by the embedder.
+///
+/// `libloading`/`dlopen`/`LoadLibraryEx` are FFI calls and require `unsafe`,
+/// which is banned in `lua-stdlib`. `lua-cli` installs a `libloading`-backed
+/// implementation. `None` causes `package.loadlib` to return the C-Lua
+/// `"absent"` failure shape, matching the fallback platform stub.
+///
+/// `see_global` mirrors C-Lua's `seeglb` (POSIX `RTLD_GLOBAL`): set when the
+/// caller invokes `package.loadlib(path, "*")`.
+pub type DynLibLoadHook =
+    fn(state: &mut LuaState, path: &[u8], see_global: bool) -> Result<DynLibId, LuaError>;
+
+/// Function-pointer signature for resolving a symbol in a previously loaded
+/// dynamic library, installed on [`GlobalState::dynlib_symbol_hook`].
+///
+/// The hook receives the [`DynLibId`] returned by [`DynLibLoadHook`] and the
+/// requested symbol name. Returning `DynamicSymbol::RustNative` makes the
+/// symbol callable; `LuaCAbi`/`Unsupported` propagate to `package.loadlib`
+/// as an `"init"` failure with a clear message.
+pub type DynLibSymbolHook =
+    fn(state: &mut LuaState, handle: DynLibId, symbol: &[u8]) -> Result<DynamicSymbol, LuaError>;
+
+/// Function-pointer signature for unloading a dynamic library, installed on
+/// [`GlobalState::dynlib_unload_hook`].
+///
+/// Called from the `_CLIBS` `__gc` metamethod when the Lua state closes.
+/// `libloading`'s safety model requires every loaded library to outlive the
+/// last symbol it exports; the CLI backend is therefore free to ignore this
+/// hook and keep libraries alive until process exit.
+pub type DynLibUnloadHook = fn(handle: DynLibId);
+
 /// Process-wide state shared by all Lua threads.
 ///
 /// C: `global_State` in `lstate.h`.
@@ -652,6 +715,22 @@ pub struct GlobalState {
     /// Phase-B hook for removing a file. Set by `lua-cli` since `std::fs` is
     /// banned in `lua-stdlib`. `None` causes `os.remove` to return an error.
     pub file_remove_hook: Option<FileRemoveHook>,
+
+    /// Phase-D-3.5 hook for loading a dynamic library (`dlopen` /
+    /// `LoadLibraryEx`). Set by `lua-cli` since `libloading` is FFI and
+    /// requires `unsafe`, which is banned in `lua-stdlib`. `None` causes
+    /// `package.loadlib` to return the `"absent"` fallback shape.
+    pub dynlib_load_hook: Option<DynLibLoadHook>,
+
+    /// Phase-D-3.5 hook for resolving a symbol in a previously loaded
+    /// dynamic library (`dlsym` / `GetProcAddress`). Set by `lua-cli`.
+    /// `None` is treated as "absent" by `package.loadlib`.
+    pub dynlib_symbol_hook: Option<DynLibSymbolHook>,
+
+    /// Phase-D-3.5 hook for unloading a dynamic library (`dlclose` /
+    /// `FreeLibrary`). Set by `lua-cli`. `None` keeps libraries loaded
+    /// until process exit, which matches `libloading`'s safety model.
+    pub dynlib_unload_hook: Option<DynLibUnloadHook>,
 
     // C: l_mem totalbytes — Phase D memory accounting
     // types.tsv: global_State.totalbytes → isize
@@ -3362,6 +3441,9 @@ pub fn new_state() -> Option<LuaState> {
         file_loader_hook: None,
         file_open_hook: None,
         file_remove_hook: None,
+        dynlib_load_hook: None,
+        dynlib_symbol_hook: None,
+        dynlib_unload_hook: None,
         totalbytes: std::mem::size_of::<GlobalState>() as isize,
         gc_debt: 0,
         gc_estimate: 0,

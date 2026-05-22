@@ -6,16 +6,15 @@
 //! built-in module searchers (preload, Lua-file, C-library, C-root).
 //!
 //! ## Platform-specific dynamic loading
-//! The C source conditionally compiled one of three backends (POSIX dlfcn,
-//! Windows LoadLibraryEx, or a fallback stub). All three `lsys_*` stubs here
-//! return the "dynamic libraries not enabled" message because:
-//! - The real implementations require `unsafe` (dlopen/GetProcAddress).
-//! - `unsafe` is banned in `lua-stdlib` per PORTING.md §1.
 //!
-//! `readable()` also requires `std::fs`, which is banned outside `lua-cli`.
+//! The three platform calls (`lsys_load`, `lsys_sym`, `lsys_unloadlib`) are
+//! dispatched through embedder hooks on [`lua_vm::state::GlobalState`]:
+//! `dynlib_load_hook`, `dynlib_symbol_hook`, `dynlib_unload_hook`. `lua-cli`
+//! installs a `libloading`-backed implementation; embeddings that omit the
+//! hooks behave like C-Lua's fallback platform stub (`LIB_FAIL = "absent"`).
 //!
-//! Both issues are flagged with `TODO(port)` and must be resolved in Phase B
-//! by either raising the unsafe budget or delegating to a capability interface.
+//! Keeping the platform calls behind hooks lets `lua-stdlib` stay free of
+//! `unsafe` per PORTING.md §1; `libloading` lives entirely in `lua-cli`.
 
 use std::env;
 
@@ -23,6 +22,7 @@ use lua_types::{
     GcRef, LuaClosure, LuaError, LuaString, LuaType, LuaValue, StackIdx, LuaStatus,
 };
 use lua_types::value::LuaTable;
+use lua_vm::state::{DynLibId, DynamicSymbol};
 use crate::state_stub::{LuaState, LuaStateStubExt as _, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Module-level constants ────────────────────────────────────────────────────
@@ -37,9 +37,11 @@ const LUA_OFSEP: &[u8] = b"_";
 const CLIBS: &[u8] = b"_CLIBS";
 
 // C: #define LIB_FAIL "open" (POSIX/Windows) or "absent" (fallback stub).
-// Since all lsys_* functions in this port are stubs (no real dynamic loading),
-// we are always in the fallback case where LIB_FAIL = "absent".
-const LIB_FAIL: &[u8] = b"absent";
+// `lsys_load` chooses the tag at runtime: `"open"` when a load hook is
+// installed (matching POSIX/Windows behaviour) and `"absent"` when no hook
+// is registered (matching the fallback stub). The constant below carries the
+// fallback-stub spelling; the load-hook path uses `b"open"` directly.
+const LIB_FAIL_ABSENT: &[u8] = b"absent";
 
 // C: LUA_PATH_SEP — path-list separator
 const LUA_PATH_SEP: u8 = b';';
@@ -62,12 +64,21 @@ const LUA_CSUBSEP: u8 = LUA_DIRSEP;
 const LUA_LSUBSEP: u8 = LUA_DIRSEP;
 
 // C: #define ERRLIB 1  / #define ERRFUNC 2
-// Non-fatal error codes returned by lookforfunc (error message on Lua stack).
-const ERRLIB: i32 = 1;
-const ERRFUNC: i32 = 2;
+// In the Rust port these became enum variants of `LookForFuncStatus` so the
+// failure-tag string travels with the status (the C code always uses the
+// single compile-time `LIB_FAIL`). See `LookForFuncStatus` below.
 
-// C: DLMSG (fallback platform stub message)
+// C: DLMSG (fallback platform stub message). Used when no dynlib load hook
+// is registered on `GlobalState`. The CLI backend supplies its own error
+// strings via the hook's `Err` return for "open" failures.
 const DLMSG: &[u8] = b"dynamic libraries not enabled; check your Lua installation";
+
+// Message returned via `(false, msg, "init")` when a hook resolves a symbol
+// against stock Lua 5.4's `lua_State *` C ABI. That ABI is not callable
+// against this build's `LuaState`; supporting it is a separate compatibility
+// project (see docs/LUA_PHASE_E_RUNTIME_SPEC.md Part 3).
+const C_ABI_UNSUPPORTED_MSG: &[u8] =
+    b"dynamic library loaded, but Lua C ABI modules are not supported by this build";
 
 // C: #define LUA_PATH_VAR "LUA_PATH" / LUA_CPATH_VAR "LUA_CPATH"
 const LUA_PATH_VAR: &[u8] = b"LUA_PATH";
@@ -93,20 +104,14 @@ const LUA_CPATH_DEFAULT: &[u8] = b"./?.dll";
 const LUA_VERSUFFIX: &[u8] = b"_5_4";
 
 // ── Opaque library handle ─────────────────────────────────────────────────────
-
-/// Opaque handle to a dynamically loaded C library.
-///
-/// C: `void *lib` (the return value of dlopen / LoadLibraryEx).
-///
-/// TODO(port): In a real implementation this would be `*mut c_void`. That
-/// requires `unsafe` which is banned in `lua-stdlib`. Phase B should either
-/// raise the unsafe budget or introduce a `DynLib` capability object that
-/// lives in `lua-gc`/`lua-coro` and expose a safe API here.
-///
-/// For Phase A this is a `usize` placeholder; all lsys_* functions return
-/// `None` so no real handle is ever stored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LibHandle(usize);
+//
+// C: `void *lib` (the return value of dlopen / LoadLibraryEx).
+//
+// In this port, the library identity is the opaque `DynLibId(u64)` allocated
+// by the embedder-installed [`DynLibLoadHook`]. `lua-stdlib` never inspects
+// the value; it stashes the raw `u64` in `_CLIBS` as light userdata (cast
+// through `*mut c_void` to match C-Lua's representation) and hands it back to
+// the symbol and unload hooks.
 
 // ── Byte-string utilities ─────────────────────────────────────────────────────
 
@@ -147,17 +152,21 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-// ── Platform-specific dynamic-loading stubs ───────────────────────────────────
+// ── Platform-specific dynamic-loading dispatch ────────────────────────────────
 
 /// Unload a previously loaded C library.
 ///
 /// C: `static void lsys_unloadlib(void *lib)`
 ///    — POSIX: `dlclose(lib)`; Windows: `FreeLibrary(lib)`.
 ///
-/// TODO(port): unsafe needed — dlclose/FreeLibrary are FFI calls. Banned in
-/// lua-stdlib. Phase B: delegate to a DynLib capability or raise unsafe budget.
-fn lsys_unloadlib(_lib: LibHandle) {
-    // PORT NOTE: stub — real unloading deferred until the unsafe budget is resolved.
+/// Delegates to [`GlobalState::dynlib_unload_hook`]. When no hook is
+/// registered the library is leaked, which matches `libloading`'s safety
+/// model (the library must outlive every symbol it exports, and the simplest
+/// correct policy is to keep it alive for the state's lifetime).
+fn lsys_unloadlib(state: &mut LuaState, lib: DynLibId) {
+    if let Some(hook) = state.global().dynlib_unload_hook {
+        hook(lib);
+    }
 }
 
 /// Load a C library from `path`. If `see_glb` is true, make symbols globally
@@ -167,33 +176,134 @@ fn lsys_unloadlib(_lib: LibHandle) {
 ///    — POSIX: `dlopen(path, RTLD_NOW | (seeglb ? RTLD_GLOBAL : RTLD_LOCAL))`
 ///    — Windows: `LoadLibraryExA(path, NULL, LUA_LLE_FLAGS)`
 ///
-/// TODO(port): unsafe needed — dlopen/LoadLibraryEx are FFI calls. Banned in
-/// lua-stdlib. Phase B: delegate to a DynLib capability or raise unsafe budget.
-fn lsys_load(state: &mut LuaState, _path: &[u8], _see_glb: bool) -> Option<LibHandle> {
-    // C: lua_pushliteral(L, DLMSG);
-    let s = state.intern_str(DLMSG).ok()?;
-    state.push(LuaValue::Str(s));
-    None
+/// PORT NOTE: returns `(handle, lib_fail_tag)`. The tag is `"absent"` when no
+/// hook is registered (matching C's fallback-stub `LIB_FAIL`) and `"open"`
+/// when the hook itself reports a failure (matching POSIX/Windows builds).
+fn lsys_load(
+    state: &mut LuaState,
+    path: &[u8],
+    see_glb: bool,
+) -> (Option<DynLibId>, &'static [u8]) {
+    let hook = state.global().dynlib_load_hook;
+    let Some(load_fn) = hook else {
+        let s = match state.intern_str(DLMSG) {
+            Ok(s) => s,
+            Err(_) => return (None, LIB_FAIL_ABSENT),
+        };
+        state.push(LuaValue::Str(s));
+        return (None, LIB_FAIL_ABSENT);
+    };
+    match load_fn(state, path, see_glb) {
+        Ok(id) => (Some(id), b"open"),
+        // PORT NOTE: `LuaError::File` is reserved for "no shared library at
+        // this path". Map it to the fallback-stub `"absent"` tag so that a
+        // probe like `package.loadlib("./nonexistent.so", ...)` reports
+        // `"absent"` regardless of whether a backend is installed. Every
+        // other `Err` is a true open-time failure → `"open"`.
+        Err(LuaError::File) => {
+            let mut msg = b"cannot find library '".to_vec();
+            msg.extend_from_slice(path);
+            msg.push(b'\'');
+            let s = match state.intern_str(&msg) {
+                Ok(s) => s,
+                Err(_) => return (None, LIB_FAIL_ABSENT),
+            };
+            state.push(LuaValue::Str(s));
+            (None, LIB_FAIL_ABSENT)
+        }
+        Err(err) => {
+            let msg = error_to_bytes(&err);
+            let s = match state.intern_str(&msg) {
+                Ok(s) => s,
+                Err(_) => return (None, b"open"),
+            };
+            state.push(LuaValue::Str(s));
+            (None, b"open")
+        }
+    }
 }
 
-/// Find symbol `sym` in library `lib` and return it as a Lua C function.
-/// On failure, pushes an error string onto `state`.
+/// Find symbol `sym` in library `lib` and either push it as a callable Lua
+/// function (returning `SymOutcome::Found`) or push an error message string
+/// and report which failure category the caller should propagate.
 ///
 /// C: `static lua_CFunction lsys_sym(lua_State *L, void *lib, const char *sym)`
 ///    — POSIX: `cast_func(dlsym(lib, sym))`
 ///    — Windows: `(lua_CFunction)(voidf)GetProcAddress(lib, sym)`
+fn lsys_sym(state: &mut LuaState, lib: DynLibId, sym: &[u8]) -> SymOutcome {
+    let hook = state.global().dynlib_symbol_hook;
+    let Some(sym_fn) = hook else {
+        let s = match state.intern_str(DLMSG) {
+            Ok(s) => s,
+            Err(_) => return SymOutcome::Missing,
+        };
+        state.push(LuaValue::Str(s));
+        return SymOutcome::Missing;
+    };
+    match sym_fn(state, lib, sym) {
+        Ok(DynamicSymbol::RustNative(f)) => SymOutcome::Found(f),
+        Ok(DynamicSymbol::LuaCAbi(_)) => {
+            let s = match state.intern_str(C_ABI_UNSUPPORTED_MSG) {
+                Ok(s) => s,
+                Err(_) => return SymOutcome::Missing,
+            };
+            state.push(LuaValue::Str(s));
+            SymOutcome::Missing
+        }
+        Ok(DynamicSymbol::Unsupported { reason }) => {
+            let s = match state.intern_str(&reason) {
+                Ok(s) => s,
+                Err(_) => return SymOutcome::Missing,
+            };
+            state.push(LuaValue::Str(s));
+            SymOutcome::Missing
+        }
+        Err(err) => {
+            let msg = error_to_bytes(&err);
+            let s = match state.intern_str(&msg) {
+                Ok(s) => s,
+                Err(_) => return SymOutcome::Missing,
+            };
+            state.push(LuaValue::Str(s));
+            SymOutcome::Missing
+        }
+    }
+}
+
+/// Outcome of `lsys_sym`.
 ///
-/// TODO(port): unsafe needed — dlsym/GetProcAddress are FFI calls. Banned in
-/// lua-stdlib. Phase B: delegate to a DynLib capability or raise unsafe budget.
-fn lsys_sym(
-    state: &mut LuaState,
-    _lib: LibHandle,
-    _sym: &[u8],
-) -> Option<fn(&mut LuaState) -> Result<usize, LuaError>> {
-    // C: lua_pushliteral(L, DLMSG);
-    let s = state.intern_str(DLMSG).ok()?;
-    state.push(LuaValue::Str(s));
-    None
+/// `Missing` covers every non-success path (unknown symbol, ABI mismatch, hook
+/// absent, embedder-supplied refusal); in every case an error-message string
+/// has already been pushed onto the Lua stack, so the caller maps `Missing`
+/// to `ERRFUNC` / `"init"` without further work.
+enum SymOutcome {
+    /// Resolved to a Rust-native callable.
+    Found(lua_CFunction),
+    /// Resolution failed; an error-message string is on the stack.
+    Missing,
+}
+
+/// Extract a byte-string error message from a `LuaError`, falling back to a
+/// debug rendering for non-string variants.
+fn error_to_bytes(e: &LuaError) -> Vec<u8> {
+    match e {
+        LuaError::Runtime(LuaValue::Str(s)) | LuaError::Syntax(LuaValue::Str(s)) => {
+            s.as_bytes().to_vec()
+        }
+        other => format!("{:?}", other).into_bytes(),
+    }
+}
+
+/// Encode a [`DynLibId`] as a `*mut c_void` for storage in `_CLIBS` as light
+/// userdata. The cast is the inverse of [`decode_dynlib_id`]; neither side
+/// ever dereferences the pointer.
+fn encode_dynlib_id(id: DynLibId) -> *mut std::ffi::c_void {
+    id.0 as usize as *mut std::ffi::c_void
+}
+
+/// Decode a [`DynLibId`] previously stored via [`encode_dynlib_id`].
+fn decode_dynlib_id(p: *mut std::ffi::c_void) -> DynLibId {
+    DynLibId(p as usize as u64)
 }
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
@@ -306,16 +416,13 @@ fn setpath(
 /// Return the library handle stored at `registry._CLIBS[path]`, or `None`.
 ///
 /// C: `static void *checkclib(lua_State *L, const char *path)`
-fn checkclib(state: &mut LuaState, path: &[u8]) -> Option<LibHandle> {
+fn checkclib(state: &mut LuaState, path: &[u8]) -> Option<DynLibId> {
     // C: lua_getfield(L, LUA_REGISTRYINDEX, CLIBS);
     state.get_field_registry(CLIBS);
     // C: lua_getfield(L, -1, path);
     state.get_field(-1, path);
     // C: plib = lua_touserdata(L, -1);
-    // TODO(port): lua_touserdata extracts a *mut c_void (light userdata). In
-    // Rust we store LibHandle(usize). When a real implementation stores a pointer
-    // as a LuaValue::LightUserData, the extraction needs to recover the handle.
-    let handle = state.to_light_userdata(-1).map(|p| LibHandle(p as usize));
+    let handle = state.to_light_userdata(-1).map(decode_dynlib_id);
     // C: lua_pop(L, 2);
     state.pop_n(2);
     handle
@@ -324,13 +431,11 @@ fn checkclib(state: &mut LuaState, path: &[u8]) -> Option<LibHandle> {
 /// Register a library handle in the CLIBS table (both by path and sequentially).
 ///
 /// C: `static void addtoclib(lua_State *L, const char *path, void *plib)`
-fn addtoclib(state: &mut LuaState, path: &[u8], plib: LibHandle) -> Result<(), LuaError> {
+fn addtoclib(state: &mut LuaState, path: &[u8], plib: DynLibId) -> Result<(), LuaError> {
     // C: lua_getfield(L, LUA_REGISTRYINDEX, CLIBS);
     state.get_field_registry(CLIBS);
     // C: lua_pushlightuserdata(L, plib);
-    // TODO(port): In real code plib would be *mut c_void pushed as LightUserData.
-    // Placeholder: push the usize value as an integer.
-    state.push(LuaValue::Int(plib.0 as i64));
+    state.push(LuaValue::LightUserData(encode_dynlib_id(plib)));
     // C: lua_pushvalue(L, -1);
     state.push_value(-1);
     // C: lua_setfield(L, -3, path);  -- CLIBS[path] = plib
@@ -356,10 +461,8 @@ fn gctm(state: &mut LuaState) -> Result<usize, LuaError> {
         // C: lua_rawgeti(L, 1, n);  -- get handle CLIBS[n]
         state.raw_geti(1, i)?;
         // C: lsys_unloadlib(lua_touserdata(L, -1));
-        // TODO(port): see checkclib — extracting a real *mut c_void handle needs
-        // LightUserData support and unsafe casting.
-        if let Some(handle) = state.to_light_userdata(-1).map(|p| LibHandle(p as usize)) {
-            lsys_unloadlib(handle);
+        if let Some(handle) = state.to_light_userdata(-1).map(decode_dynlib_id) {
+            lsys_unloadlib(state, handle);
         }
         // C: lua_pop(L, 1);
         state.pop_n(1);
@@ -380,33 +483,54 @@ fn gctm(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 /// PORT NOTE: C returns raw `int` error codes. Rust encodes them as `Ok(i32)`
 /// so the caller can distinguish "error code + message on stack" from "fatal Err".
-fn lookforfunc(state: &mut LuaState, path: &[u8], sym: &[u8]) -> Result<i32, LuaError> {
+/// Status of `lookforfunc`. `Ok(0)` corresponds to C's `0` "success",
+/// `ErrLib(tag)` to C's `ERRLIB` (tag is the `LIB_FAIL` string the caller
+/// should attach: `"open"` for true dlopen failures, `"absent"` when no
+/// backend or the file doesn't exist), `ErrFunc` to C's `ERRFUNC`.
+enum LookForFuncStatus {
+    /// Loader successfully resolved a symbol (function pushed on stack).
+    Ok,
+    /// Library could not be opened. `tag` is the `LIB_FAIL` string.
+    ErrLib(&'static [u8]),
+    /// Library opened but symbol could not be resolved.
+    ErrFunc,
+}
+
+fn lookforfunc(
+    state: &mut LuaState,
+    path: &[u8],
+    sym: &[u8],
+) -> Result<LookForFuncStatus, LuaError> {
     // C: void *reg = checkclib(L, path);
-    let mut reg = checkclib(state, path);
-    if reg.is_none() {
-        // C: reg = lsys_load(L, path, *sym == '*');
-        reg = lsys_load(state, path, sym.first() == Some(&b'*'));
-        if reg.is_none() {
-            // C: if (reg == NULL) return ERRLIB;
-            return Ok(ERRLIB);
+    let reg = match checkclib(state, path) {
+        Some(handle) => handle,
+        None => {
+            // C: reg = lsys_load(L, path, *sym == '*');
+            let (loaded, tag) = lsys_load(state, path, sym.first() == Some(&b'*'));
+            match loaded {
+                Some(handle) => {
+                    addtoclib(state, path, handle)?;
+                    handle
+                }
+                // C: if (reg == NULL) return ERRLIB;
+                None => return Ok(LookForFuncStatus::ErrLib(tag)),
+            }
         }
-        addtoclib(state, path, reg.unwrap())?;
-    }
+    };
     // C: if (*sym == '*') { lua_pushboolean(L, 1); return 0; }
     if sym.first() == Some(&b'*') {
         state.push(LuaValue::Bool(true));
-        return Ok(0);
+        return Ok(LookForFuncStatus::Ok);
     }
     // C: lua_CFunction f = lsys_sym(L, reg, sym);
-    let f = lsys_sym(state, reg.unwrap(), sym);
-    if let Some(func) = f {
-        // C: lua_pushcfunction(L, f);
-        // TODO(phase-b): LuaClosure::LightC currently typed fn() -> i32 in lua-types; use push_c_function until widened.
-        state.push_c_function(func)?;
-        Ok(0)
-    } else {
+    match lsys_sym(state, reg, sym) {
+        SymOutcome::Found(func) => {
+            // C: lua_pushcfunction(L, f);
+            state.push_c_function(func)?;
+            Ok(LookForFuncStatus::Ok)
+        }
         // C: return ERRFUNC;
-        Ok(ERRFUNC)
+        SymOutcome::Missing => Ok(LookForFuncStatus::ErrFunc),
     }
 }
 
@@ -426,17 +550,24 @@ pub fn ll_loadlib(state: &mut LuaState) -> Result<usize, LuaError> {
     let init = state.check_arg_string(2)?.to_vec();
     // C: int stat = lookforfunc(L, path, init);
     let stat = lookforfunc(state, &path, &init)?;
-    if stat == 0 {
-        // C: if (l_likely(stat == 0)) return 1;
-        return Ok(1);
-    }
+    // C: if (l_likely(stat == 0)) return 1;
+    let where_bytes: &[u8] = match stat {
+        LookForFuncStatus::Ok => return Ok(1),
+        LookForFuncStatus::ErrLib(tag) => tag,
+        LookForFuncStatus::ErrFunc => b"init",
+    };
     // C: luaL_pushfail(L);
     // PORT NOTE: luaL_pushfail pushes `false` in Lua 5.4 (changed from nil).
     state.push(LuaValue::Bool(false));
     // C: lua_insert(L, -2);  -- move fail below error message
     state.insert(-2);
     // C: lua_pushstring(L, (stat == ERRLIB) ? LIB_FAIL : "init");
-    let where_bytes: &[u8] = if stat == ERRLIB { LIB_FAIL } else { b"init" };
+    //
+    // PORT NOTE: the `LIB_FAIL` tag is chosen at run time. The CLI backend
+    // reports `LuaError::File` for a missing library → `"absent"` (matching
+    // C-Lua's no-dlfcn fallback); a true `dlopen` failure → `"open"`. The
+    // "init" branch (symbol resolution failed after the library opened) is
+    // identical in every build.
     let where_s = state.intern_str(where_bytes)?;
     state.push(LuaValue::Str(where_s));
     // C: return 3;
@@ -732,7 +863,11 @@ fn searcher_lua(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `luaopen_foo`, then `luaopen_bar` as a fallback.
 ///
 /// C: `static int loadfunc(lua_State *L, const char *filename, const char *modname)`
-fn loadfunc(state: &mut LuaState, filename: &[u8], modname: &[u8]) -> Result<i32, LuaError> {
+fn loadfunc(
+    state: &mut LuaState,
+    filename: &[u8],
+    modname: &[u8],
+) -> Result<LookForFuncStatus, LuaError> {
     // C: modname = luaL_gsub(L, modname, ".", LUA_OFSEP);
     let modname: Vec<u8> = gsub_bytes(modname, b".", LUA_OFSEP);
 
@@ -745,8 +880,8 @@ fn loadfunc(state: &mut LuaState, filename: &[u8], modname: &[u8]) -> Result<i32
         openfunc.extend_from_slice(prefix);
         // C: stat = lookforfunc(L, filename, openfunc);
         let stat = lookforfunc(state, filename, &openfunc)?;
-        if stat != ERRFUNC {
-            // C: if (stat != ERRFUNC) return stat;
+        // C: if (stat != ERRFUNC) return stat;
+        if !matches!(stat, LookForFuncStatus::ErrFunc) {
             return Ok(stat);
         }
         // C: modname = mark + 1;  -- else go ahead and try old-style name
@@ -777,7 +912,8 @@ fn searcher_c(state: &mut LuaState) -> Result<usize, LuaError> {
     let filename = filename.unwrap();
     // C: return checkload(L, (loadfunc(L, filename, name) == 0), filename);
     let stat = loadfunc(state, &filename, &name)?;
-    checkload(state, stat == 0, &filename)
+    let ok = matches!(stat, LookForFuncStatus::Ok);
+    checkload(state, ok, &filename)
 }
 
 /// Searcher that looks in `package.cpath` using only the root component
@@ -815,11 +951,9 @@ fn searcher_croot(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: if ((stat = loadfunc(L, filename, name)) != 0) { ... }
     let stat = loadfunc(state, &filename, &name)?;
-    if stat != 0 {
-        if stat != ERRFUNC {
-            // C: return checkload(L, 0, filename);  -- real error
-            return checkload(state, false, &filename);
-        } else {
+    match stat {
+        LookForFuncStatus::Ok => {}
+        LookForFuncStatus::ErrFunc => {
             // C: lua_pushfstring(L, "no module '%s' in file '%s'", name, filename);
             // C: return 1;
             let mut msg = b"no module '".to_vec();
@@ -830,6 +964,10 @@ fn searcher_croot(state: &mut LuaState) -> Result<usize, LuaError> {
             let s = state.intern_str(&msg)?;
             state.push(LuaValue::Str(s));
             return Ok(1);
+        }
+        LookForFuncStatus::ErrLib(_) => {
+            // C: return checkload(L, 0, filename);  -- real error
+            return checkload(state, false, &filename);
         }
     }
 
@@ -1167,15 +1305,20 @@ pub fn luaopen_package(state: &mut LuaState) -> Result<usize, LuaError> {
 //   source:        src/loadlib.c  (758 lines, 25 functions)
 //   target_crate:  lua-stdlib
 //   confidence:    medium
-//   todos:         9
-//   port_notes:    6
+//   todos:         8
+//   port_notes:    7
 //   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
-//   notes:         All three lsys_* platform backends are stubs (unsafe needed
-//                  for dlopen/LoadLibraryEx; banned in lua-stdlib). LIB_FAIL is
-//                  "absent" to match the C fallback platform stub. readable()
+//   notes:         lsys_load/lsys_sym/lsys_unloadlib now dispatch through
+//                  dynlib_*_hook on GlobalState (Phase D-3.5); lua-cli
+//                  installs a libloading-backed backend. With no hook
+//                  installed, LIB_FAIL is "absent" (matches the C fallback
+//                  stub); with a hook installed it is "open". Stock Lua C
+//                  ABI symbols resolve but fail with "init" + a clear
+//                  unsupported-ABI message (DynamicSymbol::LuaCAbi case);
+//                  full C-ABI compatibility is a separate project. readable()
 //                  and searcher_lua are wired through file_loader_hook on
-//                  GlobalState (Phase B). Stack index arithmetic in
-//                  findloader/ll_require should be verified in Phase B.
-//                  LUA_PATH_DEFAULT / LUA_CPATH_DEFAULT are hardcoded and
-//                  must be replaced with platform configuration constants.
+//                  GlobalState. Stack-index arithmetic in findloader /
+//                  ll_require should be verified in Phase B. LUA_PATH_DEFAULT
+//                  / LUA_CPATH_DEFAULT are hardcoded and must be replaced
+//                  with platform configuration constants.
 // ──────────────────────────────────────────────────────────────────────────────

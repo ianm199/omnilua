@@ -15,4 +15,11 @@
                     # Phase-D agent over-allocated to 90; audit drove it to
                     # 22 with SAFETY comments on each remaining block.
 "lua-coro"   = 10   # stackful coroutine context switching — Phase E
-"lua-cli"    = 0
+"lua-cli"    = 4    # libloading-backed dynlib backend — Phase D-3.5.
+                    # 3 real `unsafe { ... }` blocks in the dynlib_*_hook
+                    # implementations (Library::new + 2× Symbol::get); each
+                    # carries `// SAFETY: ...`. The 4th count is the
+                    # `unsafe extern "C" fn()` placeholder type used in the
+                    # `Symbol<...>` parameter when resolving stock Lua C ABI
+                    # symbols (no `unsafe { }` block — just a type the
+                    # budget script counts conservatively).

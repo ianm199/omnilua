@@ -1501,17 +1501,18 @@ fn quotefloat(n: f64) -> Vec<u8> {
 /// C: `static void addquoted(luaL_Buffer *b, const char *s, size_t len)`
 fn addquoted(buf: &mut Vec<u8>, s: &[u8]) {
     buf.push(b'"');
-    for &c in s {
+    for (idx, &c) in s.iter().enumerate() {
         if c == b'"' || c == b'\\' || c == b'\n' {
             buf.push(b'\\');
             buf.push(c);
         } else if c.is_ascii_control() {
-            let next = 0u8; // TODO(port): we don't know the next char at this point
-            // C: if (!isdigit(uchar(*(s+1)))) l_sprintf(buff, ..., "\\%d", ...)
-            // else l_sprintf(buff, ..., "\\%03d", ...)
-            // For safety, always use 3-digit form.
-            let s = format!("\\{:03}", c);
-            buf.extend_from_slice(s.as_bytes());
+            let next_is_digit = s.get(idx + 1).map_or(false, |n| n.is_ascii_digit());
+            let formatted = if next_is_digit {
+                format!("\\{:03}", c)
+            } else {
+                format!("\\{}", c)
+            };
+            buf.extend_from_slice(formatted.as_bytes());
         } else {
             buf.push(c);
         }

@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 488320,
+  "duration_api_ms": 486167,
+  "ttft_ms": 2791,
+  "num_turns": 50,
+  "result": "Build is clean. The fix is complete.\n\n**Root cause:** `emit_inst` in `crates/lua-parse/src/lib.rs:560-574` (the Phase-A bootstrap codegen path used by most parser emission sites) computed `lineinfo[pc]` via `(line - previousline).clamp(i8::MIN, i8::MAX) as i8`. When the line delta was ≤ -128 (or in general exceeded i8 range), the clamp produced `i8::MIN = -128`, which is exactly the `ABSLINEINFO` sentinel. The function never pushed a matching `AbsLineInfo` entry to `f.abslineinfo` or maintained `iwthabs` / `nabslineinfo`, so `debug.get_func_line`'s walk later encountered an ABSLINEINFO byte with no abs entry behind it and panicked. With closure.lua's 272-line main chunk producing 865 lineinfo entries, several lineinfo[] bytes ended up as -128 with an empty `abslineinfo`.\n\n**Fix:** Replaced the clamp with the same `savelineinfo` logic used in `lua-code/src/codegen.rs:701`: when `|linedif| >= LIMLINEDIFF (0x80)` or `iwthabs >= MAXIWTHABS (128)`, push an `AbsLineInfo { pc, line }` entry, bump `nabslineinfo`, write `ABS_LINE_INFO` to `lineinfo[pc]`, and reset `iwthabs = 1`; otherwise write the raw delta and increment `iwthabs`. Added an `AbsLineInfo` import from `lua_types`.\n\n**State after fix:** `cargo build -p lua-cli` is clean. Did not re-run the program per instructions; the mega-loop will re-test.",
+  "stop_reason": "end_turn",
+  "session_id": "ac54872f-f766-4ff0-9125-a278ff3c9591",
+  "total_cost_usd": 3.6769862500000006,
+  "usage": {
+    "input_tokens": 55,
+    "cache_creation_input_tokens": 122743,
+    "cache_read_input_tokens": 4220795,
+    "output_tokens": 31901,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 122743,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 612,
+        "cache_read_input_tokens": 122534,
+        "cache_creation_input_tokens": 209,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 209
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1545,
+      "outputTokens": 20,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001645,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 55,
+      "outputTokens": 31901,
+      "cacheReadInputTokens": 4220795,
+      "cacheCreationInputTokens": 122743,
+      "webSearchRequests": 0,
+      "costUSD": 3.6753412500000007,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "74847d6d-2526-4707-83f8-dc37be7b40ac"
+}

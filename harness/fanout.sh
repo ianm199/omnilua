@@ -227,6 +227,26 @@ Use the Translator subagent (.claude/agents/translator.md). When done, stop — 
     # Build a single-blob JSON summary from the transcript's final "result" event
     jq -s 'map(select(.type == "result")) | .[-1] // {}' "$transcript" > "$out_json" 2>/dev/null || echo '{}' > "$out_json"
 
+    # ── Syntax check ─────────────────────────────────────────────────────
+    # Run rustc in isolation on the new file. Filter out name-resolution
+    # errors (expected in Phase A — types like LuaState/LuaError are not yet
+    # defined cross-crate) and rustc's own "aborting due to N previous
+    # errors" summary line. Anything residual = real syntax issue.
+    local syntax_log="$RESULTS_DIR/$basename.rustc.err"
+    local syntax_ok="true"
+    local syntax_residual=0
+    if [ -f "$rust_full" ]; then
+        rustc --edition 2021 --crate-type=lib --emit=metadata \
+            -o /tmp/lua-rs-syntax-check.rmeta \
+            "$rust_full" 2>"$syntax_log" >/dev/null || true
+        local namefilt='cannot find|unresolved|no `[A-Z][a-zA-Z_]*`|use of undeclared|cannot find type|cannot find macro|cannot find function|cannot find value|cannot find trait|cannot find derive|associated function|associated item|cannot find attribute|aborting due to'
+        syntax_residual=$(grep '^error' "$syntax_log" 2>/dev/null | grep -vE "$namefilt" | wc -l | tr -d ' ')
+        if [ "$syntax_residual" -gt 0 ]; then
+            syntax_ok="false"
+        fi
+        rm -f /tmp/lua-rs-syntax-check.rmeta
+    fi
+
     local cost
     cost=$(jq -r '.total_cost_usd // 0' "$out_json" 2>/dev/null || echo 0)
 
@@ -245,15 +265,16 @@ Use the Translator subagent (.claude/agents/translator.md). When done, stop — 
     local status="ok"
     [ ! -f "$rust_full" ] && status="no_output"
     [ "$hooks_pass" = "false" ] && status="hooks_failed"
+    [ "$syntax_ok" = "false" ] && status="syntax_failed"
 
     local end_ts=$(date +%s)
     local duration=$((end_ts - start_ts))
 
-    printf '{"file":"%s","target":"%s","status":"%s","cost_usd":%s,"duration_s":%d,"hooks_pass":%s}\n' \
-        "$cfile" "$rust_full" "$status" "$cost" "$duration" "$hooks_pass" \
+    printf '{"file":"%s","target":"%s","status":"%s","cost_usd":%s,"duration_s":%d,"hooks_pass":%s,"syntax_ok":%s,"syntax_residual":%d}\n' \
+        "$cfile" "$rust_full" "$status" "$cost" "$duration" "$hooks_pass" "$syntax_ok" "$syntax_residual" \
         >> "$JSONL"
 
-    echo "    status=$status  cost=\$$cost  duration=${duration}s  hooks=$hooks_pass"
+    echo "    status=$status  cost=\$$cost  duration=${duration}s  hooks=$hooks_pass  syntax=$syntax_ok (residual=$syntax_residual)"
 }
 
 # ──────────────────────────────────────────────────────────────────────────

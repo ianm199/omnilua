@@ -1,1 +1,0 @@
-1 2.8760915 reference/lua-c/testes/vararg.lua

@@ -3,16 +3,4 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing bitwise operations
-DBG MMBIN: p1=string p2=string tm=Band
-DBG MMBIN: p1=string p2=number tm=Bor
-DBG MMBIN: p1=string p2=string tm=Band
-DBG MMBIN: p1=string p2=string tm=Band
-DBG MMBIN: p1=string p2=string tm=Shr
-DBG MMBIN: p1=string p2=string tm=Shl
-DBG MMBIN: p1=string p2=string tm=Bxor
-DBG MMBIN: p1=string p2=number tm=Shl
-DBG MMBIN: p1=number p2=string tm=Shr
-DBG MMBIN: p1=number p2=string tm=Bor
-DBG MMBIN: p1=number p2=string tm=Band
-DBG MMBIN: p1=string p2=number tm=Bor
 [err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:103: assertion failed!

@@ -165,7 +165,7 @@ pub fn check_stack(state: &mut LuaState, n: i32) -> bool {
     let res = if available > n as usize {
         true
     } else {
-        state.grow_stack(n, false).is_ok()
+        crate::do_::grow_stack(state, n, false).unwrap_or(false)
     };
     if res {
         // C: if (res && ci->top.p < L->top.p + n) ci->top.p = L->top.p + n;

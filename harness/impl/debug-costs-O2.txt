@@ -3,3 +3,4 @@
 4 1.8869812500000007 reference/lua-c/testes/files.lua [opus]
 1 [2026-05-18T19:52:27Z mega]   → committed 9355448 (debug/reference/lua-c/testes/gc.lua )
 12.053621249999999 reference/lua-c/testes/gc.lua [opus]
+5 10.260821000000004 reference/lua-c/testes/errors.lua [opus]

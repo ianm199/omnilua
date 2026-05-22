@@ -1,0 +1,111 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 2137330,
+  "duration_api_ms": 2132537,
+  "ttft_ms": 3330,
+  "num_turns": 126,
+  "result": "Build is clean (no errors). Verified `errors.lua` now progresses further (past line 345's `print'+'`) — original bug is fixed.\n\n**Root cause:** `crates/lua-parse/src/lib.rs:2587` (`cg_self`) — the OP_SELF codegen always emitted the method-name constant index as the C operand with `k=1`, even when the constant index exceeded the 8-bit `MAXINDEXRK` limit (255). The index got truncated to its low 8 bits, so `t:bbb()` after 1000+ constants reported the wrong method name (e.g. `'x233'` instead of `'bbb'`).\n\n**Fix:** When `k_idx > MAXINDEXRK`, demote the key to `ExprKind::K` and discharge it into a register via `cg_exp_to_any_reg`, then emit OP_SELF with `C=reg, k=0`. Mirrors `codeABRK`/`exp2RK` from `lcode.c`.\n\n**New state:** Reproducer (`t:bbb()` after 1000 globals) now reports `(method 'bbb')` correctly. `errors.lua` advances past the prior failure point — `>>> testC not active <<<` print at line 94 plus `+` print at line 345 now appear, with the next assertion failure being a separate bug for the next loop iteration.",
+  "stop_reason": "end_turn",
+  "session_id": "ac7fb16e-fd38-452f-b502-d1d4c6a292bf",
+  "total_cost_usd": 10.260821000000004,
+  "usage": {
+    "input_tokens": 131,
+    "cache_creation_input_tokens": 173672,
+    "cache_read_input_tokens": 14020004,
+    "output_tokens": 86526,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 173672,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 447,
+        "cache_read_input_tokens": 191918,
+        "cache_creation_input_tokens": 643,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 643
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1489,
+      "outputTokens": 15,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001564,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7": {
+      "inputTokens": 131,
+      "outputTokens": 86526,
+      "cacheReadInputTokens": 14020004,
+      "cacheCreationInputTokens": 173672,
+      "webSearchRequests": 0,
+      "costUSD": 10.259257000000005,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01CuiYjjVvaHkEiTKU1mNiSa",
+      "tool_input": {
+        "command": "awk 'NR>=33 && NR<=50 {printf \"%d: %s\\n\", NR, $0}' reference/lua-c/testes/errors.lua",
+        "description": "Show lines 33-50 with line numbers"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01ARsgz9oFNpc5RoU4AftCEx",
+      "tool_input": {
+        "command": "cat > /tmp/test_check.lua << 'EOF'\nlocal function doit (s)\n  local f, msg = load(s)\n  if not f then return msg end\n  local cond, msg = pcall(f)\n  return (not cond) and msg\nend\n\nlocal function checksyntax (prog, extra, token, line)\n  local msg = doit(prog)\n  print(\"msg =\", msg)\n  if not string.find(token, \"^<%a\") and not string.find(token, \"^char%(\")\n    then token = \"'\"..token..\"'\" end\n  token = string.gsub(token, \"(%p)\", \"%%%1\")\n  local pt = string.format([[^%%[string \".*\"%%]:%d: .- near %s$]],\n                           line, token)\n  print(\"pt =\", pt)\n  local pos = string.find(msg, pt)\n  print(\"pos =\", pos)\n  assert(pos)\nend\n\nchecksyntax([[\n  local a = {4\n\n]], \"'}' expected (to close '{' at line 1)\", \"<eof>\", 3)\n\nprint(\"done\")\nEOF\ntarget/debug/lua-rs /tmp/test_check.lua 2>&1 | tail -25",
+        "description": "Run reproducer"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01DpydxM7gGz4nDXdozWTksX",
+      "tool_input": {
+        "command": "awk '/^checkmessage/ || /^checksyntax/ || /^checkerr/ || /^assert\\(.*doit/ {print NR\": \"$0}' reference/lua-c/testes/errors.lua | head -80",
+        "description": "List all check calls"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01BGCSQndrpENk2hvXWWDkg7",
+      "tool_input": {
+        "command": "awk 'NR==40 {print \"  print(\\\"PROBE msg=\\\", msg); print(\\\"PROBE pt=\\\", pt); print(\\\"PROBE find=\\\", string.find(msg, pt));\" } {print}' reference/lua-c/testes/errors.lua > /tmp/errors_probe.lua && head -45 /tmp/errors_probe.lua | tail -15",
+        "description": "Make probe variant"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01WKDnSsJKhLcfaZGRkFz955",
+      "tool_input": {
+        "command": "cp reference/lua-c/testes/errors.lua /tmp/errors_mod.lua",
+        "description": "Copy errors.lua"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "13180768-65c8-45f6-b77c-a65cc59497ff"
+}

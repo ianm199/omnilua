@@ -4,5 +4,9 @@
 [4/4] Executing chunk...
 testing metatables
 
-thread 'main' (10085859) has overflowed its stack
-fatal runtime error: stack overflow, aborting
+ >>> testC not active: skipping tests for userdata <<<
+
++
++
+OK
+[ok] execution completed, status=Ok

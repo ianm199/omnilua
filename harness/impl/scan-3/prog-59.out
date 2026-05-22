@@ -3,6 +3,5 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing generational garbage collection
-
-thread 'main' (10085726) has overflowed its stack
-fatal runtime error: stack overflow, aborting
++
+lua: pcall_k failed: Runtime: stdin:110: attempt to call a string value (local 'f')

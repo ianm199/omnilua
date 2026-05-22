@@ -8,6 +8,6 @@ testing tables, next, and for
 
 +
 +
-
-thread 'main' (10085822) has overflowed its stack
-fatal runtime error: stack overflow, aborting
++
+testing next x GC of deleted keys
+lua: pcall_k failed: Runtime: stdin:402: bad argument #1 to 'for iterator' (table expected, got nil)

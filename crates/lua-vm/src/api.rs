@@ -343,6 +343,25 @@ impl LuaState {
         Ok(())
     }
 
+    /// Write `msg` bytes verbatim to standard output. Mirrors the C macro
+    /// `lua_writestring(s, l) = fwrite(s, 1, l, stdout)` from `lauxlib.h`,
+    /// used by `print` and friends. A failed write is propagated as a
+    /// `LuaError::runtime`; this matches C-Lua's behaviour where an I/O
+    /// error during `lua_writestring` would surface through the host's
+    /// error handling.
+    pub fn write_output(&mut self, msg: &[u8]) -> Result<(), LuaError> {
+        use std::io::Write;
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        handle
+            .write_all(msg)
+            .map_err(|e| LuaError::runtime(format_args!("{}", e)))?;
+        handle
+            .flush()
+            .map_err(|e| LuaError::runtime(format_args!("{}", e)))?;
+        Ok(())
+    }
+
     /// Convert the value at `idx` to a display string, push the result onto
     /// the stack, and return a copy of its bytes. Mirrors `luaL_tolstring`
     /// from `lauxlib.c`. The default Lua formatting is used for primitives

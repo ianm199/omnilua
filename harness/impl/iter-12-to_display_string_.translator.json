@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 166904,
+  "duration_api_ms": 166258,
+  "ttft_ms": 2877,
+  "num_turns": 29,
+  "result": "Build is green.\n\n**Report:**\n\n- **Modified:** `crates/lua-vm/src/api.rs` — added inherent `LuaState::to_display_string` (43 new lines after `push_value_at` near line 346).\n- **What it does:** Faithful port of `luaL_tolstring` (lauxlib.c:898). Pushes a display-string copy of the value at `idx` onto the stack and also returns its bytes. Handles primitives directly: strings duplicate, numbers use `num_to_string` (`%I`/`%.14g`), booleans → `\"true\"`/`\"false\"`, nil → `\"nil\"`. Reference types format as `\"<typename>: 0x<hex>\"` via `tagmethods::obj_type_name` (which honors `__name`) and `to_pointer`.\n- **Resolution:** Inherent method wins over the `LuaStateStubExt::to_display_string` trait default per the Phase-B-reconcile pattern — no edit to `state_stub.rs` needed.\n- **TODOs surfacing next:** A `TODO(port)` flags that `__tostring` metamethod dispatch is not yet wired (needs `luaL_callmeta`/`get_metafield` analogues). For tables/functions/threads/userdata the inner `obj_type_name` call may itself hit `intern_str` paths; those are implemented. `write_output` (called by the `print_fn` caller) is still a `todo!()` and will likely be the next iteration's target.\n- **`cargo build -p lua-cli`:** green (warnings only).",
+  "stop_reason": "end_turn",
+  "session_id": "7743e4cc-47e9-41aa-998f-9739c046621f",
+  "total_cost_usd": 1.4540522499999997,
+  "usage": {
+    "input_tokens": 29,
+    "cache_creation_input_tokens": 72249,
+    "cache_read_input_tokens": 1489908,
+    "output_tokens": 10231,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 72249,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 515,
+        "cache_read_input_tokens": 90392,
+        "cache_creation_input_tokens": 756,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 756
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1522,
+      "outputTokens": 20,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001622,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 29,
+      "outputTokens": 10231,
+      "cacheReadInputTokens": 1489908,
+      "cacheCreationInputTokens": 72249,
+      "webSearchRequests": 0,
+      "costUSD": 1.45243025,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "8b87a8f4-fb60-4d07-ad6b-9787c50a245b"
+}

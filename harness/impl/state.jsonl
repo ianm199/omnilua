@@ -293,3 +293,6 @@
 {"ts":"2026-05-16T20:30:35Z","action":"dispatch_done","detail":"type=implement func=top cost=2.3329000000000004","total_cost":0.00}
 {"ts":"2026-05-16T20:30:35Z","action":"panic_detected","detail":"func=to_display_string iter=12","total_cost":0.00}
 {"ts":"2026-05-16T20:30:35Z","action":"dispatch_start","detail":"type=implement func=to_display_string iter=12","total_cost":0.00}
+{"ts":"2026-05-16T20:33:24Z","action":"dispatch_done","detail":"type=implement func=to_display_string cost=1.4540522499999997","total_cost":0.00}
+{"ts":"2026-05-16T20:33:24Z","action":"panic_detected","detail":"func=write_output iter=13","total_cost":0.00}
+{"ts":"2026-05-16T20:33:24Z","action":"dispatch_start","detail":"type=implement func=write_output iter=13","total_cost":0.00}

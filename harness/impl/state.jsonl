@@ -1539,3 +1539,69 @@
 {"ts":"2026-05-17T00:06:43Z","action":"dispatch_done","detail":"type=implement func=fast_get_int cost=0.4684407500000001","total_cost":0.00}
 {"ts":"2026-05-17T00:06:43Z","action":"real_error","detail":"err=execution completed with status=Ok but program output did NOT match SUCCESS_MARKER='^10$'. Actual recent output lines (comma-joined): 20,. Likely causes: (1) codegen emits incomplete bytecode for an expression — e.g. ARITH ops (OP_ADD/OP_ADDI/OP_ADDK) not wired, or (2) a VM dispatch arm uses todo!() that's being masked. Investigate by reading the proto.code for the test program — if missing OP_ADD or similar, the bug is in lua-parse/codegen; if the bytecode is correct but execution gives wrong result, the bug is in lua-vm/vm.rs dispatch. step=4/4 Executing chunk iter=7","total_cost":0.00}
 {"ts":"2026-05-17T00:06:43Z","action":"dispatch_start","detail":"type=debug err=execution completed with status=Ok but program output did NOT match SUCCESS_MARKER='^10$'. Actual recent output lines (comma-joined): 20,. Likely causes: (1) codegen emits incomplete bytecode for an expression — e.g. ARITH ops (OP_ADD/OP_ADDI/OP_ADDK) not wired, or (2) a VM dispatch arm uses todo!() that's being masked. Investigate by reading the proto.code for the test program — if missing OP_ADD or similar, the bug is in lua-parse/codegen; if the bytecode is correct but execution gives wrong result, the bug is in lua-vm/vm.rs dispatch. iter=7","total_cost":0.00}
+{"ts":"2026-05-17T00:08:36Z","action":"dispatch_done","detail":"type=debug err=execution completed with status=Ok but program output did NOT match SUCCESS_MARKER='^10$'. Actual recent output lines (comma-joined): 20,. Likely causes: (1) codegen emits incomplete bytecode for an expression — e.g. ARITH ops (OP_ADD/OP_ADDI/OP_ADDK) not wired, or (2) a VM dispatch arm uses todo!() that's being masked. Investigate by reading the proto.code for the test program — if missing OP_ADD or similar, the bug is in lua-parse/codegen; if the bytecode is correct but execution gives wrong result, the bug is in lua-vm/vm.rs dispatch. cost=0.713956","total_cost":0.00}
+{"ts":"2026-05-17T00:08:36Z","action":"success","detail":"iter=8","total_cost":0.00}
+{"ts":"2026-05-17T00:08:36Z","action":"run_end","detail":"iterations=7 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:08:42Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:08:42Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:08:42Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:08:47Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:08:47Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:08:47Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:08:53Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:08:53Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:08:53Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:08:58Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:08:58Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:08:58Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:03Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:04Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:04Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:09Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:09Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:09Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:14Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:15Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:15Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:20Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:20Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:20Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:25Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:26Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:26Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:31Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:31Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:31Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:36Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:37Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:37Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:42Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:42Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:42Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:47Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:47Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:48Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:53Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:53Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:53Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:09:58Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:09:58Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:09:58Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:10:04Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:10:04Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:10:04Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:10:09Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:10:09Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:10:09Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:10:15Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:10:15Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:10:15Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:10:20Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:10:20Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:10:20Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:10:26Z","action":"run_start","detail":"local t = {10,20,30}; print(t[1])","total_cost":0.00}
+{"ts":"2026-05-17T00:10:26Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:10:26Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-17T00:10:32Z","action":"run_start","detail":"local function fact(n) if n <= 1 then return 1 else return n * fact(n-1) end end; print(fact(5))","total_cost":0.00}
+{"ts":"2026-05-17T00:10:32Z","action":"panic_detected","detail":"func=cg_posfix_fold non-foldable binop Le (Local KInt) iter=1","total_cost":0.00}
+{"ts":"2026-05-17T00:10:32Z","action":"dispatch_start","detail":"type=implement func=cg_posfix_fold non-foldable binop Le (Local KInt) iter=1","total_cost":0.00}

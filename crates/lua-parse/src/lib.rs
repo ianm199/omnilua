@@ -720,7 +720,7 @@ fn cg_posfix_fold(
         }
     }
 
-    if matches!(op, BinOpr::Lt) {
+    if matches!(op, BinOpr::Lt | BinOpr::Le) {
         return cg_emit_order(fs, op, e1, e2, line);
     }
 
@@ -784,17 +784,31 @@ fn cg_emit_order(
     e2: &mut ExprDesc,
     line: i32,
 ) -> Result<(), LuaError> {
-    debug_assert!(matches!(op, BinOpr::Lt));
+    debug_assert!(matches!(op, BinOpr::Lt | BinOpr::Le));
+    let is_le = matches!(op, BinOpr::Le);
+    let (op_imm_e2, op_imm_e1, op_reg) = if is_le {
+        (
+            lua_code::opcodes::OpCode::LeI,
+            lua_code::opcodes::OpCode::GeI,
+            lua_code::opcodes::OpCode::Le,
+        )
+    } else {
+        (
+            lua_code::opcodes::OpCode::LtI,
+            lua_code::opcodes::OpCode::GtI,
+            lua_code::opcodes::OpCode::Lt,
+        )
+    };
     let (r1, r2, cmp_op) = if let Some(im) = cg_sc_int(e2) {
         let r1 = cg_exp_to_any_reg(fs, line, e1)?;
-        (r1, im, lua_code::opcodes::OpCode::LtI)
+        (r1, im, op_imm_e2)
     } else if let Some(im) = cg_sc_int(e1) {
         let r1 = cg_exp_to_any_reg(fs, line, e2)?;
-        (r1, im, lua_code::opcodes::OpCode::GtI)
+        (r1, im, op_imm_e1)
     } else {
         let r2 = cg_exp_to_any_reg(fs, line, e2)?;
         let r1 = cg_exp_to_any_reg(fs, line, e1)?;
-        (r1, r2, lua_code::opcodes::OpCode::Lt)
+        (r1, r2, op_reg)
     };
     cg_free_exps(fs, e1, e2);
     let cmp = lua_code::opcodes::Instruction::abck(

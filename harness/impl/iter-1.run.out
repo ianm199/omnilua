@@ -2,11 +2,7 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 
-thread 'main' (5641577) panicked at crates/lua-parse/src/lib.rs:629:9:
-assertion `left == right` failed
-  left: 0
- right: -1
+thread 'main' (5731511) panicked at crates/lua-parse/src/lib.rs:744:14:
+not yet implemented: phase-b: cg_posfix_fold non-foldable binop Le (Local KInt)
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] assertion `left == right` failed
-  left: 0
- right: -1
+[panic] not yet implemented: phase-b: cg_posfix_fold non-foldable binop Le (Local KInt)

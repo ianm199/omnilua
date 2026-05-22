@@ -1415,8 +1415,28 @@ fn open_func(ls: &mut LexState, state: &mut LuaState, mut new_fs: FuncState) -> 
 fn close_func(ls: &mut LexState, state: &mut LuaState) -> Result<Box<LuaProto>, LuaError> {
     // C: luaK_ret(fs, luaY_nvarstack(fs), 0)
     {
+        let first = {
+            let fs = ls.fs.as_ref().unwrap();
+            nvarstack(ls, fs)
+        };
         let fs = ls.fs.as_mut().unwrap();
-        // TODO(port): lua_code::emit_return(fs, nvarstack_val, 0)?;
+        let raw = lua_code::opcodes::Instruction::abck(
+            lua_code::opcodes::OpCode::Return0,
+            first as u32,
+            1,
+            0,
+            0,
+        )
+        .0;
+        let pc = fs.pc as usize;
+        if fs.f.code.len() <= pc {
+            fs.f.code.resize(pc + 1, lua_types::opcode::Instruction::default());
+        }
+        fs.f.code[pc] = lua_types::opcode::Instruction::new(raw);
+        if fs.f.lineinfo.len() <= pc {
+            fs.f.lineinfo.resize(pc + 1, 0i8);
+        }
+        fs.pc += 1;
     }
     // C: leaveblock(fs)
     leave_block(ls, state)?;

@@ -1233,12 +1233,14 @@ pub fn push_light_userdata(state: &mut LuaState, p: *mut core::ffi::c_void) {
 pub fn push_thread(state: &mut LuaState) -> bool {
     // C: setthvalue(L, s2v(L->top.p), L); api_incr_top(L);
     // C: return (G(L)->mainthread == L);
-    // TODO(port): pushing the current state as a Thread value requires a
-    // GcRef<LuaState> pointing to self, which requires the state to be
-    // heap-allocated behind a GcRef. Stubbed for Phase A.
+    // PORT NOTE: pushing the current state as a Thread value requires a
+    // GcRef<LuaState> pointing to self, which is gated on Phase D's GC cycle
+    // handling. Until then we push a stable per-state thread token kept on
+    // GlobalState so callers like `debug.sethook` can use a consistent key
+    // in registry subtables.
     let is_main = state.is_main_thread();
-    let _ = is_main;
-    // TODO(port): state.push(LuaValue::Thread(state.self_gcref())) — needs self_gcref()
+    let token = state.global().thread_token.clone();
+    state.push(LuaValue::Thread(token));
     is_main
 }
 

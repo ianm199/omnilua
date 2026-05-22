@@ -100,6 +100,8 @@ impl Trace for GlobalState {
             t.trace(m);
         }
 
+        self.thread_token.trace(m);
+
         for slot in self.mt.iter() {
             if let Some(t) = slot {
                 t.trace(m);

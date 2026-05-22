@@ -803,6 +803,14 @@ pub struct GlobalState {
     // TODO(port): self-referential Rc cycle; Phase D GC handles cycles properly
     pub mainthread: Option<GcRef<LuaState>>,
 
+    /// Phase-A/B substitute for `GcRef<LuaState>` thread identity. Until the
+    /// self-referential Rc cycle is broken in Phase D, callers that need a
+    /// stable hashable handle for "the current thread" (e.g. `lua_pushthread`
+    /// pushing the running thread into the debug hook table) use this single
+    /// shared `LuaThread` token. Coroutines are stubbed (design decision #6),
+    /// so reusing one token across all logical threads is correct for now.
+    pub thread_token: GcRef<lua_types::value::LuaThread>,
+
     // C: TString *memerrmsg — preallocated OOM error message
     // types.tsv: global_State.memerrmsg → GcRef<LuaString>
     pub memerrmsg: GcRef<LuaString>,
@@ -3229,6 +3237,7 @@ pub fn new_state() -> Option<LuaState> {
         panic: None,
         // C: g->mainthread = L; — set after main thread created
         mainthread: None,
+        thread_token: GcRef::new(lua_types::value::LuaThread::placeholder()),
         memerrmsg: placeholder_str.clone(),
         tmname: Vec::new(),
         // C: for (i=0; i < LUA_NUMTAGS; i++) g->mt[i] = NULL;

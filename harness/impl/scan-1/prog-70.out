@@ -3,4 +3,5 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing syntax
-[err] pcall_k failed: Runtime: [string "_soft = true..."]:234: assertion failed!
++
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:18: assertion failed!

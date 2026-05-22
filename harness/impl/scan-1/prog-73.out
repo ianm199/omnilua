@@ -5,4 +5,4 @@
 'os.tmpname' file cannot be open; skipping file tests
 +
 testing date/time
-[err] pcall_k failed: Runtime: field 'year' missing in date table
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:30: assertion failed!

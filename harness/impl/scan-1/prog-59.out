@@ -3,8 +3,5 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing generational garbage collection
-
-thread 'main' (10042527) panicked at crates/lua-vm/src/trace_impls.rs:30:9:
-not yet implemented: phase-d: trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-d: trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc
++
+[err] pcall_k failed: Runtime: attempt to call a string value

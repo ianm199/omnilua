@@ -8,8 +8,6 @@ testing tables, next, and for
 
 +
 +
-
-thread 'main' (10042611) panicked at crates/lua-vm/src/trace_impls.rs:30:9:
-not yet implemented: phase-d: trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-d: trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc
++
+testing next x GC of deleted keys
+[err] pcall_k failed: Runtime: bad argument #1 (table expected, got nil)

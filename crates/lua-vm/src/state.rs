@@ -2149,10 +2149,6 @@ impl<'a> GcHandle<'a> {
             let roots = CollectRoots { global: &*global, thread: state_ref };
             let hook = |marker: &mut lua_gc::Marker| {
                 collect_ran.set(true);
-                eprintln!("[GC] start hook, weak_tables_count={}, visited_count={}", weak_tables_snapshot.len(), marker.visited_count());
-                for t in &weak_tables_snapshot {
-                    eprintln!("[GC]   wk_t id={} visited={} mode={} len={}", t.identity(), marker.is_visited(t.identity()), t.weak_mode(), t.len());
-                }
                 loop {
                     let visited_before = marker.visited_count();
                     for t in &weak_tables_snapshot {
@@ -2175,12 +2171,7 @@ impl<'a> GcHandle<'a> {
                 for t in &weak_tables_snapshot {
                     let id = t.identity();
                     if marker.is_visited(id) {
-                        let before = t.len();
                         t.prune_weak_dead(&|id| marker.is_visited(id));
-                        let after = t.len();
-                        if before != after {
-                            eprintln!("[GC]   pruned id={} {}→{}", id, before, after);
-                        }
                         alive_ids.borrow_mut().insert(id);
                     }
                 }

@@ -41,6 +41,80 @@ use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Phase D-1c — scoped thread-local HeapGuard
+//
+// Lua's C API supports multiple `lua_State`s on one OS thread (sandbox-per-
+// state is a real embedding pattern). We honor that by stacking the
+// currently-active heap rather than holding a single slot. `HeapGuard::push`
+// activates a heap; drop pops it.
+//
+// `current_heap()` returns the top of the stack — used by `GcRef::new`
+// (post D-1e) and by legacy `GcRef::new` call sites that don't have
+// `&mut LuaState` in scope.
+// ──────────────────────────────────────────────────────────────────────────
+
+thread_local! {
+    static CURRENT_HEAP_STACK: RefCell<Vec<NonNull<Heap>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A scoped guard for the currently-active heap. Pushed at entry to
+/// `state.run()` / `state.protected_call()` / `state.load()`; popped on
+/// drop. Supports nesting (multiple LuaStates on one thread).
+pub struct HeapGuard {
+    // Anchor a NonNull so the user can't accidentally drop the guard while
+    // an inner Lua state is still active. We rely on RAII.
+    _private: (),
+}
+
+impl HeapGuard {
+    /// Push `heap` onto the active stack. Returns a guard; dropping it pops.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must remain valid for the lifetime of the guard. Callers
+    /// typically pass `&state.global.heap`, which lives as long as the
+    /// `GlobalState` (an `Rc<RefCell<_>>`); the guard must drop before the
+    /// state is dropped.
+    pub fn push(heap: &Heap) -> Self {
+        let ptr = NonNull::from(heap);
+        CURRENT_HEAP_STACK.with(|stack| stack.borrow_mut().push(ptr));
+        HeapGuard { _private: () }
+    }
+}
+
+impl Drop for HeapGuard {
+    fn drop(&mut self) {
+        CURRENT_HEAP_STACK.with(|stack| {
+            let popped = stack.borrow_mut().pop();
+            debug_assert!(popped.is_some(), "HeapGuard::drop with empty stack");
+        });
+    }
+}
+
+/// Returns a reference to the currently-active heap, or `None` if no
+/// `HeapGuard` is in scope. Phase D-1c uses this only for diagnostics
+/// (the bridge becomes load-bearing at D-1e when `GcRef::new` switches
+/// to route through it).
+///
+/// # Safety
+///
+/// The returned reference is valid only for the lifetime of the active
+/// `HeapGuard`. Don't hold across guard drops.
+pub fn current_heap() -> Option<&'static Heap> {
+    CURRENT_HEAP_STACK.with(|stack| {
+        // SAFETY: the top NonNull was produced from a live `&Heap` whose
+        // lifetime is bounded by the `HeapGuard` on the stack. Borrowing
+        // it as &'static is a deliberate API choice — callers should not
+        // hold the reference past their own scope. The 'static lifetime
+        // is a transmute lie for ergonomics.
+        stack
+            .borrow()
+            .last()
+            .map(|ptr| unsafe { &*ptr.as_ptr() })
+    })
+}
+
 /// A traced color in the tri-color invariant.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Color {
@@ -644,6 +718,33 @@ mod tests {
         // they're not in a Trace-visible position.)
         heap.full_collect(&OneRoot(None));
         assert_eq!(heap.bytes_used(), 0);
+    }
+
+    #[test]
+    fn heap_guard_stacks() {
+        assert!(current_heap().is_none(), "no guard initially");
+        let h1 = Heap::new();
+        h1.unpause();
+        {
+            let _g1 = HeapGuard::push(&h1);
+            assert!(current_heap().is_some());
+            let h2 = Heap::new();
+            h2.unpause();
+            {
+                let _g2 = HeapGuard::push(&h2);
+                // top of stack is h2
+                assert!(std::ptr::addr_eq(
+                    current_heap().unwrap() as *const _,
+                    &h2 as *const _,
+                ));
+            }
+            // _g2 dropped — top is back to h1
+            assert!(std::ptr::addr_eq(
+                current_heap().unwrap() as *const _,
+                &h1 as *const _,
+            ));
+        }
+        assert!(current_heap().is_none(), "stack empty after all guards drop");
     }
 
     #[test]

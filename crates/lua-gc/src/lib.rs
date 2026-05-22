@@ -12,7 +12,7 @@
 
 pub mod heap;
 
-pub use heap::{Color, Gc, GcBox, GcHeader, GcState, Heap, Marker, Trace};
+pub use heap::{Color, Gc, GcBox, GcHeader, GcState, Heap, HeapGuard, Marker, Trace, current_heap};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

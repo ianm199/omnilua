@@ -1759,6 +1759,18 @@ pub fn pcall_k(
     ctx: isize,
     k: Option<fn(&mut LuaState, i32, isize) -> Result<usize, LuaError>>,
 ) -> Result<LuaStatus, LuaError> {
+    // Phase D-1c: activate the heap for the duration of this protected call.
+    // GcRef::new (post D-1e) and any future allocator-aware code will route
+    // through state.global.heap via current_heap(). Stacked so nested
+    // pcalls inside the same thread don't clobber each other.
+    let _heap_guard = {
+        let g = state.global.borrow();
+        // The HeapGuard borrows &Heap; we let it live for the function scope.
+        // The borrow of `g` is dropped immediately; the guard's NonNull
+        // outlives it (the heap field is pinned inside GlobalState which
+        // is Rc-managed and won't move).
+        lua_gc::HeapGuard::push(&g.heap)
+    };
     // C: api_checknelems(L, nargs+1);
     // C: func (error handler) stack offset
     let err_handler_idx: isize = if errfunc == 0 {

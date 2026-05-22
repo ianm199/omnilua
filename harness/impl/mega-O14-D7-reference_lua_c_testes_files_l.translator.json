@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 218306,
+  "duration_api_ms": 216082,
+  "ttft_ms": 3318,
+  "num_turns": 29,
+  "result": "Compile is clean. Per instructions I won't re-run the program.\n\n**Root cause:** `CallInfo::is_lua()` at `crates/lua-vm/src/state.rs:309` returned `matches!(self.u, CallInfoFrame::Lua { .. })`, but in C-Lua the canonical truth is `!(ci->callstatus & CIST_C)`. `prep_call_info` (`crates/lua-vm/src/do_.rs:743`) only writes `callstatus`, not the `u` variant, so the `u` field was stale from whatever previously inhabited that CallInfo slot. When a C call (e.g. `pcall`→`f_close`) reused a slot last used by a Lua frame, `is_lua()` returned `true` even though the callstatus said `CIST_C`, and `debug.rs:1816 ci_lua_proto` panicked because the slot held a C closure.\n\n**Fix:**\n1. `CallInfo::is_lua()` now checks `(self.callstatus & CIST_C) == 0`, matching C semantics.\n2. `prep_call_info` now also resets `ci.u` to `c_default()` or `lua_default()` based on the mask, so `saved_pc()`/`nextra_args()`/etc. observe a consistent payload.\n\nTemporary `eprintln!` removed. `cargo build -p lua-cli` is green. Did not re-test per instructions; the mega-loop will re-run.",
+  "stop_reason": "end_turn",
+  "session_id": "fadce041-94bf-4124-9f77-f7d3a93bf0dd",
+  "total_cost_usd": 1.6061307500000004,
+  "usage": {
+    "input_tokens": 34,
+    "cache_creation_input_tokens": 76411,
+    "cache_read_input_tokens": 1688740,
+    "output_tokens": 11295,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 76411,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 480,
+        "cache_read_input_tokens": 76226,
+        "cache_creation_input_tokens": 185,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 185
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1542,
+      "outputTokens": 21,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001647,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 34,
+      "outputTokens": 11295,
+      "cacheReadInputTokens": 1688740,
+      "cacheCreationInputTokens": 76411,
+      "webSearchRequests": 0,
+      "costUSD": 1.6044837500000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "42ace2d2-96e5-4dda-a8c7-50973d29e422"
+}

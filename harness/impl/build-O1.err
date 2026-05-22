@@ -135,9 +135,9 @@ warning: unused variable: `line`
     |     ^^^^ help: if this is intentional, prefix it with an underscore: `_line`
 
 warning: unused variable: `state`
-    --> crates/lua-vm/src/do_.rs:1582:5
+    --> crates/lua-vm/src/do_.rs:1587:5
      |
-1582 |     state: &mut LuaState,
+1587 |     state: &mut LuaState,
      |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
 
 warning: unused variable: `state`
@@ -850,40 +850,6 @@ warning: unused import: `OpMode`
    |                          ^^^^^^
    |
    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-warning: unused variable: `ls`
-   --> crates/lua-lex/src/lib.rs:849:5
-    |
-849 |     ls: &mut LexState,
-    |     ^^ help: if this is intentional, prefix it with an underscore: `_ls`
-    |
-    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
-
-warning: function `syntax_error` is never used
-   --> crates/lua-lex/src/lib.rs:598:15
-    |
-598 | pub(crate) fn syntax_error(ls: &mut LexState, msg: &[u8]) -> LuaError {
-    |               ^^^^^^^^^^^^
-    |
-    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: function `token2str` is never used
-   --> crates/lua-lex/src/lib.rs:677:15
-    |
-677 | pub(crate) fn token2str(_ls: &LexState, token: i32) -> Vec<u8> {
-    |               ^^^^^^^^^
-
-warning: enum `NumResult` is never used
-    --> crates/lua-lex/src/lib.rs:1937:6
-     |
-1937 | enum NumResult {
-     |      ^^^^^^^^^
-
-warning: function `str2num_stub` is never used
-    --> crates/lua-lex/src/lib.rs:1942:4
-     |
-1942 | fn str2num_stub(bytes: &[u8]) -> Option<NumResult> {
-     |    ^^^^^^^^^^^^
 
 warning: unreachable statement
     --> crates/lua-code/src/codegen.rs:1768:5
@@ -1654,6 +1620,40 @@ warning: function `finish` is never used
      |
 2357 | pub(crate) fn finish(
      |               ^^^^^^
+
+warning: unused variable: `ls`
+   --> crates/lua-lex/src/lib.rs:849:5
+    |
+849 |     ls: &mut LexState,
+    |     ^^ help: if this is intentional, prefix it with an underscore: `_ls`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `syntax_error` is never used
+   --> crates/lua-lex/src/lib.rs:598:15
+    |
+598 | pub(crate) fn syntax_error(ls: &mut LexState, msg: &[u8]) -> LuaError {
+    |               ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `token2str` is never used
+   --> crates/lua-lex/src/lib.rs:677:15
+    |
+677 | pub(crate) fn token2str(_ls: &LexState, token: i32) -> Vec<u8> {
+    |               ^^^^^^^^^
+
+warning: enum `NumResult` is never used
+    --> crates/lua-lex/src/lib.rs:1937:6
+     |
+1937 | enum NumResult {
+     |      ^^^^^^^^^
+
+warning: function `str2num_stub` is never used
+    --> crates/lua-lex/src/lib.rs:1942:4
+     |
+1942 | fn str2num_stub(bytes: &[u8]) -> Option<NumResult> {
+     |    ^^^^^^^^^^^^
 
 warning: unused imports: `LuaStatus`, `arith::ArithOp`, `closure::LuaClosure`, and `gc::GcRef`
   --> crates/lua-stdlib/src/base.rs:8:5

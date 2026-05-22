@@ -4,3 +4,4 @@
 3 [2026-05-17T21:29:02Z mega]   → committed 5b036ad (debug/reference/lua-c/testes/math.lua )
 13.552095499999997 reference/lua-c/testes/math.lua
 1 8.697557500000004 reference/lua-c/testes/pm.lua
+7 1.6061307500000004 reference/lua-c/testes/files.lua

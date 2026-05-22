@@ -2,7 +2,8 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-'os.tmpname' file cannot be open; skipping file tests
+testing functions and calls
 +
-testing date/time
-[err] pcall_k failed: Runtime: [string "_soft = true..."]:801: assertion failed!
++
+testing tail calls
+[err] pcall_k failed: Runtime: coroutines not yet implemented (Phase E)

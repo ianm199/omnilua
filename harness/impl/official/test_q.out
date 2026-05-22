@@ -2,9 +2,12 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-
-memory: 	1552.0
-expected error: 	bad 'for' limit (number expected, got number)
-size:	0
-OK
+q=	"\0\1\0023\5\0009"
+xlen=	7
+fmt=	return "\0\1\0023\5\0009"
+rlen=	7
+eq=	true
+0 1 2 51 5 0 57 x bytes
+0 1 2 51 5 0 57 r bytes
+passed
 [ok] execution completed, status=Ok

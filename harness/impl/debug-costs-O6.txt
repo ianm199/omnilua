@@ -1,6 +1,0 @@
-3 2.4134542500000005 reference/lua-c/testes/locals.lua
-4 [2026-05-18T02:41:29Z mega]   → committed af4028f (debug/reference/lua-c/testes/nextvar.lua )
-4.324071 reference/lua-c/testes/nextvar.lua
-5 1.75301925 reference/lua-c/testes/files.lua
-1 8.058686250000003 reference/lua-c/testes/pm.lua
-2 8.102112 reference/lua-c/testes/math.lua

@@ -1,12 +1,6 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-
-thread 'main' (9822981) panicked at crates/lua-parse/src/lib.rs:629:9:
-assertion `left == right` failed
-  left: 21
- right: 22
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] assertion `left == right` failed
-  left: 21
- right: 22
+[4/4] Executing chunk...
+testing syntax
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:234: assertion failed!

@@ -581,6 +581,7 @@ fn load_protos(s: &mut LoadState<'_>, f: &mut LuaProto) -> Result<(), LuaError> 
         // Wrap in GcRef after loading.
         // PORT NOTE: In C f->p[i] is a Proto * held by the proto's GC roots.
         // In Rust Phase A it becomes Rc<LuaProto>.
+        // TODO(D-1c-bridge): wraps fully-populated LuaProto value; state.new_proto produces a placeholder
         protos.push(GcRef::new(sub));
     }
 
@@ -729,7 +730,10 @@ fn load_debug(s: &mut LoadState<'_>, f: &mut LuaProto) -> Result<(), LuaError> {
         let startpc = load_int(s)?;
         // C: f->locvars[i].endpc = loadInt(S);
         let endpc = load_int(s)?;
-        let varname = varname.unwrap_or_else(|| GcRef::new(LuaString::placeholder()));
+        let varname = match varname {
+            Some(v) => v,
+            None => s.state.new_string(b"")?,
+        };
         locvars.push(LocalVar { varname, startpc, endpc });
     }
     f.locvars = locvars;
@@ -1044,9 +1048,11 @@ pub(crate) fn undump(
     // TODO(port): use the proper lfunc::new_lua_closure(state, nupvalues) API
     // once lfunc.rs is translated and the API is settled.
     let mut cl = LuaLClosure::placeholder();
-    cl.upvals = (0..nupvalues as usize)
-        .map(|_| std::cell::RefCell::new(GcRef::new(UpVal::closed(LuaValue::Nil))))
-        .collect();
+    let mut upvals_vec = Vec::with_capacity(nupvalues as usize);
+    for _ in 0..nupvalues as usize {
+        upvals_vec.push(std::cell::RefCell::new(s.state.new_upval_closed(LuaValue::Nil)));
+    }
+    cl.upvals = upvals_vec;
 
     // C: setclLvalue2s(L, L->top.p, cl);  luaD_inctop(L);
     // macros.tsv: setclLvalue2s → state.set_at(o, LuaValue::Function(LuaClosure::Lua(cl)))
@@ -1070,6 +1076,7 @@ pub(crate) fn undump(
     load_function(&mut s, &mut proto, None)?;
 
     // Wrap the proto in a GcRef and attach it to the closure.
+    // TODO(D-1c-bridge): wraps fully-populated LuaProto value; state.new_proto produces a placeholder
     let proto_ref = GcRef::new(proto);
 
     // C: lua_assert(cl->nupvalues == cl->p->sizeupvalues);
@@ -1088,6 +1095,7 @@ pub(crate) fn undump(
     cl.proto = proto_ref;
 
     // Wrap the closure in GcRef.
+    // TODO(D-1c-bridge): wraps fully-populated LuaLClosure value; state.new_lclosure makes Nil-filled upvals
     let cl_ref = GcRef::new(cl);
 
     // Replace the stack placeholder with the real closure value.

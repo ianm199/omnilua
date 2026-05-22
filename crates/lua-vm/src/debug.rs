@@ -70,6 +70,7 @@ const LUA_ENV: &[u8] = b"_ENV";
 /// TODO(phase-b): expose as `LuaError::runtime_bytes` in lua-types once
 /// that crate has a `LuaString::from_bytes` constructor in its public API.
 fn runtime_bytes(msg: Vec<u8>) -> LuaError {
+    // TODO(D-1c-bridge): allocation outside state context (free fn)
     LuaError::Runtime(lua_types::LuaValue::Str(lua_types::GcRef::new(
         lua_types::LuaString::from_bytes(msg),
     )))

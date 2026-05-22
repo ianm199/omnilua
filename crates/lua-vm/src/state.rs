@@ -1621,6 +1621,8 @@ impl LuaState {
             };
             upvals.push(std::cell::RefCell::new(uv));
         }
+        // TODO(D-1c-bridge): upvals are pre-populated from parent frame; state.new_lclosure
+        // fills with fresh Nil upvals which would drop the captured bindings.
         let new_cl = GcRef::new(LuaClosureLua {
             proto: child_proto,
             upvals,
@@ -2751,6 +2753,7 @@ pub fn new_thread(state: &mut LuaState) -> Result<(), LuaError> {
 
     // Wrap in GcRef and push onto caller's stack.
     // TODO(port): register new_thread in state.global_mut().allgc for GC tracking (Phase D)
+    // TODO(D-1c-bridge): no state.new_thread helper; wraps a LuaState directly
     let _thread_ref: GcRef<LuaState> = GcRef::new(new_thread);
 
     // C: setthvalue2s(L, L->top.p, L1);
@@ -2759,6 +2762,7 @@ pub fn new_thread(state: &mut LuaState) -> Result<(), LuaError> {
     // TODO(phase-b): LuaValue::Thread expects GcRef<lua_types::value::LuaThread>;
     // the rich LuaState lives in lua-vm and the two have not been unified. Pushing
     // a placeholder for now so Phase A state construction can compile.
+    // TODO(D-1c-bridge): no state.new_thread_value helper; LuaThread placeholder
     state.push(LuaValue::Thread(GcRef::new(lua_types::value::LuaThread::placeholder())));
 
     // C: lua_unlock(L); → no-op; macros.tsv: lua_unlock → (drop entirely)
@@ -2964,6 +2968,7 @@ pub fn new_state() -> Option<LuaState> {
     // before luaS_init, but luaS_init creates the memerrmsg.
     // We use a placeholder Rc<LuaString> that will be replaced by luaS_init.
     // TODO(port): this is fragile; Phase B should ensure memerrmsg is properly set by luaS_init.
+    // TODO(D-1c-bridge): allocation outside state context (new_state() free fn — no LuaState yet)
     let placeholder_str = GcRef::new(LuaString::placeholder());
 
     // C: g->currentwhite = bitmask(WHITE0BIT);

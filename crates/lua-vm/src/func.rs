@@ -158,13 +158,12 @@ pub(crate) fn init_upvals(state: &mut LuaState, cl: &GcRef<lua_types::LuaLClosur
     let n = cl.upvals.len();
     for i in 0..n {
         // C: luaC_newobj(L, LUA_VUPVAL, sizeof(UpVal)) → Rc::new(UpVal::Closed(Nil))
-        let uv: GcRef<UpVal> = GcRef::new(UpVal::closed(LuaValue::Nil));
+        let uv: GcRef<UpVal> = state.new_upval_closed(LuaValue::Nil);
         // TODO(port): cl.borrow_mut().as_lua_mut().upvals[i] = Some(uv.clone());
         // Requires interior mutability; see PORT NOTE at top of file.
         let _ = (i, uv);
         // C: luaC_objbarrier(L, cl, uv) → state.gc().obj_barrier(cl, &uv) — no-op Phase A–C
     }
-    let _ = state; // used for GC barrier in Phase D
     Ok(())
 }
 
@@ -195,7 +194,7 @@ fn new_open_upval(
     // C: UpVal.v.p = s2v(level) → UpVal::Open { thread_id: 0, idx: level }
     // The `thread` component of PORT_STRATEGY §3.8 is deferred to Phase E (coroutines).
     // macros.tsv: uplevel → thread_stack_idx field of Open variant.
-    let uv: GcRef<UpVal> = GcRef::new(UpVal::open(0, level));
+    let uv: GcRef<UpVal> = state.new_upval_open(0, level);
     // PORT NOTE: Vec insert maintains descending StackIdx order (highest first),
     // mirroring the C intrusive list where the head is always the topmost slot.
     state.openupval.insert(insert_pos, uv.clone());
@@ -594,8 +593,7 @@ pub(crate) fn new_proto(state: &mut LuaState) -> GcRef<crate::state::LuaProto> {
     // The full struct definition (with all fields from types.tsv) must land in
     // object.rs (lobject.c → crate::object). The Rc::new below will only work once
     // that struct has fields. This translation captures the intended initialisation.
-    let _ = state; // used for GC registration in Phase D
-    GcRef::new(crate::state::LuaProto::placeholder())
+    state.new_proto()
 }
 
 /// Frees a function prototype and all its sub-arrays.

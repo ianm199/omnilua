@@ -798,6 +798,7 @@ impl LuaState {
         nuvalue: i32,
     ) -> Result<GcRef<LuaUserData>, LuaError> {
         debug_assert!(nuvalue >= 0 && nuvalue < u16::MAX as i32, "invalid value");
+        // TODO(D-1c-bridge): state.new_userdata is still todo!(); keep direct alloc
         let u = GcRef::new(LuaUserData {
             data: vec![0u8; size].into_boxed_slice(),
             uv: vec![LuaValue::Nil; nuvalue as usize],
@@ -1189,6 +1190,7 @@ pub fn push_cclosure(
             upvalues.push(state.get_at(crate::state::StackIdx((base + i) as u32)));
         }
         state.pop_n(n_usize);
+        // TODO(D-1c-bridge): state.new_c_closure is still todo!(); keep direct alloc
         let cl = LuaClosure::C(GcRef::new(lua_types::closure::LuaCClosure {
             func: idx,
             upvalues,
@@ -1802,7 +1804,8 @@ pub fn load(
             if !lcl.upvals.is_empty() {
                 // C: const TValue *gt = getGtable(L); setobj(L, f->upvals[0]->v.p, gt);
                 let gt = get_global_table(state);
-                lcl.set_upval(0, GcRef::new(UpVal::closed(gt)));
+                let uv = state.new_upval_closed(gt);
+                lcl.set_upval(0, uv);
             }
         }
     }

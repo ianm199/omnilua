@@ -40,6 +40,7 @@ type LocalGcRef<T> = Rc<T>;
 /// The two types track different metadata (short/long flag, extra byte) and a real
 /// merge belongs in Phase B once `lua-types::LuaString` grows the needed fields.
 fn impl_to_lt(s: &GcRef<LuaStringImpl>) -> GcRef<lua_types::LuaString> {
+    // TODO(D-1c-bridge): allocation outside state context (free fn)
     GcRef::new(lua_types::LuaString::from_bytes(s.as_bytes().to_vec()))
 }
 
@@ -775,6 +776,7 @@ pub(crate) fn new(state: &mut LuaState, bytes: &[u8]) -> Result<GcRef<LuaStringI
             // TODO(phase-b): strcache currently holds lua_types::LuaString; rebuild
             // a rich LuaStringImpl from the bytes. Phase B should unify the types.
             let cached_bytes = state.global().strcache[i][j].as_bytes().to_vec();
+            // TODO(D-1c-bridge): LuaStringImpl is the rich local type; state helper produces lua_types::LuaString
             return Ok(GcRef::new(LuaStringImpl {
                 bytes: cached_bytes.into(),
                 kind: if bytes.len() <= MAX_SHORT_LEN { StringKind::Short } else { StringKind::Long },
@@ -847,6 +849,7 @@ pub(crate) fn new_userdata(
     //    u = gco2u(o);
     // TODO(port): register with GC tracking (state.gc().new_obj(...));
     // Phase A–C stub: allocate via Rc without GC registration.
+    // TODO(D-1c-bridge): LuaUserDataImpl is the rich local type; state.new_userdata is still todo!()
     let u = GcRef::new(LuaUserDataImpl {
         // C: u->len = s;
         len: s,
@@ -906,6 +909,7 @@ fn create_str_obj(
     // TODO(port): register with GC tracking list (state.global_mut().allgc)
     // in Phase D; Phase A–C creates a bare Rc
     let _ = state; // state needed for GC registration in Phase D
+    // TODO(D-1c-bridge): LuaStringImpl is the rich local type; state helper produces lua_types::LuaString
     GcRef::new(LuaStringImpl {
         // C: ts->hash = h;
         hash: Cell::new(hash),

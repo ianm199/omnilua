@@ -1,0 +1,46 @@
+You are a Phase D-1a Migration agent for a Lua 5.4 → Rust port.
+
+GOAL: Replace every `GcRef::new(...)` allocation in __SCOPE__ with a
+state-owned allocation helper from `crates/lua-vm/src/state.rs`. The
+mapping is in `harness/alloc_migration.tsv` (tab-separated:
+old_pattern → new_pattern + notes).
+
+PROCESS:
+
+1. Run `grep -rn "GcRef::new(" __SCOPE__` to inventory call sites.
+
+2. For EACH site, check `harness/alloc_migration.tsv`:
+   - If a row matches (semantic shape, not literal text), apply the
+     replacement. The call site usually has `&mut LuaState` in scope as
+     `self` or a `state` parameter — use that.
+   - If `&mut LuaState` is NOT in scope at the site (e.g. inside an
+     associated function that doesn't take state), LEAVE the site alone
+     AND add a `// TODO(D-1c-bridge): allocation outside state context`
+     comment above it.
+   - If the site doesn't match any row (unusual shape, like building a
+     LuaClosureC with custom fields), inspect and decide: either add a
+     new helper to state.rs, OR leave with TODO comment.
+
+3. After all replacements, run `cargo build -p lua-cli`. If errors:
+   - Most likely a borrow conflict (state borrowed mut twice). Resolve
+     by hoisting the inner allocation into a separate `let` binding
+     before the outer call.
+   - Fix until green.
+
+4. Verify nothing regressed: `target/debug/lua-rs 'print(1+2)'` should
+   still print 3.
+
+5. Stop. The mega-loop will re-test.
+
+CONSTRAINTS:
+- Stay in __SCOPE__. Do not touch other crates.
+- Do NOT modify `crates/lua-gc/src/heap.rs` or `crates/lua-types/src/gc.rs`.
+- Do NOT add `unsafe` blocks.
+- Do NOT change function signatures (e.g. don't add `state` params to
+  free functions that don't have it; route through TODO instead).
+
+REPORT (under 250 words):
+- Count of sites migrated, count left as TODO.
+- One-line summary per site that was unusual (borrow conflict, new
+  helper added, etc.).
+- Whether cargo build is green.

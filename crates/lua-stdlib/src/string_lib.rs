@@ -1215,8 +1215,7 @@ fn add_value(
     match tr {
         LuaType::Function => {
             // C: lua_pushvalue(L, 3); n = push_captures(...); lua_call(L, n, 1);
-            let fv = state.get_at(3).clone();
-            state.push(fv);
+            state.push_value_at(3)?;
             let n = push_captures(state, ms, s, e)?;
             state.call(n as i32, 1)?;
         }
@@ -1313,8 +1312,7 @@ pub fn str_gsub(state: &mut LuaState) -> Result<usize, LuaError> {
 
     if !changed {
         // C: lua_pushvalue(L, 1); /* return original string */
-        let orig = state.get_at(1).clone();
-        state.push(orig);
+        state.push_value_at(1)?;
     } else {
         buf.extend_from_slice(&ms.src[src_pos..]);
         state.push_bytes(&buf)?;

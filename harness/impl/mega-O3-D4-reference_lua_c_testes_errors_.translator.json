@@ -1,0 +1,79 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 469719,
+  "duration_api_ms": 463095,
+  "ttft_ms": 2268,
+  "num_turns": 60,
+  "result": "The error message now correctly shows `table.sort` instead of `?`. The fix works.\n\n**Root cause:** `arg_error_impl` in `debug.rs` fell back to `\"?\"` when `get_info(state, b\"n\", &ar)` couldn't resolve a function name — which happens when a function is called as a value from C code (no Lua bytecode calling frame to inspect).\n\n**Fix:** Added `find_func_in_table` (mirrors C-Lua's `ldblib.c:findfield`) and `find_func_name_in_globals`. When `ar.name` is `None` after `get_info`, we get the function value from the CI frame and walk `_G` one level deep (e.g., `_G.table.sort`) to resolve the dotted name by identity. Also fixed a pre-existing `let mut g` bug in `coro_lib.rs` that was blocking compilation.\n\n**New state:** The smoke test `table.sort({1,2,3}, table.sort)` now emits `bad argument #1 to 'table.sort' (table expected, got number)`. The `errors.lua` run should advance past the `checkmessage` case that was failing at line 38 — not fully re-tested per instructions.",
+  "stop_reason": "end_turn",
+  "session_id": "551ea9c5-23bf-4891-83bf-28e7c69eb14a",
+  "total_cost_usd": 1.9260755,
+  "usage": {
+    "input_tokens": 54,
+    "cache_creation_input_tokens": 89260,
+    "cache_read_input_tokens": 3991745,
+    "output_tokens": 26096,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 89260,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 303,
+        "cache_read_input_tokens": 101756,
+        "cache_creation_input_tokens": 248,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 248
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 2150,
+      "outputTokens": 15,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.002225,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-sonnet-4-6": {
+      "inputTokens": 54,
+      "outputTokens": 26096,
+      "cacheReadInputTokens": 3991745,
+      "cacheCreationInputTokens": 89260,
+      "webSearchRequests": 0,
+      "costUSD": 1.9238505000000004,
+      "contextWindow": 600000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01KBwvYg6H5MaZ5QMVWXhVM5",
+      "tool_input": {
+        "command": "git stash && cargo build -p lua-cli 2>&1 | grep -E \"error\\[\" | head -5 && git stash pop",
+        "timeout": 120000
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "1c32038c-90a2-47de-a9a8-467f06c30c30"
+}

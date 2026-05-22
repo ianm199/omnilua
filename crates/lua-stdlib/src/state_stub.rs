@@ -351,6 +351,14 @@ impl LuaStateStubExt for LuaState {
         lua_vm::api::set_top(self, -2)
     }
 
+    fn get_upvalue(&mut self, fidx: i32, n: i32) -> Result<Option<Vec<u8>>, LuaError> {
+        Ok(lua_vm::api::get_upvalue(self, fidx, n).map(|s| s.to_vec()))
+    }
+
+    fn set_upvalue(&mut self, fidx: i32, n: i32) -> Result<Option<Vec<u8>>, LuaError> {
+        Ok(lua_vm::api::setup_value(self, fidx, n).map(|s| s.to_vec()))
+    }
+
     fn load(&mut self, chunk: &[u8], name: &[u8], mode: Option<&[u8]>) -> Result<bool, LuaError> {
         let mut remaining = Some(chunk.to_vec());
         let reader: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || remaining.take());

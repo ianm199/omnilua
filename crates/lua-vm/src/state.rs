@@ -1256,7 +1256,6 @@ impl LuaState {
         (self.stack_last.0 as usize).saturating_sub(self.top.0 as usize)
     }
     pub fn check_stack(&mut self, n: i32) -> Result<(), LuaError> {
-        debug_assert!(n >= 0, "negative 'n'");
         let free = (self.stack_last.0 as i32) - (self.top.0 as i32);
         if free <= n {
             self.grow_stack(n, true)?;

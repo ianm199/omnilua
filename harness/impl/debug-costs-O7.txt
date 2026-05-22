@@ -1,3 +1,4 @@
 4 [2026-05-17T19:42:27Z mega]   → committed f7707d4 (debug/reference/lua-c/testes/tpack.lua )
 2.4319235 reference/lua-c/testes/tpack.lua
 1 3.94040475 reference/lua-c/testes/goto.lua
+2 3.61352425 reference/lua-c/testes/strings.lua

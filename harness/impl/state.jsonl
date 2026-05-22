@@ -849,3 +849,156 @@
 {"ts":"2026-05-16T21:27:40Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
 {"ts":"2026-05-16T21:27:40Z","action":"panic_detected","detail":"func=cg_posfix_fold non-foldable binop Add (Local Local) iter=1","total_cost":0.00}
 {"ts":"2026-05-16T21:27:40Z","action":"dispatch_start","detail":"type=implement func=cg_posfix_fold non-foldable binop Add (Local Local) iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:31:58Z","action":"dispatch_done","detail":"type=implement func=cg_posfix_fold non-foldable binop Add (Local Local) cost=1.8597445000000001","total_cost":0.00}
+{"ts":"2026-05-16T21:31:58Z","action":"success","detail":"iter=2","total_cost":0.00}
+{"ts":"2026-05-16T21:31:58Z","action":"run_end","detail":"iterations=1 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:03Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:03Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:03Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:08Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:09Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:09Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:14Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:14Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:14Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:19Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:20Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:20Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:25Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:25Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:25Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:30Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:30Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:31Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:36Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:36Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:36Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:41Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:41Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:41Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:47Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:47Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:47Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:52Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:52Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:52Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:32:57Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:32:58Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:32:58Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:03Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:03Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:03Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:08Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:09Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:09Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:14Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:14Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:14Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:19Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:20Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:20Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:25Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:25Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:25Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:30Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:30Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:30Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:36Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:36Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:36Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:41Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:41Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:41Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:46Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:47Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:47Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:52Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:52Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:52Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:33:57Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:33:58Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:33:58Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:03Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:03Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:03Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:08Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:08Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:08Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:14Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:14Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:14Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:19Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:19Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:19Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:24Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:25Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:25Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:30Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:30Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:30Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:35Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:36Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:36Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:41Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:41Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:41Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:46Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:46Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:46Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:52Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:52Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:52Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:34:57Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:34:57Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:34:57Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:03Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:03Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:03Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:08Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:08Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:08Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:13Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:14Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:14Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:19Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:19Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:19Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:24Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:24Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:25Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:30Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:30Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:30Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:35Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:35Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:35Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:41Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:41Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:41Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:46Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:46Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:46Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:51Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:52Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:52Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:35:57Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:35:57Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:35:57Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:36:02Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:36:03Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:36:03Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:36:08Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:36:08Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:36:08Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:36:13Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:36:13Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:36:13Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:36:19Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:36:19Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:36:19Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:36:24Z","action":"run_start","detail":"local x = 5; local y = 3; print(x+y)","total_cost":0.00}
+{"ts":"2026-05-16T21:36:24Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:36:24Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T21:40:30Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T21:40:30Z","action":"panic_detected","detail":"func=cg_posfix_fold non-foldable binop Lt (KInt KInt) iter=1","total_cost":0.00}
+{"ts":"2026-05-16T21:40:30Z","action":"dispatch_start","detail":"type=implement func=cg_posfix_fold non-foldable binop Lt (KInt KInt) iter=1","total_cost":0.00}

@@ -1,1 +1,1 @@
-cg_posfix_fold non-foldable binop Add (Local Local)
+cg_posfix_fold non-foldable binop Lt (KInt KInt)

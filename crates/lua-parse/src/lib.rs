@@ -707,6 +707,10 @@ fn cg_posfix_fold(
         }
     }
 
+    if matches!(op, BinOpr::Lt) {
+        return cg_emit_order(fs, op, e1, e2, line);
+    }
+
     let (opcode, event) = match op {
         BinOpr::Add  => (lua_code::opcodes::OpCode::Add,  lua_types::tagmethod::TagMethod::Add),
         BinOpr::Sub  => (lua_code::opcodes::OpCode::Sub,  lua_types::tagmethod::TagMethod::Sub),
@@ -746,6 +750,74 @@ fn cg_posfix_fold(
     );
     emit_inst(fs, line, mm_inst);
     Ok(())
+}
+
+/// Mirrors C's `codeorder` from `lcode.c` for relational binops (`<`, `<=`,
+/// `>`, `>=`). Emits a comparison opcode (with `k = 1`) followed by an
+/// `OP_JMP` with offset `NO_JUMP`; the resulting `VJMP` expression carries
+/// the jump's pc in `e1.u.info` so the surrounding control-flow logic can
+/// patch it. When one operand is a small-integer literal that fits the
+/// signed-C field, the immediate forms (`OP_LTI` / `OP_GTI`) are used;
+/// otherwise both operands are discharged to registers and the register
+/// form (`OP_LT`) is emitted.
+fn cg_emit_order(
+    fs: &mut FuncState,
+    op: BinOpr,
+    e1: &mut ExprDesc,
+    e2: &mut ExprDesc,
+    line: i32,
+) -> Result<(), LuaError> {
+    debug_assert!(matches!(op, BinOpr::Lt));
+    let (r1, r2, cmp_op) = if let Some(im) = cg_sc_int(e2) {
+        let r1 = cg_exp_to_any_reg(fs, line, e1)?;
+        (r1, im, lua_code::opcodes::OpCode::LtI)
+    } else if let Some(im) = cg_sc_int(e1) {
+        let r1 = cg_exp_to_any_reg(fs, line, e2)?;
+        (r1, im, lua_code::opcodes::OpCode::GtI)
+    } else {
+        let r2 = cg_exp_to_any_reg(fs, line, e2)?;
+        let r1 = cg_exp_to_any_reg(fs, line, e1)?;
+        (r1, r2, lua_code::opcodes::OpCode::Lt)
+    };
+    cg_free_exps(fs, e1, e2);
+    let cmp = lua_code::opcodes::Instruction::abck(
+        cmp_op,
+        r1 as u32,
+        r2 as u32,
+        0,
+        1,
+    );
+    emit_inst(fs, line, cmp);
+    let jmp_arg = (NO_JUMP + lua_code::opcodes::OFFSET_S_J) as u32;
+    let jmp = lua_code::opcodes::Instruction::sj(
+        lua_code::opcodes::OpCode::Jmp,
+        jmp_arg,
+        0,
+    );
+    let jmp_pc = emit_inst(fs, line, jmp);
+    e1.u.info = jmp_pc;
+    e1.k = ExprKind::Jmp;
+    Ok(())
+}
+
+/// Mirrors C's `isSCint` from `lcode.c` (a restriction of `isSCnumber` to
+/// the integer case): returns `Some(int2sC(ival))` if `e` is a `VKINT`
+/// literal whose value fits the signed-C 8-bit operand field, else `None`.
+/// The returned byte is already pre-encoded with the `OFFSET_sC` bias so
+/// the caller can drop it straight into an `sC` argument slot.
+fn cg_sc_int(e: &ExprDesc) -> Option<u8> {
+    if !matches!(e.k, ExprKind::KInt) {
+        return None;
+    }
+    if e.t != NO_JUMP || e.f != NO_JUMP {
+        return None;
+    }
+    let biased = (e.u.ival as u64).wrapping_add(lua_code::opcodes::OFFSET_S_C as u64);
+    if biased <= lua_code::opcodes::MAXARG_C as u64 {
+        Some(biased as u8)
+    } else {
+        None
+    }
 }
 
 /// Minimal `luaK_exp2anyreg`: ensure `e` ends up in *some* register. If `e`

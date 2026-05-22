@@ -361,3 +361,105 @@
 [2026-05-16T21:27:40Z respawn] outer run #47 starting (test: local x = 5; print(x))
 [2026-05-16T21:27:40Z respawn] respawn watchdog starting. GLOBAL_CAP=$2000.00 PER_RUN_MAX_ITER=80 OUTER_MAX_RUNS=50
 [2026-05-16T21:27:40Z respawn] outer run #1 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:31:58Z respawn] outer run #1 exited rc=0
+[2026-05-16T21:32:03Z respawn] outer run #2 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:03Z respawn] outer run #2 exited rc=0
+[2026-05-16T21:32:08Z respawn] outer run #3 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:09Z respawn] outer run #3 exited rc=0
+[2026-05-16T21:32:14Z respawn] outer run #4 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:14Z respawn] outer run #4 exited rc=0
+[2026-05-16T21:32:19Z respawn] outer run #5 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:20Z respawn] outer run #5 exited rc=0
+[2026-05-16T21:32:25Z respawn] outer run #6 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:25Z respawn] outer run #6 exited rc=0
+[2026-05-16T21:32:30Z respawn] outer run #7 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:31Z respawn] outer run #7 exited rc=0
+[2026-05-16T21:32:36Z respawn] outer run #8 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:36Z respawn] outer run #8 exited rc=0
+[2026-05-16T21:32:41Z respawn] outer run #9 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:41Z respawn] outer run #9 exited rc=0
+[2026-05-16T21:32:47Z respawn] outer run #10 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:47Z respawn] outer run #10 exited rc=0
+[2026-05-16T21:32:52Z respawn] outer run #11 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:52Z respawn] outer run #11 exited rc=0
+[2026-05-16T21:32:57Z respawn] outer run #12 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:32:58Z respawn] outer run #12 exited rc=0
+[2026-05-16T21:33:03Z respawn] outer run #13 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:03Z respawn] outer run #13 exited rc=0
+[2026-05-16T21:33:08Z respawn] outer run #14 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:09Z respawn] outer run #14 exited rc=0
+[2026-05-16T21:33:14Z respawn] outer run #15 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:14Z respawn] outer run #15 exited rc=0
+[2026-05-16T21:33:19Z respawn] outer run #16 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:20Z respawn] outer run #16 exited rc=0
+[2026-05-16T21:33:25Z respawn] outer run #17 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:25Z respawn] outer run #17 exited rc=0
+[2026-05-16T21:33:30Z respawn] outer run #18 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:30Z respawn] outer run #18 exited rc=0
+[2026-05-16T21:33:36Z respawn] outer run #19 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:36Z respawn] outer run #19 exited rc=0
+[2026-05-16T21:33:41Z respawn] outer run #20 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:41Z respawn] outer run #20 exited rc=0
+[2026-05-16T21:33:46Z respawn] outer run #21 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:47Z respawn] outer run #21 exited rc=0
+[2026-05-16T21:33:52Z respawn] outer run #22 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:52Z respawn] outer run #22 exited rc=0
+[2026-05-16T21:33:57Z respawn] outer run #23 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:33:58Z respawn] outer run #23 exited rc=0
+[2026-05-16T21:34:03Z respawn] outer run #24 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:03Z respawn] outer run #24 exited rc=0
+[2026-05-16T21:34:08Z respawn] outer run #25 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:08Z respawn] outer run #25 exited rc=0
+[2026-05-16T21:34:14Z respawn] outer run #26 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:14Z respawn] outer run #26 exited rc=0
+[2026-05-16T21:34:19Z respawn] outer run #27 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:19Z respawn] outer run #27 exited rc=0
+[2026-05-16T21:34:24Z respawn] outer run #28 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:25Z respawn] outer run #28 exited rc=0
+[2026-05-16T21:34:30Z respawn] outer run #29 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:30Z respawn] outer run #29 exited rc=0
+[2026-05-16T21:34:35Z respawn] outer run #30 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:36Z respawn] outer run #30 exited rc=0
+[2026-05-16T21:34:41Z respawn] outer run #31 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:41Z respawn] outer run #31 exited rc=0
+[2026-05-16T21:34:46Z respawn] outer run #32 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:46Z respawn] outer run #32 exited rc=0
+[2026-05-16T21:34:52Z respawn] outer run #33 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:52Z respawn] outer run #33 exited rc=0
+[2026-05-16T21:34:57Z respawn] outer run #34 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:34:57Z respawn] outer run #34 exited rc=0
+[2026-05-16T21:35:03Z respawn] outer run #35 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:03Z respawn] outer run #35 exited rc=0
+[2026-05-16T21:35:08Z respawn] outer run #36 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:08Z respawn] outer run #36 exited rc=0
+[2026-05-16T21:35:13Z respawn] outer run #37 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:14Z respawn] outer run #37 exited rc=0
+[2026-05-16T21:35:19Z respawn] outer run #38 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:19Z respawn] outer run #38 exited rc=0
+[2026-05-16T21:35:24Z respawn] outer run #39 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:25Z respawn] outer run #39 exited rc=0
+[2026-05-16T21:35:30Z respawn] outer run #40 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:30Z respawn] outer run #40 exited rc=0
+[2026-05-16T21:35:35Z respawn] outer run #41 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:35Z respawn] outer run #41 exited rc=0
+[2026-05-16T21:35:41Z respawn] outer run #42 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:41Z respawn] outer run #42 exited rc=0
+[2026-05-16T21:35:46Z respawn] outer run #43 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:46Z respawn] outer run #43 exited rc=0
+[2026-05-16T21:35:51Z respawn] outer run #44 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:52Z respawn] outer run #44 exited rc=0
+[2026-05-16T21:35:57Z respawn] outer run #45 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:35:57Z respawn] outer run #45 exited rc=0
+[2026-05-16T21:36:02Z respawn] outer run #46 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:36:03Z respawn] outer run #46 exited rc=0
+[2026-05-16T21:36:08Z respawn] outer run #47 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:36:08Z respawn] outer run #47 exited rc=0
+[2026-05-16T21:36:13Z respawn] outer run #48 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:36:13Z respawn] outer run #48 exited rc=0
+[2026-05-16T21:36:19Z respawn] outer run #49 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:36:19Z respawn] outer run #49 exited rc=0
+[2026-05-16T21:36:24Z respawn] outer run #50 starting (test: local x = 5; local y = 3; print(x+y))
+[2026-05-16T21:36:24Z respawn] outer run #50 exited rc=0
+[2026-05-16T21:36:29Z respawn] respawn watchdog finished after 50 attempts (or success)
+[2026-05-16T21:40:30Z respawn] respawn watchdog starting. GLOBAL_CAP=$2000.00 PER_RUN_MAX_ITER=80 OUTER_MAX_RUNS=50
+[2026-05-16T21:40:30Z respawn] outer run #1 starting (test: if 1 < 2 then print("yes") else print("no") end)

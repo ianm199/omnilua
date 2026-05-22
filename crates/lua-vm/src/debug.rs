@@ -1433,13 +1433,14 @@ pub(crate) fn call_error(state: &LuaState, val: &LuaValue, val_idx: StackIdx) ->
 /// Raises a "bad 'for' <what>" error.
 ///
 /// C: `l_noret luaG_forerror(lua_State *L, const TValue *o, const char *what)` (LUAI_FUNC)
-pub(crate) fn for_error(state: &LuaState, val: &LuaValue, what: &[u8]) -> LuaError {
-    let t = state.obj_type_name(val);
+pub(crate) fn for_error(state: &mut LuaState, val: &LuaValue, what: &[u8]) -> LuaError {
+    let t = crate::tagmethods::obj_type_name(state, val)
+        .unwrap_or_else(|_| crate::tagmethods::type_name(val.base_type()).to_vec());
     let mut msg = Vec::new();
     msg.extend_from_slice(b"bad 'for' ");
     msg.extend_from_slice(what);
     msg.extend_from_slice(b" (number expected, got ");
-    msg.extend_from_slice(t);
+    msg.extend_from_slice(&t);
     msg.push(b')');
     prefixed_runtime(state, msg)
 }

@@ -508,15 +508,15 @@ pub(crate) fn forprep(state: &mut LuaState, ra: StackIdx) -> Result<bool, LuaErr
         // C: float loop — coerce all three values to floats
         let limit_f = match tonumber_(&plimit) {
             Some(f) => f,
-            None => return Err(LuaError::for_error(&plimit, "limit")),
+            None => return Err(crate::debug::for_error(state, &plimit, b"limit")),
         };
         let step_f = match tonumber_(&pstep) {
             Some(f) => f,
-            None => return Err(LuaError::for_error(&pstep, "step")),
+            None => return Err(crate::debug::for_error(state, &pstep, b"step")),
         };
         let init_f = match tonumber_(&pinit) {
             Some(f) => f,
-            None => return Err(LuaError::for_error(&pinit, "initial value")),
+            None => return Err(crate::debug::for_error(state, &pinit, b"initial value")),
         };
         if step_f == 0.0 {
             return Err(LuaError::runtime(format_args!("'for' step is zero")));

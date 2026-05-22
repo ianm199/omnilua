@@ -1631,13 +1631,6 @@ fn f_parser(state: &mut LuaState, p: &mut SParser) -> Result<(), LuaError> {
     };
 
     // C: lua_assert(cl->nupvalues == cl->p->sizeupvalues)
-    eprintln!(
-        "DEBUG f_parser: name={:?} c={} upvals={} proto_upvals={}",
-        core::str::from_utf8(&p.name).unwrap_or("?"),
-        c,
-        cl.upvals.len(),
-        cl.proto.upvalues.len()
-    );
     debug_assert!(cl.upvals.len() == cl.proto.upvalues.len());
     // C: luaF_initupvals(L, cl)
     func::init_upvals(state, &cl)?;

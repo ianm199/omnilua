@@ -1008,3 +1008,156 @@
 {"ts":"2026-05-16T22:13:57Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
 {"ts":"2026-05-16T22:14:17Z","action":"real_error","detail":"err=execution did NOT terminate within 20s — likely an INFINITE LOOP in the VM dispatcher or in codegen-emitted bytecode. Most common cause: a JMP instruction was emitted but not patched (NO_JUMP = -1 leftover), so the program loops forever. Look in lua-parse codegen patch-list handlers (luaK_patchlist / luaK_patchtohere / luaK_concat / fixjump) and in if/while/for statement compiler (test_then_block, whilestat, forstat in crates/lua-parse/src/lib.rs). Also check arg_s_j sign extension in crates/lua-vm/src/vm.rs. step=4/4 Executing chunk iter=1","total_cost":0.00}
 {"ts":"2026-05-16T22:14:17Z","action":"dispatch_start","detail":"type=debug err=execution did NOT terminate within 20s — likely an INFINITE LOOP in the VM dispatcher or in codegen-emitted bytecode. Most common cause: a JMP instruction was emitted but not patched (NO_JUMP = -1 leftover), so the program loops forever. Look in lua-parse codegen patch-list handlers (luaK_patchlist / luaK_patchtohere / luaK_concat / fixjump) and in if/while/for statement compiler (test_then_block, whilestat, forstat in crates/lua-parse/src/lib.rs). Also check arg_s_j sign extension in crates/lua-vm/src/vm.rs. iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:19:37Z","action":"dispatch_done","detail":"type=debug err=execution did NOT terminate within 20s — likely an INFINITE LOOP in the VM dispatcher or in codegen-emitted bytecode. Most common cause: a JMP instruction was emitted but not patched (NO_JUMP = -1 leftover), so the program loops forever. Look in lua-parse codegen patch-list handlers (luaK_patchlist / luaK_patchtohere / luaK_concat / fixjump) and in if/while/for statement compiler (test_then_block, whilestat, forstat in crates/lua-parse/src/lib.rs). Also check arg_s_j sign extension in crates/lua-vm/src/vm.rs. cost=2.615616249999999","total_cost":0.00}
+{"ts":"2026-05-16T22:19:38Z","action":"success","detail":"iter=2","total_cost":0.00}
+{"ts":"2026-05-16T22:19:38Z","action":"run_end","detail":"iterations=1 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:19:43Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:19:43Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:19:43Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:19:49Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:19:49Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:19:49Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:19:54Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:19:54Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:19:54Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:00Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:00Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:00Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:05Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:05Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:05Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:11Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:11Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:11Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:16Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:16Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:16Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:22Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:22Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:22Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:27Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:27Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:27Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:33Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:33Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:33Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:38Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:38Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:38Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:44Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:44Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:44Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:49Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:49Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:49Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:20:55Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:20:55Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:20:55Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:00Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:00Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:00Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:06Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:06Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:06Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:11Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:11Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:11Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:17Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:17Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:17Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:22Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:22Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:22Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:28Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:28Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:28Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:33Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:33Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:33Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:39Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:39Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:39Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:44Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:44Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:44Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:50Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:50Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:50Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:21:55Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:21:55Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:21:55Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:01Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:01Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:01Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:06Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:06Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:06Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:11Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:12Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:12Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:17Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:17Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:17Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:22Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:23Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:23Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:28Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:28Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:28Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:33Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:34Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:34Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:39Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:39Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:39Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:44Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:45Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:45Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:50Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:50Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:50Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:22:55Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:22:56Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:22:56Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:01Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:01Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:01Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:06Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:07Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:07Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:12Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:12Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:12Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:17Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:18Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:18Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:23Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:23Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:23Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:28Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:29Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:29Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:34Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:34Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:34Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:39Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:40Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:40Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:45Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:45Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:45Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:50Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:51Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:51Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:23:56Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:23:56Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:23:56Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:24:01Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:24:02Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:24:02Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:24:07Z","action":"run_start","detail":"if 1 < 2 then print(\"yes\") else print(\"no\") end","total_cost":0.00}
+{"ts":"2026-05-16T22:24:07Z","action":"success","detail":"iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:24:07Z","action":"run_end","detail":"iterations=0 total_cost=0.00","total_cost":0.00}
+{"ts":"2026-05-16T22:29:19Z","action":"run_start","detail":"for i=1,3 do print(i) end","total_cost":0.00}
+{"ts":"2026-05-16T22:29:19Z","action":"real_error","detail":"err=crates/lua-parse/src/lib.rs:2897:5: step=3/4 Loading source (parse + compile) iter=1","total_cost":0.00}
+{"ts":"2026-05-16T22:29:19Z","action":"dispatch_start","detail":"type=debug err=crates/lua-parse/src/lib.rs:2897:5: iter=1","total_cost":0.00}

@@ -1,1 +1,1 @@
-execution did NOT terminate within 20s — likely an INFINITE LOOP in the VM dispatcher or in codegen-emitted bytecode. Most common cause: a JMP instruction was emitted but not patched (NO_JUMP = -1 leftover), so the program loops forever. Look in lua-parse codegen patch-list handlers (luaK_patchlist / luaK_patchtohere / luaK_concat / fixjump) and in if/while/for statement compiler (test_then_block, whilestat, forstat in crates/lua-parse/src/lib.rs). Also check arg_s_j sign extension in crates/lua-vm/src/vm.rs.
+crates/lua-parse/src/lib.rs:2897:5:

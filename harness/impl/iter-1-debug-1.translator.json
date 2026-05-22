@@ -1,1 +1,104 @@
-{}
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 317919,
+  "duration_api_ms": 308283,
+  "ttft_ms": 3624,
+  "num_turns": 46,
+  "result": "Both branches work. Verifying no temporary instrumentation was added — I added none.\n\n**Root cause**: The lua-parse codegen for `if`/`elseif`/`else` (`test_then_block` at lib.rs:2895 and `ifstat` at lib.rs:2946) had every jump-patch call stubbed out as `TODO(port)`. `cg_emit_order` correctly emitted `OP_LTI`/`OP_LT` followed by `OP_JMP` with offset `NO_JUMP` (-1), but `goiftrue`/`patchtohere`/`concat` were never called. At runtime the VM took the conditional jump on the comparison and computed `pc = pc + (-1) + 1 = pc` — infinite loop.\n\n**Fix**: Added Phase-A local implementations in crates/lua-parse/src/lib.rs of `cg_jump`, `cg_get_jump`, `cg_fix_jump`, `cg_get_label`, `cg_concat`, `cg_patch_list`, `cg_patch_to_here`, `cg_negate_condition`, `cg_go_if_true` (mirroring `lcode.c`'s `luaK_*` family), and wired them into `test_then_block` (negate the comparison's k bit, emit jump-over-then on else/elseif, patch the jf to the else label) and `ifstat` (patch escapelist to end of if).\n\n**New behavior**: `if 1 < 2 then print(\"yes\") else print(\"no\") end` prints `yes`; `if 2 < 1 then ... end` prints `no`. Original infinite-loop blocker is gone.",
+  "stop_reason": "end_turn",
+  "session_id": "e5dcf8b1-39ee-4c83-bb3e-8dfa4c5ec1b0",
+  "total_cost_usd": 2.615616249999999,
+  "usage": {
+    "input_tokens": 51,
+    "cache_creation_input_tokens": 84983,
+    "cache_read_input_tokens": 3200231,
+    "output_tokens": 19290,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 84983,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 538,
+        "cache_read_input_tokens": 103548,
+        "cache_creation_input_tokens": 334,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 334
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1757,
+      "outputTokens": 19,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0018520000000000001,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 51,
+      "outputTokens": 19290,
+      "cacheReadInputTokens": 3200231,
+      "cacheCreationInputTokens": 84983,
+      "webSearchRequests": 0,
+      "costUSD": 2.613764249999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01ASmEYPAPeLg82NUkPEVtwu",
+      "tool_input": {
+        "command": "(cargo run -q -p lua-cli -- 'if 1 < 2 then print(\"yes\") else print(\"no\") end' 2>&1 & PID=$!; sleep 20; kill $PID 2>/dev/null; wait $PID 2>/dev/null) | tail -40",
+        "description": "Run with kill timeout"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01KQzPxqW84RqHXeV5MAnDpK",
+      "tool_input": {
+        "command": "cargo run -q -p lua-cli -- 'if 1 < 2 then print(\"yes\") else print(\"no\") end' 2>&1 &\nsleep 15\nkill %1 2>/dev/null\nwait 2>/dev/null",
+        "timeout": 30000,
+        "description": "Run with timeout"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01HfxJ7pLvAfenZbZvWPuVrH",
+      "tool_input": {
+        "command": "gtimeout 15 cargo run -q -p lua-cli -- 'if 1 < 2 then print(\"yes\") else print(\"no\") end' 2>&1 | tail -30",
+        "description": "gtimeout fallback"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01GHbtf2oyrKNQjeeps1QudP",
+      "tool_input": {
+        "command": "which timeout gtimeout 2>&1; ls /opt/homebrew/bin/timeout /usr/local/bin/timeout 2>&1",
+        "description": "Check timeout availability"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "9877ad9d-4cc7-4445-90c5-4640ca89eb1f"
+}

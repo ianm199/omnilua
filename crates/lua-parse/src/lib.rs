@@ -2892,8 +2892,8 @@ fn repeatstat(ls: &mut LexState, state: &mut LuaState, line: i32) -> Result<(), 
 fn exp1(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     let mut e = ExprDesc::default();
     expr(ls, state, &mut e)?;
-    // C: luaK_exp2nextreg(ls->fs, &e)
-    // TODO(port): lua_code::exp_to_next_reg(ls.fs.as_mut().unwrap(), &mut e)?;
+    let line = ls.linenumber;
+    cg_exp_to_next_reg(ls.fs.as_mut().unwrap(), line, &mut e)?;
     debug_assert!(e.k == ExprKind::NonReloc);
     Ok(())
 }

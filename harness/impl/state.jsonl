@@ -145,3 +145,6 @@
 {"ts":"2026-05-16T17:55:14Z","action":"run_start","detail":"print(\"hello\")","total_cost":0.00}
 {"ts":"2026-05-16T17:55:14Z","action":"panic_detected","detail":"func=set_funcs iter=1","total_cost":0.00}
 {"ts":"2026-05-16T17:55:14Z","action":"dispatch_start","detail":"type=implement func=set_funcs iter=1","total_cost":0.00}
+{"ts":"2026-05-16T17:58:20Z","action":"dispatch_done","detail":"type=implement func=set_funcs cost=1.35479325","total_cost":0.00}
+{"ts":"2026-05-16T17:58:20Z","action":"panic_detected","detail":"func=stack_available iter=2","total_cost":0.00}
+{"ts":"2026-05-16T17:58:20Z","action":"dispatch_start","detail":"type=implement func=stack_available iter=2","total_cost":0.00}

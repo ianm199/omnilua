@@ -8,3 +8,7 @@
 {"ts":"2026-05-16T03:46:50Z","action":"phase_start","detail":"C_xlate","total_spent":13.5974}
 {"ts":"2026-05-16T04:22:43Z","action":"phase_end","detail":"C_xlate","total_spent":38.0884}
 {"ts":"2026-05-16T04:22:43Z","action":"phase_start","detail":"C_wire","total_spent":38.0884}
+{"ts":"2026-05-16T04:22:43Z","action":"commit","detail":"fda9274 Phase C: wire lua-stdlib/src/lib.rs with translated modules","total_spent":38.0884}
+{"ts":"2026-05-16T04:22:43Z","action":"phase_end","detail":"C_wire","total_spent":38.0884}
+{"ts":"2026-05-16T04:22:43Z","action":"phase_start","detail":"C_fix","total_spent":38.0884}
+{"ts":"2026-05-16T04:36:38Z","action":"fixer_done","detail":"lua-stdlib pass 1: {\"crate\":\"lua-stdlib\",\"status\":\"error\",\"cost_usd\":6.054681,\"duration_s\":834,\"start_errors\":483,\"end_errors\":187}","total_spent":38.0884}

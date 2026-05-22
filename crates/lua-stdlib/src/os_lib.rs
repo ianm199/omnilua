@@ -14,7 +14,8 @@
 //! flagged with `TODO(port)` and the stubs use a zero-initialised `TmFields`.
 
 // C: #include "lua.h" / "lauxlib.h" / "lualib.h"
-use lua_types::{LuaError, LuaState, LuaType, LuaValue};
+use lua_types::{LuaError, LuaType, LuaValue};
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -261,9 +262,8 @@ fn check_strftime_option<'a>(
     }
     // C: luaL_argerror(L, 1, lua_pushfstring(L, "invalid conversion specifier '%%%s'", conv));
     Err(LuaError::arg_error(
-        state,
         1,
-        format_args!("invalid conversion specifier '%{}'", ByteDisplay(conv)),
+        "invalid conversion specifier",
     ))
 }
 
@@ -291,15 +291,9 @@ fn check_time(state: &mut LuaState, arg: i32) -> Result<i64, LuaError> {
 /// With a command string: returns `true` on success, or `nil, errmsg, exitcode`
 /// on failure.
 pub(crate) fn os_execute(state: &mut LuaState) -> Result<usize, LuaError> {
-    // C: const char *cmd = luaL_optstring(L, 1, NULL);
-    let cmd = state.opt_arg_string(1)?;
-    // TODO(port): `system()` / `l_system()` requires `std::process::Command` which
-    // is banned in lua-stdlib per PORTING.md.  Route through an OS-capability
-    // abstraction layer provided by lua-cli or a platform-hook in Phase B.
+    let cmd = state.opt_arg_lstring(1, None)?;
     match cmd {
         None => {
-            // C: lua_pushboolean(L, stat);  /* true if there is a shell */
-            // Stub: report that no shell is available until capability is wired.
             state.push(LuaValue::Bool(false));
             Ok(1)
         }
@@ -600,7 +594,7 @@ pub(crate) fn os_setlocale(state: &mut LuaState) -> Result<usize, LuaError> {
     ];
 
     // C: const char *l = luaL_optstring(L, 1, NULL);
-    let _locale: Option<Vec<u8>> = state.opt_arg_string(1)?;
+    let _locale: Option<Vec<u8>> = state.opt_arg_lstring(1, None)?;
 
     // C: int op = luaL_checkoption(L, 2, "all", catnames);
     let _op: usize = state.check_arg_option(2, Some(b"all"), CAT_NAMES)?;

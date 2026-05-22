@@ -23,7 +23,7 @@
 use std::io::{self, SeekFrom};
 
 use lua_types::{LuaError, LuaType, LuaValue};
-use lua_vm::state::LuaState;
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -1175,7 +1175,7 @@ fn io_readline(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: LStream *p = (LStream *)lua_touserdata(L, lua_upvalueindex(1));
     // C: int n = (int)lua_tointeger(L, lua_upvalueindex(2));
     // TODO(port): access upvalues via state.get_upvalue(n); extract LStream from upvalue 1.
-    let n = match state.get_upvalue(2) {
+    let n = match state.value_at(crate::state_stub::upvalue_index(2)) {
         LuaValue::Int(i) => i as usize,
         _ => 0,
     };
@@ -1194,8 +1194,8 @@ fn io_readline(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: for (i = 1; i <= n; i++) lua_pushvalue(L, lua_upvalueindex(3 + i));
     for i in 1..=n {
-        let uv = state.get_upvalue(3 + i as i32);
-        state.push(uv);
+        let uv = state.value_at(crate::state_stub::upvalue_index(3 + i as i32));
+        state.push(uv)?;
     }
 
     // C: n = g_read(L, p->f, 2);
@@ -1224,7 +1224,7 @@ fn io_readline(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: if (lua_toboolean(L, lua_upvalueindex(3))) { /* generator created file */ ... }
     let toclose = !matches!(
-        state.get_upvalue(3),
+        state.value_at(crate::state_stub::upvalue_index(3)),
         LuaValue::Nil | LuaValue::Bool(false)
     );
     if toclose {
@@ -1244,11 +1244,11 @@ fn create_meta(state: &mut LuaState) -> Result<(), LuaError> {
     // C: luaL_newmetatable(L, LUA_FILEHANDLE);
     state.new_metatable(LUA_FILE_HANDLE)?;
     // C: luaL_setfuncs(L, metameth, 0);
-    state.register_funcs(FILE_METAMETHODS, 0)?;
+    state.set_funcs(FILE_METAMETHODS, 0)?;
     // C: luaL_newlibtable(L, meth);
     state.new_lib_table(FILE_METHODS)?;
     // C: luaL_setfuncs(L, meth, 0);
-    state.register_funcs(FILE_METHODS, 0)?;
+    state.set_funcs(FILE_METHODS, 0)?;
     // C: lua_setfield(L, -2, "__index");  /* metatable.__index = method table */
     state.set_field(-2, b"__index")?;
     // C: lua_pop(L, 1);

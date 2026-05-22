@@ -3,6 +3,7 @@
 //! Each module corresponds to one C source under reference/lua-5.4.7/src/.
 //! See ANALYSES/file_deps.txt for the mapping.
 
+pub mod state_stub;
 pub mod base;
 pub mod string_lib;
 pub mod table_lib;

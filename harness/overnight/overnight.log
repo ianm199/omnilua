@@ -51,3 +51,8 @@ Full results: harness/oracle/results/pilot.jsonl
 Per-file outputs: harness/oracle/results/*.translator.json + *.hooks.log
 [2026-05-16T04:22:43Z]   Phase C translate spend: $24.490970499999996
 [2026-05-16T04:22:43Z] ════ Phase C wire: lua-stdlib/src/lib.rs modules ════
+[2026-05-16T04:22:43Z]   committed: fda9274 Phase C: wire lua-stdlib/src/lib.rs with translated modules
+[2026-05-16T04:22:43Z] ════ Phase C fix: lua-stdlib compiler-fix residuals ════
+[2026-05-16T04:22:43Z]   lua-stdlib starting errors: 483
+[2026-05-16T04:22:43Z]   → pass 1: dispatching compiler-fixer (budget $6)
+[2026-05-16T04:36:38Z]   → pass 2: dispatching compiler-fixer (budget $6)

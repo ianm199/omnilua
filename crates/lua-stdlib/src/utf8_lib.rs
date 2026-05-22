@@ -10,8 +10,10 @@
 //! Lax mode accepts any well-formed byte sequence with a value ≤ MAX_UTF.
 
 use lua_types::error::LuaError;
-use lua_types::value::{LuaValue, LuaClosure};
-use lua_vm::state::LuaState;
+use lua_types::value::LuaValue;
+use lua_types::closure::LuaClosure;
+use lua_types::{LuaType, LuaStatus};
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // C: #define MAXUNICODE 0x10FFFFu
 const MAX_UNICODE: u32 = 0x10_FFFF;

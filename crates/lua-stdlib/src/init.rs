@@ -5,11 +5,7 @@
 //!
 //! Port of `src/linit.c` (66 lines, 1 function).
 
-// TODO(port): replace with `use lua_vm::state::LuaState` once lua-vm is compiled.
-// The stub below silences name-resolution errors during Phase A.  Every other
-// stdlib module uses the same pattern (see `crate::base`).
-struct LuaState;
-
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 use lua_types::error::LuaError;
 
 // C: lua_CFunction — fn pointer type for Lua-callable C functions.
@@ -62,26 +58,16 @@ type LuaCFunction = fn(&mut LuaState) -> Result<usize, LuaError>;
 //   Phase B should rename every stdlib opener to `pub fn open` and update
 //   this table accordingly.
 static LOADED_LIBS: &[(&[u8], LuaCFunction)] = &[
-    // C: {LUA_GNAME, luaopen_base}
     (b"_G",         crate::base::open),
-    // C: {LUA_LOADLIBNAME, luaopen_package}
-    (b"package",    crate::loadlib::open),
-    // C: {LUA_COLIBNAME, luaopen_coroutine}
-    (b"coroutine",  crate::coro_lib::open),
-    // C: {LUA_TABLIBNAME, luaopen_table}
-    (b"table",      crate::table_lib::open),
-    // C: {LUA_IOLIBNAME, luaopen_io}
-    (b"io",         crate::io_lib::open),
-    // C: {LUA_OSLIBNAME, luaopen_os}
-    (b"os",         crate::os_lib::open),
-    // C: {LUA_STRLIBNAME, luaopen_string}
-    (b"string",     crate::string_lib::open),
-    // C: {LUA_MATHLIBNAME, luaopen_math}
-    (b"math",       crate::math_lib::open),
-    // C: {LUA_UTF8LIBNAME, luaopen_utf8}
-    (b"utf8",       crate::utf8_lib::open),
-    // C: {LUA_DBLIBNAME, luaopen_debug}
-    (b"debug",      crate::debug_lib::open),
+    (b"package",    crate::loadlib::luaopen_package),
+    (b"coroutine",  crate::coro_lib::open_coroutine),
+    (b"table",      crate::table_lib::open_table),
+    (b"io",         crate::io_lib::luaopen_io),
+    (b"os",         crate::os_lib::open_os),
+    (b"string",     crate::string_lib::luaopen_string),
+    (b"math",       crate::math_lib::luaopen_math),
+    (b"utf8",       crate::utf8_lib::open_utf8),
+    (b"debug",      crate::debug_lib::open_debug),
 ];
 
 // C: LUALIB_API void luaL_openlibs (lua_State *L) {

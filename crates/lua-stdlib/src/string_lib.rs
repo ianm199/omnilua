@@ -12,6 +12,11 @@
 
 use lua_types::error::LuaError;
 use lua_types::value::LuaValue;
+use lua_types::arith::ArithOp;
+use lua_types::gc::GcRef;
+use lua_types::string::LuaString;
+use lua_types::{LuaType, LuaStatus};
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Constants

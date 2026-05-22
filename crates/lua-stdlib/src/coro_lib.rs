@@ -21,7 +21,10 @@ use lua_types::{
     error::LuaError,
     value::LuaValue,
     LuaType,
+    LuaStatus,
+    gc::GcRef,
 };
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Coroutine status codes ────────────────────────────────────────────────────
 
@@ -69,27 +72,15 @@ pub const CO_FUNCS: &[(&[u8], lua_CFunction)] = &[
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Converts a one-based upvalue number to the pseudo-index used to access it.
-///
-/// C: `lua_upvalueindex(i)` macro → free function `upvalue_index(i: i32) -> i32`
-/// per ANALYSES/macros.tsv.
-#[inline]
-fn upvalue_index(i: i32) -> i32 {
-    // TODO(port): exact formula is `LUA_REGISTRYINDEX - i`; the constant lives in
-    // lua-vm.  Phase B supplies the real implementation.
-    lua_types::upvalue_index(i)
-}
-
 /// Retrieves the coroutine thread at stack index 1, raising a type error if
 /// the argument is absent or not a thread.
 ///
 /// C: `static lua_State *getco(lua_State *L)`
-fn get_co(state: &mut LuaState) -> Result<GcRef<LuaState>, LuaError> {
-    // C: lua_State *co = lua_tothread(L, 1);
+fn get_co(state: &mut LuaState) -> Result<GcRef<lua_types::value::LuaThread>, LuaError> {
     let co = state.to_thread(1);
-    // C: luaL_argexpected(L, co, 1, "thread");
     if co.is_none() {
-        return Err(LuaError::type_arg_error(1, b"thread", state.arg(1)));
+        let got = state.arg(1);
+        return Err(LuaError::type_arg_error(1, "thread", &got));
     }
     Ok(co.expect("checked above"))
 }
@@ -98,38 +89,10 @@ fn get_co(state: &mut LuaState) -> Result<GcRef<LuaState>, LuaError> {
 /// calling thread `state`.
 ///
 /// C: `static int auxstatus(lua_State *L, lua_State *co)`
-fn aux_status(state: &mut LuaState, co: &GcRef<LuaState>) -> i32 {
-    // C: if (L == co) return COS_RUN;
-    // TODO(port): coroutine stub — GcRef::ptr_eq (or equivalent) needed to compare
-    // two LuaState references; Phase B wire-up required.
-    if state.is_same_thread(co) {
-        return COS_RUN;
-    }
-    // C: switch (lua_status(co)) { ... }
-    // TODO(port): coroutine stub — thread_status() reads the LuaStatus field of
-    // the *other* thread; requires cross-thread access (Phase E).
-    match co.thread_status() {
-        // C: case LUA_YIELD: return COS_YIELD;
-        LuaStatus::Yield => COS_YIELD,
-        // C: case LUA_OK: { if (lua_getstack(co,0,&ar)) ... else ... }
-        LuaStatus::Ok => {
-            // C: lua_Debug ar; if (lua_getstack(co, 0, &ar)) return COS_NORM;
-            // TODO(port): coroutine stub — has_frames() probes co's call-stack
-            // depth to distinguish "running in another frame" from initial state;
-            // Phase E needed.
-            if co.has_frames() {
-                COS_NORM
-            // C: else if (lua_gettop(co) == 0) return COS_DEAD;
-            } else if co.get_top() == 0 {
-                COS_DEAD
-            } else {
-                // C: else return COS_YIELD; /* initial state */
-                COS_YIELD
-            }
-        }
-        // C: default: return COS_DEAD;
-        _ => COS_DEAD,
-    }
+fn aux_status(_state: &mut LuaState, _co: &GcRef<lua_types::value::LuaThread>) -> i32 {
+    // TODO(phase-b): needs lua_vm cross-thread access to status, has_frames,
+    // get_top, is_same_thread. Phase E wires real coroutines.
+    todo!("phase-b: coroutine aux_status")
 }
 
 /// Transfers `narg` arguments from `state` to `co`, resumes the coroutine,
@@ -139,7 +102,7 @@ fn aux_status(state: &mut LuaState, co: &GcRef<LuaState>) -> i32 {
 /// with the error object left on top of `state`'s stack.
 ///
 /// C: `static int auxresume(lua_State *L, lua_State *co, int narg)`
-fn aux_resume(state: &mut LuaState, _co: GcRef<LuaState>, _narg: i32) -> i32 {
+fn aux_resume(state: &mut LuaState, _co: GcRef<lua_types::value::LuaThread>, _narg: i32) -> i32 {
     // TODO(port): coroutine stub — the complete body requires all of:
     //
     //   1. if !lua_checkstack(co, narg) { push "too many arguments"; return -1; }
@@ -216,35 +179,11 @@ fn aux_wrap(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: int r = auxresume(L, co, lua_gettop(L));
     let narg = state.get_top();
     let r = aux_resume(state, co.clone(), narg);
+    let _ = co;
     if r < 0 {
-        // C: int stat = lua_status(co);
-        // TODO(port): coroutine stub — thread_status() reads the co thread's status.
-        let mut stat = co.thread_status();
-        // C: if (stat != LUA_OK && stat != LUA_YIELD) { close; xmove error }
-        if stat != LuaStatus::Ok && stat != LuaStatus::Yield {
-            // C: stat = lua_closethread(co, L);
-            // TODO(port): coroutine stub — close_thread runs co's to-be-closed
-            // variable finalizers and returns the resulting status; Phase E needed.
-            stat = co.close_thread(state);
-            // C: lua_assert(stat != LUA_OK);
-            debug_assert!(stat != LuaStatus::Ok);
-            // C: lua_xmove(co, L, 1);  /* move error message to the caller */
-            // TODO(port): coroutine stub — xmove between two live threads requires
-            // Phase E coroutine support.
-        }
-        // C: if (stat != LUA_ERRMEM && lua_type(L, -1) == LUA_TSTRING) { ... }
-        if stat != LuaStatus::ErrMem && matches!(state.type_at(-1), LuaType::String) {
-            // C: luaL_where(L, 1); lua_insert(L, -2); lua_concat(L, 2);
-            // TODO(port): where_error(1) pushes a "source:line:" location prefix;
-            // Phase B wire-up for where_error / concat needed.
-            state.where_error(1);
-            state.insert(-2);
-            state.concat(2)?;
-        }
-        // C: return lua_error(L);
-        Err(LuaError::from_value(state.pop()))
+        // TODO(phase-b): needs cross-thread status, close_thread, xmove.
+        todo!("phase-b: coroutine wrap error path")
     } else {
-        // C: return r;
         Ok(r as usize)
     }
 }
@@ -261,8 +200,7 @@ pub fn co_create(state: &mut LuaState) -> Result<usize, LuaError> {
     // TODO(port): coroutine stub — new_thread allocates a fresh LuaState coroutine
     // and pushes a Thread value for it; Phase E needed.
     let _nl = state.new_thread()?;
-    // C: lua_pushvalue(L, 1);  /* move function to top */
-    state.push_value(1);
+    state.push_value(1)?;
     // C: lua_xmove(L, NL, 1);  /* move function from L to NL */
     // TODO(port): coroutine stub — xmove transfers the function from L's stack to
     // NL's stack so it becomes the coroutine body; Phase E needed.
@@ -282,7 +220,7 @@ pub fn co_wrap(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: lua_pushcclosure(L, luaB_auxwrap, 1);
     // TODO(port): push_cclosure(aux_wrap, 1) creates a C closure with the thread
     // (currently on top of the stack) as upvalue 1; Phase B wire-up needed.
-    state.push_cclosure(aux_wrap, 1);
+    state.push_cclosure(aux_wrap, 1)?;
     Ok(1)
 }
 
@@ -312,7 +250,8 @@ pub fn co_status(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: lua_pushstring(L, statname[auxstatus(L, co)]);
     let idx = aux_status(state, &co) as usize;
     let name: &[u8] = STAT_NAMES[idx];
-    state.push(LuaValue::Str(state.intern_str(name)));
+    let interned = state.intern_str(name);
+    state.push(LuaValue::Str(interned));
     Ok(1)
 }
 
@@ -321,19 +260,13 @@ pub fn co_status(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 /// C: `static int luaB_yieldable(lua_State *L)`
 pub fn co_isyieldable(state: &mut LuaState) -> Result<usize, LuaError> {
-    // C: lua_State *co = lua_isnone(L, 1) ? L : getco(L);
     let is_yieldable = if matches!(state.type_at(1), LuaType::None) {
-        // Checking the calling thread itself.
-        // TODO(port): state.is_yieldable() reads the nCcalls non-yieldable counter;
-        // Phase B wire-up needed.
         state.is_yieldable()
     } else {
-        let co = get_co(state)?;
-        // TODO(port): coroutine stub — is_yieldable() on a different thread requires
-        // cross-thread field access (nCcalls.nny == 0); Phase E needed.
-        co.is_yieldable()
+        let _co = get_co(state)?;
+        // TODO(phase-b): needs cross-thread is_yieldable; Phase E.
+        todo!("phase-b: cross-thread is_yieldable")
     };
-    // C: lua_pushboolean(L, lua_isyieldable(co));
     state.push(LuaValue::Bool(is_yieldable));
     Ok(1)
 }
@@ -361,34 +294,14 @@ pub fn co_running(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 /// C: `static int luaB_close(lua_State *L)`
 pub fn co_close(state: &mut LuaState) -> Result<usize, LuaError> {
-    // C: lua_State *co = getco(L);
     let co = get_co(state)?;
-    // C: int status = auxstatus(L, co);
     let status = aux_status(state, &co);
     match status {
-        // C: case COS_DEAD: case COS_YIELD:
         s if s == COS_DEAD || s == COS_YIELD => {
-            // C: status = lua_closethread(co, L);
-            // TODO(port): coroutine stub — close_thread runs the coroutine's TBC
-            // finalizers and returns a LuaStatus; Phase E needed.
-            let close_status = co.close_thread(state);
-            if close_status == LuaStatus::Ok {
-                // C: lua_pushboolean(L, 1); return 1;
-                state.push(LuaValue::Bool(true));
-                Ok(1)
-            } else {
-                // C: lua_pushboolean(L, 0); lua_xmove(co, L, 1); return 2;
-                state.push(LuaValue::Bool(false));
-                // TODO(port): coroutine stub — xmove(co, L, 1) moves the error
-                // message from co's stack to L's stack; Phase E needed.
-                Ok(2)
-            }
+            // TODO(phase-b): needs cross-thread close_thread + xmove.
+            todo!("phase-b: coroutine close")
         }
         _ => {
-            // C: return luaL_error(L, "cannot close a %s coroutine", statname[status]);
-            // PORT NOTE: STAT_NAMES entries are ASCII Rust statics used only for
-            // error message construction, so a match to &str is used here instead of
-            // from_utf8 on &[u8] (which is banned for Lua data paths per PORTING.md).
             let name = match status {
                 COS_RUN => "running",
                 COS_NORM => "normal",

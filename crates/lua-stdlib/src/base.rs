@@ -9,7 +9,11 @@ use lua_types::{
     error::LuaError,
     value::LuaValue,
     LuaType,
+    LuaStatus,
+    arith::ArithOp,
+    gc::GcRef,
 };
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Module-level constants ────────────────────────────────────────────────────
 
@@ -57,13 +61,7 @@ enum GcOp {
 
 // ── LuaState forward declaration ─────────────────────────────────────────────
 
-// C: `lua_State *L` — the per-thread interpreter state.
-// In Rust this is `LuaState` defined in `lua-vm`; use `LuaState` throughout
-// and let Phase B wire up the import.
-// PORT NOTE: we declare the alias here so the function bodies type-check
-// locally; Phase B replaces this with `use lua_vm::state::LuaState`.
-// TODO(port): replace with `use lua_vm::state::LuaState` once lua-vm is compiled.
-struct LuaState;
+// LuaState is provided by crate::state_stub.
 
 // ── Type alias for standard Lua-callable functions ────────────────────────────
 
@@ -195,7 +193,7 @@ fn load_aux(state: &mut LuaState, status_ok: bool, envidx: i32) -> Result<usize,
         // C: if (envidx != 0) { lua_pushvalue(L, envidx); if (!lua_setupvalue(L, -2, 1)) lua_pop(L, 1); }
         if envidx != 0 {
             state.push_copy(envidx)?;
-            if !state.set_upvalue(-2, 1) {
+            if state.set_upvalue(-2, 1)?.is_none() {
                 state.pop_n(1);
             }
         }
@@ -229,7 +227,7 @@ pub(crate) fn print_fn(state: &mut LuaState) -> Result<usize, LuaError> {
             state.write_output(b"\t")?;
         }
         // C: lua_writestring(s, l);
-        let bytes = display_ref.as_bytes().to_vec();
+        let bytes = display_ref.clone();
         state.write_output(&bytes)?;
         // C: lua_pop(L, 1);  /* pop result from luaL_tolstring */
         state.pop_n(1);
@@ -335,7 +333,7 @@ pub(crate) fn tonumber_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// C: `static int luaB_error(lua_State *L)`
 pub(crate) fn error_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: int level = (int)luaL_optinteger(L, 2, 1);
-    let level = state.opt_arg_integer(2, 1) as i32;
+    let level = state.opt_arg_integer(2, 1)? as i32;
     // C: lua_settop(L, 1);
     state.set_top(1);
     // C: if (lua_type(L, 1) == LUA_TSTRING && level > 0)
@@ -512,7 +510,7 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
         GcOp::Step => {
             // C: int step = (int)luaL_optinteger(L, 2, 0); int res = lua_gc(L, o, step);
             // C: checkvalres(res); lua_pushboolean(L, res);
-            let step = state.opt_arg_integer(2, 0) as i32;
+            let step = state.opt_arg_integer(2, 0)? as i32;
             // TODO(port): gc_step is a stub in Phase A.
             let res = state.gc_step(step)?;
             if res == -1 {
@@ -525,7 +523,7 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
         GcOp::SetPause | GcOp::SetStepMul => {
             // C: int p = (int)luaL_optinteger(L, 2, 0); int previous = lua_gc(L, o, p);
             // C: checkvalres(previous); lua_pushinteger(L, previous);
-            let p = state.opt_arg_integer(2, 0) as i32;
+            let p = state.opt_arg_integer(2, 0)? as i32;
             // TODO(port): gc_set_param is a stub in Phase A.
             let previous = state.gc_set_param(op as i32, p)?;
             if previous == -1 {
@@ -536,22 +534,16 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
             }
         }
         GcOp::IsRunning => {
-            // C: int res = lua_gc(L, o); checkvalres(res); lua_pushboolean(L, res);
-            // TODO(port): gc_is_running is a stub in Phase A.
             let res = state.gc_is_running()?;
-            if res == -1 {
-                false
-            } else {
-                state.push(LuaValue::Bool(res != 0));
-                return Ok(1);
-            }
+            state.push(LuaValue::Bool(res));
+            return Ok(1);
         }
         GcOp::Gen => {
             // C: int minormul = luaL_optinteger(L, 2, 0);
             // C: int majormul = luaL_optinteger(L, 3, 0);
             // C: return pushmode(L, lua_gc(L, o, minormul, majormul));
-            let minormul = state.opt_arg_integer(2, 0) as i32;
-            let majormul = state.opt_arg_integer(3, 0) as i32;
+            let minormul = state.opt_arg_integer(2, 0)? as i32;
+            let majormul = state.opt_arg_integer(3, 0)? as i32;
             // TODO(port): gc_gen is a stub in Phase A.
             let oldmode = state.gc_gen(minormul, majormul)?;
             return push_mode(state, oldmode);
@@ -559,9 +551,9 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
         GcOp::Inc => {
             // C: int pause = ...; int stepmul = ...; int stepsize = ...;
             // C: return pushmode(L, lua_gc(L, o, pause, stepmul, stepsize));
-            let pause    = state.opt_arg_integer(2, 0) as i32;
-            let stepmul  = state.opt_arg_integer(3, 0) as i32;
-            let stepsize = state.opt_arg_integer(4, 0) as i32;
+            let pause    = state.opt_arg_integer(2, 0)? as i32;
+            let stepmul  = state.opt_arg_integer(3, 0)? as i32;
+            let stepsize = state.opt_arg_integer(4, 0)? as i32;
             // TODO(port): gc_inc is a stub in Phase A.
             let oldmode = state.gc_inc(pause, stepmul, stepsize)?;
             return push_mode(state, oldmode);
@@ -615,7 +607,7 @@ pub(crate) fn next_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: lua_settop(L, 2);  /* create a 2nd argument if there isn't one */
     state.set_top(2);
     // C: if (lua_next(L, 1)) return 2; else { lua_pushnil(L); return 1; }
-    if state.next(1)? {
+    if state.table_next(1)? {
         Ok(2)
     } else {
         state.push(LuaValue::Nil);
@@ -646,7 +638,7 @@ pub(crate) fn pairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: if (luaL_getmetafield(L, 1, "__pairs") == LUA_TNIL)
     if state.get_metafield(1, b"__pairs")? == LuaType::Nil {
         // C: lua_pushcfunction(L, luaB_next); lua_pushvalue(L, 1); lua_pushnil(L);
-        state.push(LuaValue::Function(LuaClosure::LightC(next_fn)));
+        state.push_c_function(next_fn)?;
         state.push_copy(1)?;
         state.push(LuaValue::Nil);
     } else {
@@ -691,7 +683,7 @@ pub(crate) fn ipairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: luaL_checkany(L, 1);
     state.check_arg_any(1)?;
     // C: lua_pushcfunction(L, ipairsaux); lua_pushvalue(L, 1); lua_pushinteger(L, 0);
-    state.push(LuaValue::Function(LuaClosure::LightC(ipairs_aux)));
+    state.push_c_function(ipairs_aux)?;
     state.push_copy(1)?;
     state.push(LuaValue::Int(0));
     Ok(3)
@@ -705,13 +697,9 @@ pub(crate) fn ipairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 pub(crate) fn loadfile_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: const char *fname = luaL_optstring(L, 1, NULL);
     // Clone to avoid borrow conflict with later state calls.
-    let fname: Option<Vec<u8>> = state
-        .opt_arg_string_bytes(1)
-        .map(|b| b.to_vec());
+    let fname: Option<Vec<u8>> = state.opt_arg_string_bytes(1).ok();
     // C: const char *mode = luaL_optstring(L, 2, NULL);
-    let mode: Option<Vec<u8>> = state
-        .opt_arg_string_bytes(2)
-        .map(|b| b.to_vec());
+    let mode: Option<Vec<u8>> = state.opt_arg_string_bytes(2).ok();
     // C: int env = (!lua_isnone(L, 3) ? 3 : 0);
     let env = if state.type_at(3) != LuaType::None { 3 } else { 0 };
     // C: int status = luaL_loadfilex(L, fname, mode);
@@ -782,24 +770,15 @@ pub(crate) fn load_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     let status_ok = if is_string {
         // C: const char *chunkname = luaL_optstring(L, 2, s);
         // C: status = luaL_loadbufferx(L, s, l, chunkname, mode);
-        let chunk: Vec<u8> = state
-            .to_lua_string_bytes(1)
-            .map(|b| b.to_vec())
-            .unwrap_or_default();
+        let chunk: Vec<u8> = state.to_lua_string_bytes(1).unwrap_or_default();
         let chunkname: Vec<u8> = state
             .opt_arg_string_bytes(2)
-            .map(|b| b.to_vec())
-            .unwrap_or_else(|| chunk.clone());
+            .unwrap_or_else(|_| chunk.clone());
         state.load_buffer_ex(&chunk, &chunkname, &mode)?
     } else {
-        // C: const char *chunkname = luaL_optstring(L, 2, "=(load)");
-        // C: luaL_checktype(L, 1, LUA_TFUNCTION);
-        // C: lua_settop(L, RESERVEDSLOT);
-        // C: status = lua_load(L, generic_reader, NULL, chunkname, mode);
         let chunkname: Vec<u8> = state
             .opt_arg_string_bytes(2)
-            .map(|b| b.to_vec())
-            .unwrap_or_else(|| b"=(load)".to_vec());
+            .unwrap_or_else(|_| b"=(load)".to_vec());
         state.check_arg_type(1, LuaType::Function)?;
         state.set_top(RESERVED_SLOT);
         // TODO(port): generic_reader cannot be passed directly due to self-referential
@@ -822,9 +801,7 @@ fn dofile_cont(state: &mut LuaState) -> Result<usize, LuaError> {
 
 pub(crate) fn dofile_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: const char *fname = luaL_optstring(L, 1, NULL);
-    let fname: Option<Vec<u8>> = state
-        .opt_arg_string_bytes(1)
-        .map(|b| b.to_vec());
+    let fname: Option<Vec<u8>> = state.opt_arg_string_bytes(1).ok();
     // C: lua_settop(L, 1);
     state.set_top(1);
     // C: if (l_unlikely(luaL_loadfile(L, fname) != LUA_OK)) return lua_error(L);

@@ -24,51 +24,14 @@
 use lua_types::{
     error::LuaError,
     value::LuaValue,
+    gc::GcRef,
+    string::LuaString,
+    userdata::LuaUserData,
     LuaType,
+    LuaStatus,
+    arith::ArithOp,
 };
-
-// ── Phase-A stubs ─────────────────────────────────────────────────────────────
-// These forward-declarations let the bodies below reference the cross-crate
-// types without Phase-A compilation barriers. Phase B replaces them with real
-// `use` paths.
-
-/// Per-thread Lua interpreter state.
-/// C: `lua_State *` — in Rust a method receiver `&mut LuaState`.
-// TODO(port): replace with `use lua_vm::state::LuaState` in Phase B.
-struct LuaState;
-
-/// Intrusive reference-counted GC handle. Phase A: alias for `Rc<T>`.
-// TODO(port): replace with real GcRef from lua-gc in Phase D.
-struct GcRef<T>(std::marker::PhantomData<T>);
-
-/// Interned or heap-allocated Lua byte-string. Never `String` or `&str`.
-// TODO(port): import from lua-vm::string.
-struct LuaString;
-
-/// Full userdata object.
-// TODO(port): import from lua-vm::object.
-struct LuaUserData;
-
-/// Debug introspection record produced by `lua_getinfo`.
-/// C: `lua_Debug` — Phase E completes this.
-// TODO(port): import from lua-vm::debug.
-#[allow(dead_code)]
-struct LuaDebug {
-    /// C: `ar->name` — name of the active function (may be NULL → None).
-    pub name: Option<Vec<u8>>,
-    /// C: `ar->namewhat` — how the name was found ("local", "global", "method", …).
-    pub namewhat: Vec<u8>,
-    /// C: `ar->what` — function type: b'L' Lua, b'C' C, b'm' main chunk.
-    pub what: u8,
-    /// C: `ar->short_src` — truncated source string for messages.
-    pub short_src: Vec<u8>,
-    /// C: `ar->linedefined` — first line of the function definition.
-    pub linedefined: i32,
-    /// C: `ar->currentline` — current line being executed (−1 if unavailable).
-    pub currentline: i32,
-    /// C: `ar->istailcall` — whether this frame was a tail-call.
-    pub istailcall: bool,
-}
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -678,7 +641,7 @@ pub fn check_type(state: &mut LuaState, arg: i32, t: LuaType) -> Result<(), LuaE
 pub fn check_any(state: &mut LuaState, arg: i32) -> Result<(), LuaError> {
     // C: if (l_unlikely(lua_type(L, arg) == LUA_TNONE))
     if state.type_at(arg) == LuaType::None {
-        return Err(LuaError::arg_error(arg, b"value expected"));
+        return Err(LuaError::arg_error(arg, "value expected"));
     }
     Ok(())
 }
@@ -1481,19 +1444,6 @@ use std::fmt::Write as _;
 
 // ── LuaDebug Default ─────────────────────────────────────────────────────────
 
-impl Default for LuaDebug {
-    fn default() -> Self {
-        LuaDebug {
-            name: None,
-            namewhat: Vec::new(),
-            what: b'C',
-            short_src: Vec::new(),
-            linedefined: -1,
-            currentline: -1,
-            istailcall: false,
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

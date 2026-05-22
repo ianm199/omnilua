@@ -12,7 +12,8 @@
 
 // PORT NOTE: All imports below will be unresolved until Phase B lands the
 // lua-types crate. Expected Phase-A errors: E0432, E0412, E0433, E0425.
-use lua_types::{LuaError, LuaState, LuaType, LuaValue};
+use lua_types::{LuaError, LuaType, LuaValue};
+use crate::state_stub::{LuaState, lua_CFunction as LuaCFn, upvalue_index, CompareOp, LuaDebug};
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -181,10 +182,7 @@ fn push_num_int(state: &mut LuaState, d: f64) {
 fn math_abs(state: &mut LuaState) -> Result<usize, LuaError> {
     // C: if (lua_isinteger(L, 1))
     if matches!(state.value_at(1), LuaValue::Int(_)) {
-        // C: lua_Integer n = lua_tointeger(L, 1);
-        let n = state.to_integer(1);
-        // C: if (n < 0) n = (lua_Integer)(0u - (lua_Unsigned)n);
-        // Wrapping negation avoids UB on i64::MIN (same as C cast trick).
+        let n = state.to_integer(1).unwrap_or(0);
         let n = if n < 0 {
             (0u64.wrapping_sub(n as u64)) as i64
         } else {
@@ -316,16 +314,12 @@ fn math_fmod(state: &mut LuaState) -> Result<usize, LuaError> {
     if matches!(state.value_at(1), LuaValue::Int(_))
         && matches!(state.value_at(2), LuaValue::Int(_))
     {
-        let a = state.to_integer(1);
-        let d = state.to_integer(2);
-        // C: if ((lua_Unsigned)d + 1u <= 1u)  /* special cases: -1 or 0 */
-        // (d as u64).wrapping_add(1) catches d==0 (→1) and d==-1 (→0).
+        let a = state.to_integer(1).unwrap_or(0);
+        let d = state.to_integer(2).unwrap_or(0);
         if (d as u64).wrapping_add(1) <= 1 {
-            // C: luaL_argcheck(L, d != 0, 2, "zero");
             if d == 0 {
-                return Err(LuaError::arg_error(2, b"zero"));
+                return Err(LuaError::arg_error(2, "zero"));
             }
-            // C: lua_pushinteger(L, 0);  /* avoid overflow with 0x80000... / -1 */
             state.push(LuaValue::Int(0));
         } else {
             state.push(LuaValue::Int(a % d));
@@ -447,11 +441,9 @@ fn math_min(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut imin: i32 = 1;
     // C: luaL_argcheck(L, n >= 1, 1, "value expected");
     if n < 1 {
-        return Err(LuaError::arg_error(1, b"value expected"));
+        return Err(LuaError::arg_error(1, "value expected"));
     }
-    // C: for (i = 2; i <= n; i++) { if (lua_compare(L, i, imin, LUA_OPLT)) imin = i; }
     for i in 2..=n {
-        // C: lua_compare(L, i, imin, LUA_OPLT) — less-than with metamethods
         if state.compare_lt(i, imin)? {
             imin = i;
         }
@@ -470,7 +462,7 @@ fn math_max(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut imax: i32 = 1;
     // C: luaL_argcheck(L, n >= 1, 1, "value expected");
     if n < 1 {
-        return Err(LuaError::arg_error(1, b"value expected"));
+        return Err(LuaError::arg_error(1, "value expected"));
     }
     // C: for (i = 2; i <= n; i++) { if (lua_compare(L, imax, i, LUA_OPLT)) imax = i; }
     for i in 2..=n {
@@ -558,7 +550,7 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
 
     // C: luaL_argcheck(L, low <= up, 1, "interval is empty");
     if low > up {
-        return Err(LuaError::arg_error(1, b"interval is empty"));
+        return Err(LuaError::arg_error(1, "interval is empty"));
     }
 
     // C: p = project(I2UInt(rv), (lua_Unsigned)up - (lua_Unsigned)low, state);

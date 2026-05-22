@@ -11,7 +11,8 @@
 
 use std::io::{self, BufRead, Write};
 
-use lua_types::{DebugInfo, GcRef, LuaError, LuaState, LuaString, LuaType, LuaValue};
+use lua_types::{GcRef, LuaError, LuaString, LuaType, LuaValue, LuaStatus};
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug as DebugInfo};
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -190,7 +191,8 @@ pub(crate) fn set_metatable(state: &mut LuaState) -> Result<usize, LuaError> {
     let t = state.type_at(2);
     // C: luaL_argexpected(L, t == LUA_TNIL || t == LUA_TTABLE, 2, "nil or table");
     if !(t == LuaType::Nil || t == LuaType::Table) {
-        return Err(LuaError::type_arg_error(2, b"nil or table", state.arg(2)));
+        let got = state.arg(2);
+        return Err(LuaError::type_arg_error(2, "nil or table", &got));
     }
     // C: lua_settop(L, 2); lua_setmetatable(L, 1); return 1;
     state.set_top(2);

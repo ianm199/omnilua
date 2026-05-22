@@ -20,8 +20,10 @@
 use std::env;
 
 use lua_types::{
-    GcRef, LuaClosure, LuaError, LuaState, LuaString, LuaTable, LuaType, LuaValue, StackIdx,
+    GcRef, LuaClosure, LuaError, LuaString, LuaType, LuaValue, StackIdx, LuaStatus,
 };
+use lua_types::value::LuaTable;
+use crate::state_stub::{LuaState, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ── Module-level constants ────────────────────────────────────────────────────
 

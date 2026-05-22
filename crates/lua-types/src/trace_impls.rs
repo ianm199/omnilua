@@ -14,7 +14,9 @@ use crate::value::{LuaValue, LuaTable};
 use crate::upval::{UpVal, UpValState};
 use crate::string::LuaString;
 use crate::proto::LuaProto;
-use crate::closure::{LuaClosure, LuaLClosure};
+use crate::closure::{LuaClosure, LuaLClosure, LuaCClosure};
+use crate::userdata::LuaUserData;
+use crate::value::LuaThread;
 
 /// Cycle-breaking forwarder for the Phase A-D-0 `GcRef<T>` (an `Rc<T>`
 /// newtype). Real `Gc<T>` defers tracing through the gray queue, which is
@@ -23,7 +25,7 @@ use crate::closure::{LuaClosure, LuaLClosure};
 /// graphs (the global table is reachable from itself via `_G._G == _G`).
 /// Every `gc_ref.trace(m)` site dispatches through this impl, so registering
 /// the pointer identity once per collection suffices to break the loop.
-impl<T: Trace + ?Sized> Trace for GcRef<T> {
+impl<T: Trace + 'static> Trace for GcRef<T> {
     fn trace(&self, m: &mut Marker) {
         if m.try_visit(self.identity()) {
             (**self).trace(m);
@@ -138,12 +140,35 @@ impl Trace for LuaClosure {
     fn trace(&self, m: &mut Marker) {
         match self {
             LuaClosure::Lua(l) => l.trace(m),
-            LuaClosure::C(c) => {
-                for v in c.upvalues.iter() {
-                    v.trace(m);
-                }
-            }
+            LuaClosure::C(c) => c.trace(m),
             LuaClosure::LightC(_) => {}
         }
     }
+}
+
+/// LuaCClosure — Rust-side C closure carrying captured upvalues.
+impl Trace for LuaCClosure {
+    fn trace(&self, m: &mut Marker) {
+        for v in self.upvalues.iter() {
+            v.trace(m);
+        }
+    }
+}
+
+/// LuaUserData — boxed payload + optional metatable + user values.
+impl Trace for LuaUserData {
+    fn trace(&self, m: &mut Marker) {
+        if let Some(mt) = self.metatable() {
+            mt.trace(m);
+        }
+        for v in self.uv.iter() {
+            v.trace(m);
+        }
+    }
+}
+
+/// LuaThread — placeholder unit type in lua-types; the real LuaState lives
+/// in lua-vm. No GC-bearing fields here.
+impl Trace for LuaThread {
+    fn trace(&self, _m: &mut Marker) {}
 }

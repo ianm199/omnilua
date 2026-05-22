@@ -4432,8 +4432,8 @@ pub fn parse(
         h: None,
         long_str_anchor: std::collections::HashMap::new(),
         dyd: None,
-        source: source_str.0.clone(),
-        envn: envn_str.0.clone(),
+        source: source_str.clone(),
+        envn: envn_str.clone(),
     };
 
     let mut lexstate = LexState {
@@ -4445,7 +4445,7 @@ pub fn parse(
         fs: None,
         dyd,
         source: Some(source_str.clone()),
-        envn: Some(GcRef(lex_ls.envn.clone())),
+        envn: Some(lex_ls.envn.clone()),
         lex: lex_ls,
     };
     // C: luaX_setinput is the only setup the C parser performs before
@@ -4488,7 +4488,7 @@ fn local_token_value(v: &lua_lex::TokenValue) -> TokenValue {
         lua_lex::TokenValue::None => TokenValue::default(),
         lua_lex::TokenValue::Float(r) => TokenValue { r: *r, i: 0, ts: None },
         lua_lex::TokenValue::Int(i) => TokenValue { r: 0.0, i: *i, ts: None },
-        lua_lex::TokenValue::Str(s) => TokenValue { r: 0.0, i: 0, ts: Some(GcRef(s.clone())) },
+        lua_lex::TokenValue::Str(s) => TokenValue { r: 0.0, i: 0, ts: Some(s.clone()) },
     }
 }
 

@@ -18,6 +18,38 @@
 
 use lua_gc::{Marker, Trace};
 use crate::state::{LuaState, GlobalState};
+use crate::string::{LuaStringImpl, LuaUserDataImpl};
+use crate::table::LuaTable as VmLuaTable;
+
+/// Phase-B internal richer LuaString. The byte buffer is a Rust `Rc<[u8]>`
+/// (not GC-managed); no fields to mark.
+impl Trace for LuaStringImpl {
+    fn trace(&self, _m: &mut Marker) {}
+}
+
+/// Phase-B internal userdata. Both `metatable` and `uv` are currently
+/// `Option<()>` / `Vec<()>` stubs — no GC edges to walk yet. Becomes
+/// real when userdata machinery lands post-D-1.
+impl Trace for LuaUserDataImpl {
+    fn trace(&self, _m: &mut Marker) {}
+}
+
+/// Phase-B internal LuaTable (separate from lua-types::LuaTable
+/// placeholder).
+impl Trace for VmLuaTable {
+    fn trace(&self, m: &mut Marker) {
+        for slot in self.array.iter() {
+            slot.trace(m);
+        }
+        for entry in self.node.iter() {
+            entry.key.trace(m);
+            entry.value.trace(m);
+        }
+        if let Some(mt) = self.metatable.as_ref() {
+            mt.trace(m);
+        }
+    }
+}
 
 impl Trace for LuaState {
     fn trace(&self, m: &mut Marker) {

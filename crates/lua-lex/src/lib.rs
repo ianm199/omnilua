@@ -28,7 +28,7 @@ use std::io::Write as IoWrite;
 
 // PORT NOTE: GcRef<T> = Rc<T> in Phases A–C; replaced by real GC pointer in Phase D.
 // TODO(port): move GcRef to lua-types once the GC crate is defined (Phase D).
-type GcRef<T> = Rc<T>;
+use lua_types::gc::GcRef;
 
 // Canonical cross-crate types: imported from owner crates per
 // harness/type-vocabulary.tsv.  See PORTING.md §7.
@@ -1939,7 +1939,7 @@ fn intern_str_stub(
     state: &mut LuaState,
     bytes: &[u8],
 ) -> Result<GcRef<LuaString>, LuaError> {
-    Ok(state.intern_str(bytes)?.0)
+    state.intern_str(bytes)
 }
 
 /// Result of converting a byte string to a Lua number.

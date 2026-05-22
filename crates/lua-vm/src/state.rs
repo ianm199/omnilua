@@ -2093,7 +2093,7 @@ impl<'a> GcHandle<'a> {
     }
 
     /// Phase-B stub for `luaC_fix(L, o)` — pin an object so GC won't collect it.
-    pub fn fix_object<T: ?Sized>(&self, _o: &GcRef<T>) { /* phase-b no-op */ }
+    pub fn fix_object<T: lua_gc::Trace + 'static>(&self, _o: &GcRef<T>) { /* phase-b no-op */ }
 
     /// Free all collectable objects (called during state teardown).
     ///

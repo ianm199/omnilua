@@ -1,90 +1,129 @@
-//! `GcRef<T>` — a reference-counted GC handle. Phase A-C aliases to `Rc<T>`
-//! plus a few convenience methods. Phase D's `Gc<T>` lives in `lua-gc`.
+//! `GcRef<T>` — the GC-managed reference handle.
+//!
+//! Phase A/B/C: thin newtype around `Rc<T>`.
+//! Phase D-1e (current): newtype around `lua_gc::Gc<T>` — Copy under the hood,
+//! tracks allocation in the active `Heap` (via `lua_gc::current_heap()`).
+//!
+//! Surface kept stable across the swap: `new`, `ptr_eq`, `identity`,
+//! `strong_count`, `weak_count`, `downgrade`. Existing code touching
+//! `gc.0` continues to work — `.0` is now `Gc<T>` instead of `Rc<T>`.
+//!
+//! # Weak refs (D-1)
+//!
+//! `GcWeak<T>` is currently a no-op wrapper: `upgrade` always returns
+//! `Some`, `strong_count` always returns `1`. Real weak semantics arrive
+//! in D-2 when the heap learns to mark weak refs separately. For D-1, weak
+//! tables ARE a known semantic gap (see PHASE_D_PLAN.md "Locked Decisions").
 
-use std::rc::Rc;
+use lua_gc::{Gc, Marker, Trace};
 
-/// A reference-counted pointer to a Lua collectable object. Wrapper around
-/// `Rc<T>` for now; Phase D will give this real GC semantics.
+/// A GC-managed pointer to a Lua collectable object. Newtype over
+/// `lua_gc::Gc<T>` so callers preserve `gc.0`-shape access while the
+/// backend swaps under them.
 #[derive(Debug)]
-pub struct GcRef<T: ?Sized>(pub Rc<T>);
+pub struct GcRef<T: Trace + 'static>(pub Gc<T>);
 
-impl<T> GcRef<T> {
-    pub fn new(value: T) -> Self { GcRef(Rc::new(value)) }
-}
-
-impl<T: ?Sized> GcRef<T> {
-    pub fn ptr_eq(a: &Self, b: &Self) -> bool { Rc::ptr_eq(&a.0, &b.0) }
-    pub fn identity(&self) -> usize { Rc::as_ptr(&self.0) as *const () as usize }
-
-    // ── Phase D-1b: encapsulated Rc surface ────────────────────────────────
-    // The backend is `Rc<T>` today. When D-1e flips `GcRef<T> = lua_gc::Gc<T>`,
-    // these wrappers map to the new ops (Gc has its own counts/weak refs by
-    // then). Callers must NOT touch `.0` directly — that's reserved for
-    // the gc.rs internals.
-
-    pub fn strong_count(&self) -> usize { Rc::strong_count(&self.0) }
-    pub fn weak_count(&self) -> usize { Rc::weak_count(&self.0) }
-    pub fn downgrade(&self) -> GcWeak<T> { GcWeak(Rc::downgrade(&self.0)) }
-}
-
-/// A weak handle to a `GcRef<T>`. Phase A/B/C/D-0 wraps `std::rc::Weak`; at
-/// D-2 this becomes a real GC weak reference. The trait surface stays the
-/// same so callers never see the backend change.
-#[derive(Debug)]
-pub struct GcWeak<T: ?Sized>(pub std::rc::Weak<T>);
-
-impl<T: ?Sized> GcWeak<T> {
-    /// Promote back to a strong reference, or `None` if the underlying
-    /// object has been collected.
-    pub fn upgrade(&self) -> Option<GcRef<T>> {
-        self.0.upgrade().map(GcRef)
+impl<T: Trace + 'static> GcRef<T> {
+    /// Allocate a new GC-tracked value. If a `HeapGuard` is active (set by
+    /// `state.run()` / `pcall_k`), the new allocation joins that heap's
+    /// allgc chain. Otherwise it allocates "uncollected" — leaks until
+    /// process exit, same as the old `Rc::new` behavior.
+    pub fn new(value: T) -> Self {
+        let gc = match lua_gc::current_heap() {
+            Some(heap) => heap.allocate(value),
+            None => Gc::new_uncollected(value),
+        };
+        GcRef(gc)
     }
 
-    /// Number of strong references to the underlying object. Returns 0
-    /// once the object has been collected.
-    pub fn strong_count(&self) -> usize {
-        std::rc::Weak::strong_count(&self.0)
-    }
-}
-
-impl<T: ?Sized> Clone for GcWeak<T> {
-    fn clone(&self) -> Self { GcWeak(self.0.clone()) }
-}
-
-impl<T: ?Sized + lua_gc::Trace> GcRef<T> {
-    /// Cycle-aware trace dispatch for the Phase A/B/C/D-0 window.
+    /// Cycle-aware trace dispatch.
     ///
-    /// `GcRef<T>` is an `Rc<T>` during this window, so calling `trace`
-    /// dispatches directly through `Deref` to the underlying value's
-    /// own `trace` method — there is no gray queue and no color flag.
-    /// Without protection, object graphs containing cycles (such as
-    /// `_G._G == _G`) recurse until the OS stack overflows. This helper
-    /// records the underlying allocation's identity in `Marker` and
-    /// skips the recursive call when the same object is encountered
-    /// again in the same cycle. Phase D's real GC subsumes this via
-    /// `Color::Gray`; the visited set then becomes redundant.
-    pub fn trace_obj(&self, m: &mut lua_gc::Marker) {
+    /// During D-0/D-1 (before a real Color::Gray flag is reachable from
+    /// inside Trace impls), `Marker::try_visit` records the underlying
+    /// allocation's identity and short-circuits a second recursion. Once
+    /// D-2 ships the in-header color flag, this helper collapses to
+    /// `m.mark(self.0)`.
+    pub fn trace_obj(&self, m: &mut Marker) {
         if m.try_visit(self.identity()) {
             (**self).trace(m);
         }
     }
 }
 
-impl<T: ?Sized> Clone for GcRef<T> {
-    fn clone(&self) -> Self { GcRef(self.0.clone()) }
+impl<T: Trace + 'static> GcRef<T> {
+    /// Two `GcRef`s are identity-equal iff they point at the same box.
+    pub fn ptr_eq(a: &Self, b: &Self) -> bool {
+        Gc::ptr_eq(a.0, b.0)
+    }
+
+    /// Identity as a usize — used as a HashMap key for "same object" tests.
+    pub fn identity(&self) -> usize {
+        self.0.identity()
+    }
+
+    /// Number of strong references. Phase D-1: always returns 1 (no
+    /// refcount semantics). Real value once weak refs land in D-2.
+    pub fn strong_count(&self) -> usize {
+        1
+    }
+
+    /// Number of weak references. Phase D-1: always returns 0.
+    pub fn weak_count(&self) -> usize {
+        0
+    }
+
+    /// Get a weak handle. Phase D-1: GcWeak is a thin wrapper that always
+    /// upgrades; real weak semantics arrive in D-2.
+    pub fn downgrade(&self) -> GcWeak<T> {
+        GcWeak(self.0)
+    }
 }
 
-impl<T: ?Sized> std::ops::Deref for GcRef<T> {
+/// A weak handle to a `GcRef<T>`. Phase D-1 placeholder; D-2 will give
+/// this real semantics (None once the referent is swept).
+#[derive(Debug)]
+pub struct GcWeak<T: Trace + 'static>(pub Gc<T>);
+
+impl<T: Trace + 'static> GcWeak<T> {
+    /// Try to promote to a strong reference. Phase D-1: always Some
+    /// (weak semantics are not yet implemented).
+    pub fn upgrade(&self) -> Option<GcRef<T>> {
+        Some(GcRef(self.0))
+    }
+
+    /// Strong reference count of the target. Phase D-1: always 1.
+    pub fn strong_count(&self) -> usize {
+        1
+    }
+}
+
+impl<T: Trace + 'static> Clone for GcWeak<T> {
+    fn clone(&self) -> Self {
+        GcWeak(self.0)
+    }
+}
+
+impl<T: Trace + 'static> Clone for GcRef<T> {
+    fn clone(&self) -> Self {
+        GcRef(self.0)
+    }
+}
+
+impl<T: Trace + 'static> std::ops::Deref for GcRef<T> {
     type Target = T;
-    fn deref(&self) -> &T { &self.0 }
+    fn deref(&self) -> &T {
+        &*self.0
+    }
 }
 
-impl<T: ?Sized> AsRef<T> for GcRef<T> {
-    fn as_ref(&self) -> &T { &self.0 }
+impl<T: Trace + 'static> AsRef<T> for GcRef<T> {
+    fn as_ref(&self) -> &T {
+        &*self.0
+    }
 }
 
-impl<T: PartialEq + ?Sized> PartialEq for GcRef<T> {
+impl<T: PartialEq + Trace + 'static> PartialEq for GcRef<T> {
     fn eq(&self, other: &Self) -> bool {
-        GcRef::ptr_eq(&self, &other) || **self == **other
+        Gc::ptr_eq(self.0, other.0) || **self == **other
     }
 }

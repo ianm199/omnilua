@@ -1,1 +1,1 @@
-Syntax: internal: cg_exp_to_next_reg cannot discharge Local (load_string status=1)
+cg_posfix_fold non-foldable binop Add (Local Local)

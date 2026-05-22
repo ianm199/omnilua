@@ -607,17 +607,59 @@ fn reserve_reg(fs: &mut FuncState) -> u8 {
     r
 }
 
+/// Free `reg` if it sits above the active-local watermark.
+///
+/// Mirrors C's `freereg` from `lcode.c`: registers below `nactvar` belong to
+/// declared locals and must not be popped; temporaries above that watermark
+/// are freed by decrementing `fs.freereg`.
+fn cg_free_reg(fs: &mut FuncState, reg: i32) {
+    if reg >= fs.nactvar as i32 {
+        debug_assert_eq!(reg, fs.freereg as i32 - 1);
+        fs.freereg = fs.freereg.saturating_sub(1);
+    }
+}
+
+/// Free the temporary register held by `e` if any.
+///
+/// Mirrors C's `freeexp` from `lcode.c`: only `VNONRELOC` carries a concrete
+/// register that may need releasing.
+fn cg_free_exp(fs: &mut FuncState, e: &ExprDesc) {
+    if e.k == ExprKind::NonReloc {
+        cg_free_reg(fs, e.u.info);
+    }
+}
+
+/// Free temporary registers held by `e1` and `e2`, releasing the higher
+/// register first so the LIFO invariant on `fs.freereg` holds.
+///
+/// Mirrors C's `freeexps` from `lcode.c`.
+fn cg_free_exps(fs: &mut FuncState, e1: &ExprDesc, e2: &ExprDesc) {
+    let r1 = if e1.k == ExprKind::NonReloc { e1.u.info } else { -1 };
+    let r2 = if e2.k == ExprKind::NonReloc { e2.u.info } else { -1 };
+    if r1 > r2 {
+        cg_free_reg(fs, r1);
+        cg_free_reg(fs, r2);
+    } else {
+        cg_free_reg(fs, r2);
+        cg_free_reg(fs, r1);
+    }
+}
+
 /// Constant-folding `luaK_posfix` for arithmetic binary operators where both
 /// operands are already numeric literals (`KInt` / `KFlt`). Mirrors the
 /// `constfolding` branch in C's `luaK_posfix`: when both operands are
 /// numerals, the result is computed at compile time and stored back into
-/// `e1`. Non-foldable cases (variables, calls, comparisons, concat, logical
-/// ops) hit `todo!()` so they surface as the next iteration's blocker.
+/// `e1`. Non-foldable arithmetic / bitwise binops fall through to the
+/// two-register emit path (`OP_ADD` ... `OP_SHR`) plus an `OP_MMBIN`
+/// metamethod-dispatch instruction. Concat, logical, and comparison
+/// operators still hit `todo!()` so they surface as later iterations'
+/// blockers.
 fn cg_posfix_fold(
+    fs: &mut FuncState,
     op: BinOpr,
     e1: &mut ExprDesc,
     e2: &mut ExprDesc,
-    _line: i32,
+    line: i32,
 ) -> Result<(), LuaError> {
     let promote = |k: ExprKind, u: &ExprPayload| -> Option<f64> {
         match k {
@@ -664,7 +706,62 @@ fn cg_posfix_fold(
             }
         }
     }
-    todo!("phase-b: cg_posfix_fold non-foldable binop {:?} ({:?} {:?})", op, e1.k, e2.k)
+
+    let (opcode, event) = match op {
+        BinOpr::Add  => (lua_code::opcodes::OpCode::Add,  lua_types::tagmethod::TagMethod::Add),
+        BinOpr::Sub  => (lua_code::opcodes::OpCode::Sub,  lua_types::tagmethod::TagMethod::Sub),
+        BinOpr::Mul  => (lua_code::opcodes::OpCode::Mul,  lua_types::tagmethod::TagMethod::Mul),
+        BinOpr::Mod  => (lua_code::opcodes::OpCode::Mod,  lua_types::tagmethod::TagMethod::Mod),
+        BinOpr::Pow  => (lua_code::opcodes::OpCode::Pow,  lua_types::tagmethod::TagMethod::Pow),
+        BinOpr::Div  => (lua_code::opcodes::OpCode::Div,  lua_types::tagmethod::TagMethod::Div),
+        BinOpr::IDiv => (lua_code::opcodes::OpCode::IDiv, lua_types::tagmethod::TagMethod::Idiv),
+        BinOpr::BAnd => (lua_code::opcodes::OpCode::BAnd, lua_types::tagmethod::TagMethod::Band),
+        BinOpr::BOr  => (lua_code::opcodes::OpCode::BOr,  lua_types::tagmethod::TagMethod::Bor),
+        BinOpr::BXor => (lua_code::opcodes::OpCode::BXor, lua_types::tagmethod::TagMethod::Bxor),
+        BinOpr::Shl  => (lua_code::opcodes::OpCode::Shl,  lua_types::tagmethod::TagMethod::Shl),
+        BinOpr::Shr  => (lua_code::opcodes::OpCode::Shr,  lua_types::tagmethod::TagMethod::Shr),
+        _ => todo!(
+            "phase-b: cg_posfix_fold non-foldable binop {:?} ({:?} {:?})",
+            op, e1.k, e2.k
+        ),
+    };
+
+    cg_discharge_vars(fs, line, e1)?;
+    cg_discharge_vars(fs, line, e2)?;
+    let v2 = cg_exp_to_any_reg(fs, line, e2)?;
+    let v1 = cg_exp_to_any_reg(fs, line, e1)?;
+
+    let inst = lua_code::opcodes::Instruction::abck(opcode, 0, v1 as u32, v2 as u32, 0);
+    let pc = emit_inst(fs, line, inst);
+    cg_free_exps(fs, e1, e2);
+    e1.u.info = pc;
+    e1.k = ExprKind::Reloc;
+
+    let mm_inst = lua_code::opcodes::Instruction::abck(
+        lua_code::opcodes::OpCode::MmBin,
+        v1 as u32,
+        v2 as u32,
+        event as u32,
+        0,
+    );
+    emit_inst(fs, line, mm_inst);
+    Ok(())
+}
+
+/// Minimal `luaK_exp2anyreg`: ensure `e` ends up in *some* register. If `e`
+/// is already `VNONRELOC` and its register is at or above `nactvar`, keep it
+/// there; otherwise discharge to the next free register.
+fn cg_exp_to_any_reg(
+    fs: &mut FuncState,
+    line: i32,
+    e: &mut ExprDesc,
+) -> Result<u8, LuaError> {
+    cg_discharge_vars(fs, line, e)?;
+    if e.k == ExprKind::NonReloc {
+        return Ok(e.u.info as u8);
+    }
+    cg_exp_to_next_reg(fs, line, e)?;
+    Ok(e.u.info as u8)
 }
 
 /// Minimal `luaK_dischargevars` covering the cases the parser bootstrap can
@@ -2339,7 +2436,7 @@ fn subexpr(
         // TODO(port): lua_code::infix(ls.fs.as_mut().unwrap(), op, v)?;
         let nextop = subexpr(ls, state, &mut v2, PRIORITY[op as usize].1 as i32)?;
         // C: luaK_posfix(ls->fs, op, v, &v2, line)
-        cg_posfix_fold(op, v, &mut v2, line)?;
+        cg_posfix_fold(ls.fs.as_mut().unwrap(), op, v, &mut v2, line)?;
         op = nextop;
     }
 

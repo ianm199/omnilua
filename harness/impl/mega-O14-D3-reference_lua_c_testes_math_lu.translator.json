@@ -1,0 +1,158 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": 429,
+  "duration_ms": 1285475,
+  "duration_api_ms": 1282504,
+  "num_turns": 152,
+  "result": "You've hit your org's monthly usage limit",
+  "stop_reason": "stop_sequence",
+  "session_id": "c4c24a2d-195d-4cf7-b91c-8bf7be9ba9e6",
+  "total_cost_usd": 13.552095499999997,
+  "usage": {
+    "input_tokens": 156,
+    "cache_creation_input_tokens": 213822,
+    "cache_read_input_tokens": 20299068,
+    "output_tokens": 82552,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 213822,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 673,
+        "cache_read_input_tokens": 231254,
+        "cache_creation_input_tokens": 1467,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1467
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1504,
+      "outputTokens": 18,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001594,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 156,
+      "outputTokens": 82552,
+      "cacheReadInputTokens": 20299068,
+      "cacheCreationInputTokens": 213822,
+      "webSearchRequests": 0,
+      "costUSD": 13.550501499999996,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01SCBpbVJhdcVQe6C7fpVD6P",
+      "tool_input": {
+        "command": "target/debug/lua-rs \"$(cat reference/lua-c/testes/math.lua | head -230)\" 2>&1 | tail -20",
+        "description": "Run truncated math.lua to line 230"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01CPVA11XDg8J9PFy7H7zc1i",
+      "tool_input": {
+        "command": "head -230 reference/lua-c/testes/math.lua > /tmp/math_truncated.lua && target/debug/lua-rs \"$(< /tmp/math_truncated.lua)\" 2>&1 | tail -10",
+        "description": "Run truncated math.lua"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_014xpcMMFs5gkHWLErconj1Q",
+      "tool_input": {
+        "command": "awk 'NR>=1 && NR<=230' reference/lua-c/testes/math.lua > /tmp/repro.lua && wc -l /tmp/repro.lua",
+        "description": "Create truncated repro"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_015G1nEuLvw3n1FSxDxseiSp",
+      "tool_input": {
+        "command": "SRC=\"$(< /tmp/repro_math.lua)\" && target/debug/lua-rs \"$SRC\" 2>&1 | tail -20",
+        "description": "Run minimal repro"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01MrJbsrF1gEcgb9yPCPvtTa",
+      "tool_input": {
+        "command": "target/debug/lua-rs \"$(cat /tmp/repro_math.lua)\" 2>&1 | tail -25",
+        "description": "Run minimal repro"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_015PNvPd6yg6drNLd4AgKvUK",
+      "tool_input": {
+        "command": "read -d '' SRC < /tmp/repro_math.lua; target/debug/lua-rs \"$SRC\" 2>&1 | tail -25",
+        "description": "Run minimal repro"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01Uam1MZeTwZsuEuh3e98ewE",
+      "tool_input": {
+        "command": "cp reference/lua-c/testes/math.lua /tmp/math.lua.bak && head -57 /tmp/math.lua.bak > /tmp/repro_short.lua && ls -la /tmp/repro_short.lua",
+        "description": "Create short repro from math.lua"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01Ru8WndkrHB4YmDQNwV5Tz5",
+      "tool_input": {
+        "command": "target/debug/lua-rs \"$(< /tmp/repro_math.lua)\"",
+        "description": "Run lua-rs with cli string"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01NWdcUVixXaxwT1WPgtv7cC",
+      "tool_input": {
+        "command": "cp reference/lua-c/testes/math.lua /tmp/orig_math.lua && wc -l /tmp/orig_math.lua && ls -la harness/impl/official/math.out",
+        "description": "Make a copy of math.lua we can edit"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01Gsmcy2Fq8EpC6Gw7pEKDXw",
+      "tool_input": {
+        "command": "which lua && lua -v 2>&1 | head -1",
+        "description": "Check for lua binary"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01WRHUN2jkckLSNp1Wrcza5G",
+      "tool_input": {
+        "command": "git stash",
+        "description": "Stash math.lua edits"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "1657150f-18df-432e-bff7-a6e3757480e5"
+}

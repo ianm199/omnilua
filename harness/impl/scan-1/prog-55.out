@@ -2,8 +2,4 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-
-thread 'main' (7351611) panicked at crates/lua-stdlib/src/state_stub.rs:176:108:
-not yet implemented: phase-b-reconcile: load_buffer_ex
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-b-reconcile: load_buffer_ex
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:202: assertion failed!

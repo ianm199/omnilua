@@ -6,8 +6,5 @@ testing vararg
 +
 +
 +
-
-thread 'main' (7351598) panicked at crates/lua-stdlib/src/state_stub.rs:176:108:
-not yet implemented: phase-b-reconcile: load_buffer_ex
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] not yet implemented: phase-b-reconcile: load_buffer_ex
+OK
+[ok] execution completed, status=Ok

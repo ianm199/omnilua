@@ -1,0 +1,118 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "api_error_status": 429,
+  "duration_ms": 1290509,
+  "duration_api_ms": 1277389,
+  "num_turns": 96,
+  "result": "You've hit your org's monthly usage limit",
+  "stop_reason": "stop_sequence",
+  "session_id": "97ce4c2f-9d1d-42e2-9dee-0f6f9368b394",
+  "total_cost_usd": 8.697557500000004,
+  "usage": {
+    "input_tokens": 100,
+    "cache_creation_input_tokens": 170228,
+    "cache_read_input_tokens": 10970653,
+    "output_tokens": 85850,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 170228,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 238,
+        "cache_read_input_tokens": 186647,
+        "cache_creation_input_tokens": 2480,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2480
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1481,
+      "outputTokens": 15,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0015559999999999999,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 100,
+      "outputTokens": 85850,
+      "cacheReadInputTokens": 10970653,
+      "cacheCreationInputTokens": 170228,
+      "webSearchRequests": 0,
+      "costUSD": 8.696001500000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01S4pMqgXRv3C5727C8nfwQ1",
+      "tool_input": {
+        "command": "cat > /tmp/test_pm_chunk.lua <<'EOF'\nprint('start')\ndo\n  assert(string.gsub(\"a b cd\", \" *\", \"-\") == \"-a-b-c-d-\")\n  print('a')\n\n  local res = \"\"\n  local sub = \"a  \\nbc\\t\\td\"\n  local i = 1\n  for p, e in string.gmatch(sub, \"()%s*()\") do\n    res = res .. string.sub(sub, i, p - 1) .. \"-\"\n    i = e\n  end\n  print('result', res)\n  assert(res == \"-a-b-c-d-\")\nend\nprint('done')\nEOF\ntarget/debug/lua-rs /tmp/test_pm_chunk.lua 2>&1 | tail -20",
+        "description": "Reduce failure region (1)"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_015FpTdvW4oRW36DqeJiYcTu",
+      "tool_input": {
+        "command": "SRC=$(cat /tmp/test_pm_chunk.lua); target/debug/lua-rs \"$SRC\" 2>&1 | tail -20",
+        "description": "Run small test inline"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01M8B7sDZ5xjf8Yibu6MZqeY",
+      "tool_input": {
+        "command": "SRC=$(head -n 196 reference/lua-c/testes/pm.lua); echo \"$SRC\" > /tmp/_pm_first196.lua; ls -la /tmp/_pm_first196.lua",
+        "description": "Make truncated test file"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_018rFuo62iUdSFHmgP8xrSkm",
+      "tool_input": {
+        "command": "head -n 220 reference/lua-c/testes/pm.lua > reference/lua-c/testes/_pm_debug.lua && wc -l reference/lua-c/testes/_pm_debug.lua",
+        "description": "Truncate pm.lua to first 220 lines"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01WisSzv2ke4m6hemAxeDyA4",
+      "tool_input": {
+        "command": "cp reference/lua-c/testes/pm.lua reference/lua-c/testes/_pm_copy.lua && ./harness/run_official_test.sh reference/lua-c/testes/_pm_copy.lua 2>&1 | tail -5 && echo \"---\" && tail -10 harness/impl/official/_pm_copy.out",
+        "description": "Run exact copy of pm.lua"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_014fwwNhnHVzR5bDJc91kSvL",
+      "tool_input": {
+        "command": "awk '/about to error/,/^[^ ]/' harness/impl/official/pm.out | head -30",
+        "description": "Get the stack dump around error"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "11e20ec8-fde2-40f5-a2a5-38dc9958161e"
+}

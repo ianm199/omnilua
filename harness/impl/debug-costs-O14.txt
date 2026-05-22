@@ -1,3 +1,6 @@
 2 1.6208262500000001 reference/lua-c/testes/strings.lua
 4 1.9597812499999996 reference/lua-c/testes/literals.lua
 5 1.4235165 reference/lua-c/testes/calls.lua
+3 [2026-05-17T21:29:02Z mega]   → committed 5b036ad (debug/reference/lua-c/testes/math.lua )
+13.552095499999997 reference/lua-c/testes/math.lua
+1 8.697557500000004 reference/lua-c/testes/pm.lua

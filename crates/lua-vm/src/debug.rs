@@ -1813,7 +1813,13 @@ fn get_local_name_from_closure(cl: &LuaClosureLua, n: i32, pc: i32) -> Option<&[
 fn ci_lua_proto(ci: &CallInfo, state: &LuaState) -> GcRef<LuaProto> {
     match state.get_at(ci.func) {
         LuaValue::Function(LuaClosure::Lua(cl)) => cl.proto.clone(),
-        _ => panic!("ci_lua_proto: call frame does not hold a Lua closure"),
+        other => {
+            eprintln!(
+                "ci_lua_proto MISMATCH: ci.func={:?}, ci.is_lua={}, callstatus=0x{:x}, value_type={:?}",
+                ci.func, ci.is_lua(), ci.callstatus, other.type_tag()
+            );
+            panic!("ci_lua_proto: call frame does not hold a Lua closure")
+        }
     }
 }
 

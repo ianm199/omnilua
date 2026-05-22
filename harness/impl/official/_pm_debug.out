@@ -2,26 +2,14 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing pattern matching
-+
-+
-+
-+
-[m180]
-[m194]
-[m198]
-[m205]
-[m207 just-assigned global f]
-[m209]
-[m211 defined dostring]
-[m214]
-[m219]
-[m227]
-[m236]
-[m241]
-[m250]
-[m257]
-[m270]
-[m278]
-[m282]
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:309: assertion failed!
+SETUP
+BEFORE rev test
+A278 done
+A282 done
+A283 done
+A284 done
+A285 done
+A287 done
+A290 done
+END
+[ok] execution completed, status=Ok

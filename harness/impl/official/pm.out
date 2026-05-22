@@ -7,4 +7,22 @@ testing pattern matching
 +
 +
 +
+[DBG try_func_tm] about to error on value type: boolean at idx StackIdx(27)
+  [15]: Nil
+  [16]: Nil
+  [17]: Str("abç d")
+  [18]: LuaFn(line220..220)
+  [19]: Str(" assim vai para ALO")
+  [20]: Table
+  [21]: Str("a alo jose  joao")
+  [22]: Str("a alo jose  joao")
+  [23]: LuaFn(line239..241)
+  [24]: Table
+  [25]: LuaFn(line282..284)
+  [26]: Str("abcdef")
+  [27]: Bool(true)
+  [28]: Table
+  [29]: Table
+  CI[0] func_idx=StackIdx(2) val=LuaFn(line0..0)
+  CI[1] func_idx=StackIdx(0) val=nil
 [err] pcall_k failed: Runtime: attempt to call a boolean value

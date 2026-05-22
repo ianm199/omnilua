@@ -1,1 +1,70 @@
-{}
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 354019,
+  "duration_api_ms": 350817,
+  "ttft_ms": 12696,
+  "num_turns": 42,
+  "result": "Build is green. Report:\n\n**Root cause:** `crates/lua-types/src/value.rs:321` — `value_is_reachable` returned `is_reachable(s.identity())` for `LuaValue::Str`, asking the mark-phase visited set whether the string was reached. In a `kv` weak table, the Trace impl traces neither keys nor values, so the string was reported unreachable and `prune_weak_dead` would clear `a[stringA] = 25` despite the value being non-collectable. C-Lua's `iscleared` (lgc.c) treats strings as \"values\" — `novariant(o->tt) == LUA_TSTRING` always returns \"not cleared.\" Result: at gc.lua line 465 (combined line 474), `collectgarbage(\"count\")` dropped to ~`m` instead of `~m + 2^12`, failing the lower-bound assertion.\n\n**Fix:** Changed `value_is_reachable` to return `true` for `LuaValue::Str` unconditionally, grouped with the other non-cleared variants. The `Rc<LuaString>` strong-count held in the table's entries keeps the long string alive after the sweep, and `reclaim_dead_long_strings` correctly accounts for its bytes.\n\n**New state:** `cargo build -p lua-cli` is green. Did not re-run the test program per instructions; the mega-loop will re-verify.",
+  "stop_reason": "end_turn",
+  "session_id": "32eb670b-3e08-4c80-a405-34f523adf933",
+  "total_cost_usd": 2.2547824999999997,
+  "usage": {
+    "input_tokens": 47,
+    "cache_creation_input_tokens": 68812,
+    "cache_read_input_tokens": 2593849,
+    "output_tokens": 21038,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 68812,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 456,
+        "cache_read_input_tokens": 87397,
+        "cache_creation_input_tokens": 304,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 304
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1518,
+      "outputTokens": 16,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001598,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7": {
+      "inputTokens": 47,
+      "outputTokens": 21038,
+      "cacheReadInputTokens": 2593849,
+      "cacheCreationInputTokens": 68812,
+      "webSearchRequests": 0,
+      "costUSD": 2.2531844999999997,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "d6eb0b0d-a22f-4266-8265-51fb1493d7dc"
+}

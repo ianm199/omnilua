@@ -1,0 +1,50 @@
+literals.lua REGRESSED today (2026-05-18). It was passing the mega_loop scan
+earlier; after the Phase E coroutine slices landed (commits 1dbaa1d, 452a433),
+it now fails very early with:
+
+  Runtime: Nil
+
+That's a Lua error() being raised with a nil value, and the error formatter
+showing it as the bare "Nil" tag. Two failures here, one of which you must fix:
+
+1. (Primary) Whatever code in literals.lua reaches an error() with nil-argument
+   call. The literals.lua test exercises numeric literals, string literals,
+   long strings, etc. Most likely a constant-folding edge case OR an assertion
+   that's failing and the wrapped error happens to be nil.
+
+2. (Secondary, do NOT fix in this dispatch) The error formatter showing
+   "Runtime: Nil" instead of a meaningful message. That's a separate bug —
+   leave a TODO(port) comment if you spot the call site but don't change it.
+
+How to diagnose: literals.lua self-tests with assert() so it must be an
+assertion failing. Find which one. Common technique:
+
+  cp reference/lua-c/testes/literals.lua /tmp/lit-instrumented.lua
+  # Wrap top-level chunk in a pcall + traceback to see line
+  target/debug/lua-rs -e '
+    local f = assert(loadfile("/tmp/lit-instrumented.lua"))
+    local ok, err = xpcall(f, debug.traceback)
+    if not ok then print("FAIL", err) end
+  '
+
+If xpcall gives no useful traceback, instrument literals.lua by adding line
+markers between major do-end blocks (NOT in the test file directly — copy first).
+
+Likely root causes (in order of suspicion):
+
+a. A string.format / tostring change broke some literal output comparison
+b. A long-string parser regression
+c. coroutine.wrap or similar that literals.lua uses indirectly via gmatch
+   (gmatch internally uses iterator pattern, NOT coroutine — but check)
+d. A constant folding bug — literal arithmetic at parse time
+
+Smoke test the bisection:
+
+  git show 452a433 --stat   # see what 02b changed
+  git show 1dbaa1d --stat   # see what 02a changed
+  git checkout 452a433~1 -- crates/lua-stdlib/src/coro_lib.rs   # if curious
+
+But don't revert anything — Phase E must stay in. Find the actual bug.
+
+Done when: literals.lua reaches a substantially deeper failure point (line
+500+ ideally) OR passes entirely. Report the new failure line in your commit.

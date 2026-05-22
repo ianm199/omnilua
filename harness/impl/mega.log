@@ -1384,3 +1384,5 @@ warning: unused import: `UpVal`
 [2026-05-19T03:29:48Z mega]   skip prog (in SKIP_TESTS): reference/lua-c/testes/calls.lua
 [2026-05-19T03:29:48Z mega]   skip prog (in SKIP_TESTS): reference/lua-c/testes/nextvar.lua
 [2026-05-19T03:29:48Z mega]   [hard-test] reference/lua-c/testes/files.lua → opus (skip Sonnet)
+[2026-05-19T03:35:44Z mega]   → committed 0a51293 (debug/reference/lua-c/testes/gc.lua )
+[2026-05-19T03:35:45Z mega]   [O1.D4] DEBUG dispatch on file: reference/lua-c/testes/files.lua [model=opus] [parallel]

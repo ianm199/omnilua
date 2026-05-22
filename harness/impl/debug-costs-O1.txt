@@ -1,0 +1,2 @@
+1 [2026-05-19T03:35:44Z mega]   → committed 0a51293 (debug/reference/lua-c/testes/gc.lua )
+2.2547824999999997 reference/lua-c/testes/gc.lua [opus]

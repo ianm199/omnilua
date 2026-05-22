@@ -1,0 +1,66 @@
+locals.lua REGRESSED today (2026-05-18). The failure is:
+
+  module 'tracegc' not found:
+    no file './tracegc.so'
+    no file '/usr/local/lib/lua/5.4/tracegc.so'
+    ...
+
+That means `require("tracegc")` falls through the entire searcher list. But
+`reference/lua-c/testes/tracegc.lua` DOES exist (it's one of the @FILE entries
+in harness/mega_loop.sh's PROGS).
+
+LUA_PATH is set in harness/mega_loop.sh to:
+  TESTES_DIR/?.lua;TESTES_DIR/?/init.lua;./?.lua;./?/init.lua
+
+Where TESTES_DIR is the absolute path to reference/lua-c/testes. So the Lua
+searcher SHOULD find tracegc.lua at $TESTES_DIR/tracegc.lua.
+
+But the harness/run_official_test.sh wrapper that mega_loop uses might set
+its own LUA_PATH that differs from this. Check:
+
+  grep -n "LUA_PATH" harness/run_official_test.sh
+
+The error message above shows ONLY the C-loader (.so) attempted paths. That
+means the Lua loader (.lua paths) was tried and failed silently, OR was
+never tried.
+
+Likely root causes (in order):
+
+1. **package.path is being reset / wrong inside the running Lua program.**
+   Could be locals.lua sets `package.path = X` and X doesn't include the test
+   directory. Look near where it `require`s things in locals.lua.
+
+2. **searchpath bug.** `package.searchpath` is what implements the path
+   search. If it lowercases / mangles / drops template substitutions, the
+   Lua-loader silently fails. Check `crates/lua-stdlib/src/loadlib.rs:searchpath`.
+
+3. **The require finder ordering changed.** Slice 02b touched coro_lib but
+   should NOT have touched loadlib. But check git log:
+     git log --oneline -- crates/lua-stdlib/src/loadlib.rs
+
+   Especially around dynlib changes today (commit 8c48cb1) — that touched
+   loadlib heavily. Maybe the searcher chain regressed.
+
+4. **`coroutine.wrap` regression**. Slice 02b removed `wrap_iter_state`. If
+   any internal Lua iterator (probably NOT — gmatch isn't coroutine-based)
+   used the hack, this could affect require's iteration over searchers.
+   Long shot — investigate only if #1-3 ruled out.
+
+How to diagnose:
+
+  target/debug/lua-rs -e '
+    print("LUA_PATH=", os.getenv("LUA_PATH") or "<unset>")
+    print("package.path=", package.path)
+    print("searchpath result:", package.searchpath("tracegc", package.path))
+  '
+
+Run this against the same env mega_loop uses (look at harness/run_official_test.sh
+for the env setup).
+
+What to fix:
+
+The clean answer is probably: searchpath broke when dynlib landed, OR
+package.path defaulting broke. Find which and fix at the source.
+
+Done when: `target/debug/lua-rs reference/lua-c/testes/locals.lua` runs
+past the require("tracegc") line. Report the new failure point.

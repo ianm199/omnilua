@@ -1,0 +1,35 @@
+gc.lua is a multi-layer test (~14 distinct GC behaviors). The incremental
+step budget infra landed today as `d15cd9e` so `dosteps(10) < dosteps(2)`
+now passes. Current failure point:
+
+  reference/lua-c/testes/gc.lua:194  assertion failed!
+
+Line 194 is `assert(gcinfo() < x)` inside `dosteps`. The test wants the
+gcinfo() byte count to drop after a completed collection cycle. We probably
+don't decrement totalbytes properly on sweep — or we refill it back to a
+baseline (there's a Phase-B shim in api.rs that did exactly that).
+
+Fix sites to investigate:
+
+- `crates/lua-vm/src/api.rs` — `GcArgs::Step` and `GcArgs::Collect` paths;
+  search for `totalbytes` and `gc_debt`. The PORT NOTE near line 1929 mentions
+  a "Phase B has no per-allocation totalbytes tracking" shim. With D-2.5
+  budget infra in, that shim should be obsolete.
+- `crates/lua-gc/src/heap.rs` — confirm sweep_budgeted updates a real
+  byte-count somewhere reachable from gcinfo().
+- `crates/lua-stdlib/src/base.rs::collectgarbage` — `b"count"` path.
+- `gcinfo()` is itself a separate Lua function — find where it lives.
+
+Don't try to fix every gc.lua assertion. Move the failure point past line
+194 and report the new line.
+
+DO NOT fix:
+- generational mode (gengc.lua) — Phase D-3, separate
+- finalizer ordering edge cases — out of scope unless they block the next
+  assertion
+- weak-table sub-tests deep in gc.lua — separate sub-test, separate fix
+
+After your fix runs:
+  ./harness/run_official_test.sh reference/lua-c/testes/gc.lua
+
+Report new failure line in commit message.

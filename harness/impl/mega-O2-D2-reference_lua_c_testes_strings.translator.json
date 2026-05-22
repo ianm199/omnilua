@@ -1,0 +1,70 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 519916,
+  "duration_api_ms": 515633,
+  "ttft_ms": 3758,
+  "num_turns": 34,
+  "result": "Build is clean.\n\n**Root cause:** In `str_format` (`string_lib.rs`), the \"format too long\" length check (`spec_slice.len() + 1 >= 22`) ran *after* calling `parse_fmt_spec`, which blindly accumulated width digits. The test suite deliberately passes a format like `\"%1<600-zeros>.3d\"` to verify the engine rejects it as \"too long\", but `parse_fmt_spec` multiplied the width accumulator with that many digits and overflowed `usize` in debug mode long before the check fired.\n\n**Fix:** Moved the `spec_slice.len() + 1 >= 22` guard to execute *before* `parse_fmt_spec(spec_slice)` is called. The test now gets the expected `\"too long\"` error instead of a panic.\n\n**New state:** Build is green. The test program should now progress past the huge-format checks instead of panicking — exact final output is not re-verified (per constraints), but the panic is eliminated.",
+  "stop_reason": "end_turn",
+  "session_id": "215c48f6-4466-4138-8b74-f7a0efaa18e5",
+  "total_cost_usd": 1.1940076000000002,
+  "usage": {
+    "input_tokens": 36,
+    "cache_creation_input_tokens": 61334,
+    "cache_read_input_tokens": 1908307,
+    "output_tokens": 25986,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 61334,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 240,
+        "cache_read_input_tokens": 74759,
+        "cache_creation_input_tokens": 169,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 169
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1540,
+      "outputTokens": 15,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001615,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-sonnet-4-6": {
+      "inputTokens": 36,
+      "outputTokens": 25986,
+      "cacheReadInputTokens": 1908307,
+      "cacheCreationInputTokens": 61334,
+      "webSearchRequests": 0,
+      "costUSD": 1.1923926000000002,
+      "contextWindow": 600000,
+      "maxOutputTokens": 32000
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "0487c2ad-47bd-4054-aa7c-d67e84cee4d7"
+}

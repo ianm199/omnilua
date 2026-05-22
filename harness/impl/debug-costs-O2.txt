@@ -1,1 +1,2 @@
 3 2.4103414999999995 reference/lua-c/testes/locals.lua [opus]
+2 1.1940076000000002 reference/lua-c/testes/strings.lua [sonnet]

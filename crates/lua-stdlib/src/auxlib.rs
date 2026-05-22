@@ -1501,14 +1501,15 @@ use std::fmt::Write as _;
 //   source:        src/lauxlib.c  (1127 lines, ~50 functions)
 //   target_crate:  lua-stdlib
 //   confidence:    medium
-//   todos:         19
-//   port_notes:    7
+//   todos:         10
+//   port_notes:    8
 //   unsafe_blocks: 0
 //   notes:         Buffer simplified from stack-based C UBox/box-on-Lua-stack to
 //                  plain Vec<u8> (LuaBuffer); UBox/resizebox/boxgc/boxmt/newbox
 //                  machinery dropped entirely — Rust Drop handles deallocation.
-//                  File I/O in load_filex stubbed with Err; std::fs banned outside
-//                  lua-cli per PORTING.md (Phase B to resolve).
+//                  load_filex now reads via std::fs::read and pushes an error
+//                  string on open failure so loadfile/dofile return (nil, err)
+//                  per C semantics (stdin loading still TODO).
 //                  Warning system uses fn-ptr callbacks matching lua_WarnFunction
 //                  type; warnfoff/warnfon/warnfcont translated faithfully.
 //                  LuaState / LuaDebug / GcRef are Phase-A stubs; Phase B replaces

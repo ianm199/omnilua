@@ -1150,3 +1150,4 @@
 [2026-05-18T19:28:22Z mega]   [stuck-escalate] reference/lua-c/testes/files.lua → opus
 [2026-05-18T19:33:28Z mega]   [O2.D4] DEBUG dispatch on file: reference/lua-c/testes/files.lua [model=opus] [parallel]
 [2026-05-18T19:33:28Z mega]   [stuck-escalate] reference/lua-c/testes/errors.lua → opus
+[2026-05-18T19:37:05Z mega]   [O2.D5] DEBUG dispatch on file: reference/lua-c/testes/errors.lua [model=opus] [parallel]

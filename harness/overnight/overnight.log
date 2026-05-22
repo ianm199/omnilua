@@ -68,3 +68,12 @@ fanout: mode=files  files=2  workers=2  dry_run=0
 
   [lgc.c] → crates/lua-gc/src/gc.rs
   [lmem.c] SKIP: crates/lua-gc/src/mem.rs already ported
+    status=hooks_failed  cost=$2.6080902000000004  duration=1363s  hooks=false  syntax=true (residual=0)
+
+─── SUMMARY ───
+  files processed: 17
+  status=ok:       10
+  total cost USD:  $27.099060699999995  (note: subscription absorbs this; reported for tracking)
+
+Full results: harness/oracle/results/pilot.jsonl
+Per-file outputs: harness/oracle/results/*.translator.json + *.hooks.log

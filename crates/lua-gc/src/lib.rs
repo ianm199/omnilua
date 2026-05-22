@@ -1,15 +1,16 @@
-//! Lua incremental tri-color mark-and-sweep GC. Phase D scope.
+//! Lua 5.4 garbage collector — incremental tri-color.
 //!
-//! This crate is permitted `unsafe` (ceiling: 20 blocks per
-//! `harness/unsafe-budgets.toml`). Every block requires `// SAFETY: ...`.
+//! Modules:
+//!   gc  — lgc.c port (mark/sweep)
+//!   mem — lmem.c port (allocator wrappers)
+
+pub mod gc;
+pub mod mem;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        (none — skeleton; Phase D populates from lgc.c)
+//   source:        (module aggregator)
 //   target_crate:  lua-gc
 //   confidence:    high
-//   todos:         0
-//   port_notes:    0
-//   unsafe_blocks: 0
-//   notes:         placeholder for incremental GC port
+//   notes:         per-file ports own their own trailers
 // ──────────────────────────────────────────────────────────────────────────

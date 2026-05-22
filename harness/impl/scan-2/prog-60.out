@@ -2,17 +2,8 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing bitwise operations
-DBG MMBIN: p1=string p2=string tm=Band
-DBG MMBIN: p1=string p2=number tm=Bor
-DBG MMBIN: p1=string p2=string tm=Band
-DBG MMBIN: p1=string p2=string tm=Band
-DBG MMBIN: p1=string p2=string tm=Shr
-DBG MMBIN: p1=string p2=string tm=Shl
-DBG MMBIN: p1=string p2=string tm=Bxor
-DBG MMBIN: p1=string p2=number tm=Shl
-DBG MMBIN: p1=number p2=string tm=Shr
-DBG MMBIN: p1=number p2=string tm=Bor
-DBG MMBIN: p1=number p2=string tm=Band
-DBG MMBIN: p1=string p2=number tm=Bor
-[err] pcall_k failed: Runtime: [string "_soft = true..."]:102: assertion failed!
+
+thread 'main' (10069656) panicked at crates/lua-types/src/trace_impls.rs:19:9:
+not yet implemented: phase-d: trace LuaValue — match each GC-bearing variant (Str, Table, Function, UserData, Thread) and mark via m.mark or field.trace
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[panic] not yet implemented: phase-d: trace LuaValue — match each GC-bearing variant (Str, Table, Function, UserData, Thread) and mark via m.mark or field.trace

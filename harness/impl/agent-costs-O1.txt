@@ -1,2 +1,3 @@
 2 [2026-05-18T03:25:09Z mega]   → committed b680cf8 (impl/trace GlobalState — l_registry, mainthread, strt p)
 1.5705762499999996 trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc
+1 2.6839900000000005 tm_name

@@ -2,5 +2,7 @@
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
-testing strings and string library
-[err] pcall_k failed: Runtime: [string "_soft = true..."]:202: assertion failed!
+testing generational garbage collection
+
+thread 'main' (10085726) has overflowed its stack
+fatal runtime error: stack overflow, aborting

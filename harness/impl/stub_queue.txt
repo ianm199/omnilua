@@ -1,2 +1,1 @@
-tm_name	crates/lua-vm/src/state.rs:872:68
-trace GlobalState — l_registry, mainthread, strt pool, mt[..], tmname[..], memerrmsg, twups, fixedgc	crates/lua-vm/src/trace_impls.rs:30:9
+trace LuaValue — match each GC-bearing variant (Str, Table, Function, UserData, Thread) and mark via m.mark or field.trace	crates/lua-types/src/trace_impls.rs:19:9

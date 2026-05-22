@@ -4,7 +4,7 @@
 [4/4] Executing chunk...
 testing closures
 
-thread 'main' (8200903) panicked at crates/lua-vm/src/func.rs:485:9:
-open upvalue index must be below stack top
+thread 'main' (10069641) panicked at crates/lua-types/src/trace_impls.rs:19:9:
+not yet implemented: phase-d: trace LuaValue — match each GC-bearing variant (Str, Table, Function, UserData, Thread) and mark via m.mark or field.trace
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] open upvalue index must be below stack top
+[panic] not yet implemented: phase-d: trace LuaValue — match each GC-bearing variant (Str, Table, Function, UserData, Thread) and mark via m.mark or field.trace

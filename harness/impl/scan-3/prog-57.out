@@ -3,3 +3,6 @@
 [3/4] Loading source (parse + compile)...
 [4/4] Executing chunk...
 testing closures
+
+thread 'main' (10085711) has overflowed its stack
+fatal runtime error: stack overflow, aborting

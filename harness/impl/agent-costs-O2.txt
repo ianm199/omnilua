@@ -1,1 +1,2 @@
-1 2.1077884999999994 check_stack_growth
+1 [2026-05-18T03:30:37Z mega]   → committed 22befe8 (impl/trace LuaValue — match each GC-bearing variant (St)
+1.5199320000000003 trace LuaValue — match each GC-bearing variant (Str, Table, Function, UserData, Thread) and mark via m.mark or field.trace

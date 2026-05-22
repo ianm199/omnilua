@@ -1,1 +1,2 @@
 1 0.8755462500000001 reference/lua-c/testes/gc.lua
+2 2.2393492499999996 reference/lua-c/testes/files.lua

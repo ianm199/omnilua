@@ -978,3 +978,20 @@
 [2026-05-18T07:28:55Z mega]   [O15.D2] DEBUG dispatch on file: reference/lua-c/testes/files.lua [parallel]
 [2026-05-18T07:28:55Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 38: assertion failed!): reference/lua-c/testes/errors.lua
 [2026-05-18T07:28:55Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 426: assertion failed!): reference/lua-c/testes/attrib.lua
+[2026-05-18T07:33:46Z mega]   [O15.D1] DEBUG done. iter cost=$0.8755462500000001  total=$85.2321
+[2026-05-18T07:33:46Z mega]   [O15.D2] DEBUG done. iter cost=$2.2393492499999996  total=$87.4714
+[2026-05-18T07:33:46Z mega] ─── outer round 16 (spent: $87.4714) ───
+[2026-05-18T07:33:49Z mega]   scan: 68/79 programs pass cleanly
+[2026-05-18T07:33:50Z mega]   surface scan returned 0 unique stub blockers
+[2026-05-18T07:33:50Z mega]   no stub blockers — falling back to DEBUG agents on failing programs
+[2026-05-18T07:33:50Z mega]   [O16.D1] DEBUG dispatch on file: reference/lua-c/testes/gc.lua [parallel]
+[2026-05-18T07:33:50Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: attempt to call a string value): reference/lua-c/testes/gengc.lua
+[2026-05-18T07:33:50Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 231: assertion failed!): reference/lua-c/testes/strings.lua
+[2026-05-18T07:33:50Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 820: assertion failed!): reference/lua-c/testes/math.lua
+[2026-05-18T07:33:50Z mega]   [O16.D2] DEBUG dispatch on file: reference/lua-c/testes/literals.lua [parallel]
+[2026-05-18T07:33:50Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 270: assertion failed!): reference/lua-c/testes/locals.lua
+[2026-05-18T07:33:50Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 18: assertion failed!): reference/lua-c/testes/constructs.lua
+[2026-05-18T07:33:50Z mega]   [O16.D3] DEBUG dispatch on file: reference/lua-c/testes/nextvar.lua [parallel]
+[2026-05-18T07:33:50Z mega]   [O16.D4] DEBUG dispatch on file: reference/lua-c/testes/files.lua [parallel]
+[2026-05-18T07:33:51Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 38: assertion failed!): reference/lua-c/testes/errors.lua
+[2026-05-18T07:33:51Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 426: assertion failed!): reference/lua-c/testes/attrib.lua

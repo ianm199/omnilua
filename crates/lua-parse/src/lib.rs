@@ -668,14 +668,18 @@ fn cg_posfix_fold(
 }
 
 /// Minimal `luaK_dischargevars` covering the cases the parser bootstrap can
-/// produce: `VUpVal`, `VIndexUp`, `VKStr`. Other variants are left untouched.
-/// Returns Ok(()) on success.
+/// produce: `VLOCAL`, `VUpVal`, `VIndexUp`, `VKStr`. Other variants are left
+/// untouched. Returns Ok(()) on success.
 fn cg_discharge_vars(
     fs: &mut FuncState,
     line: i32,
     e: &mut ExprDesc,
 ) -> Result<(), LuaError> {
     match e.k {
+        ExprKind::Local => {
+            e.u.info = e.u.var_ridx as i32;
+            e.k = ExprKind::NonReloc;
+        }
         ExprKind::UpVal => {
             let inst = lua_code::opcodes::Instruction::abck(
                 lua_code::opcodes::OpCode::GetUpVal,

@@ -61,7 +61,7 @@ fn parser_hook(
     let nupvals = proto.upvalues.len();
     let mut upvals = Vec::with_capacity(nupvals);
     for _ in 0..nupvals {
-        upvals.push(GcRef::new(UpVal::closed(LuaValue::Nil)));
+        upvals.push(std::cell::RefCell::new(GcRef::new(UpVal::closed(LuaValue::Nil))));
     }
     Ok(GcRef::new(LuaLClosure {
         proto: GcRef::new(*proto),

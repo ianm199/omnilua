@@ -127,7 +127,7 @@ impl Trace for LuaLClosure {
     fn trace(&self, m: &mut Marker) {
         self.proto.trace(m);
         for uv in self.upvals.iter() {
-            uv.trace(m);
+            uv.borrow().trace(m);
         }
     }
 }

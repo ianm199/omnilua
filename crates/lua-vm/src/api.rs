@@ -1669,19 +1669,8 @@ pub fn load(
         if let LuaValue::Function(LuaClosure::Lua(lcl)) = func_val {
             if !lcl.upvals.is_empty() {
                 // C: const TValue *gt = getGtable(L); setobj(L, f->upvals[0]->v.p, gt);
-                // PORT NOTE: GcRef<UpVal> = Rc<UpVal> has no interior mutability,
-                // and the closure's `upvals` Vec is reachable only behind a
-                // shared Rc<LuaLClosure>. Rebuild the closure here: clone the
-                // proto, swap upvals[0] for a fresh `Closed(globals)` upvalue,
-                // wrap in a new GcRef, and replace the stack slot.
                 let gt = get_global_table(state);
-                let mut new_upvals = lcl.upvals.clone();
-                new_upvals[0] = GcRef::new(UpVal::closed(gt));
-                let new_lcl = GcRef::new(lua_types::LuaLClosure {
-                    proto: lcl.proto.clone(),
-                    upvals: new_upvals,
-                });
-                state.set_at(top - 1, LuaValue::Function(LuaClosure::Lua(new_lcl)));
+                lcl.set_upval(0, GcRef::new(UpVal::closed(gt)));
             }
         }
     }
@@ -2002,7 +1991,7 @@ fn aux_upvalue(
                 return None;
             }
             // C: *val = f->upvals[n-1]->v.p;
-            let upval = &lcl.upvals[(n - 1) as usize];
+            let upval = lcl.upval((n - 1) as usize);
             let val = match &*upval.slot() {
                 lua_types::UpValState::Closed(v) => v.clone(),
                 lua_types::UpValState::Open { .. } => {
@@ -2050,7 +2039,7 @@ pub fn setup_value(state: &mut LuaState, funcindex: i32, n: i32) -> Option<Vec<u
     let new_val = state.pop();
     match &fi {
         LuaValue::Function(LuaClosure::Lua(lcl)) => {
-            let upval = &lcl.upvals[(n - 1) as usize];
+            let upval = lcl.upval((n - 1) as usize);
             let open_loc = match &*upval.slot() {
                 lua_types::UpValState::Open { thread_id, idx } => Some((*thread_id, *idx)),
                 lua_types::UpValState::Closed(_) => None,
@@ -2102,7 +2091,7 @@ pub fn upvalue_id(state: &LuaState, fidx: i32, n: i32) -> Option<usize> {
         LuaValue::Function(LuaClosure::Lua(lcl)) => {
             let idx = get_upval_ref_idx(state, fidx, n)?;
             // Return the identity of the UpVal GcRef
-            Some(GcRef::identity(&lcl.upvals[idx]))
+            Some(GcRef::identity(&lcl.upval(idx)))
         }
         // C: case LUA_VCCL: if (1 <= n && n <= f->nupvalues) return &f->upvalue[n-1];
         LuaValue::Function(LuaClosure::C(ccl)) => {
@@ -2130,12 +2119,24 @@ pub fn upvalue_join(state: &mut LuaState, fidx1: i32, n1: i32, fidx2: i32, n2: i
     // C: UpVal **up2 = getupvalref(L, fidx2, n2, NULL);
     // C: api_check(L, *up1 != NULL && *up2 != NULL, "invalid upvalue index");
     // C: *up1 = *up2; luaC_objbarrier(L, f1, *up1);
-    let _idx1 = get_upval_ref_idx(state, fidx1, n1);
-    let _idx2 = get_upval_ref_idx(state, fidx2, n2);
-    // TODO(port): sharing an UpVal between two closures requires GcRef<UpVal>
-    // cloning. The Lua closure's upvals Vec would need to replace upvals[idx1-1]
-    // with the GcRef from closure2's upvals[idx2-1]. This requires interior
-    // mutability on LuaClosure::Lua. Stubbed for Phase A.
+    let idx1 = match get_upval_ref_idx(state, fidx1, n1) {
+        Some(i) => i,
+        None => return,
+    };
+    let idx2 = match get_upval_ref_idx(state, fidx2, n2) {
+        Some(i) => i,
+        None => return,
+    };
+    let f1 = index_to_value(state, fidx1);
+    let f2 = index_to_value(state, fidx2);
+    if let (
+        LuaValue::Function(LuaClosure::Lua(lcl1)),
+        LuaValue::Function(LuaClosure::Lua(lcl2)),
+    ) = (&f1, &f2)
+    {
+        let shared = lcl2.upval(idx2);
+        lcl1.set_upval(idx1, shared);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -65,7 +65,7 @@ const STRCACHE_M: usize = 2;
 
 // C: #define LUAI_MAXSHORTLEN  40   (llimits.h)
 // macros.tsv: LUAI_MAXSHORTLEN → const MAX_SHORT_LEN: usize = 40
-const MAX_SHORT_LEN: usize = 40;
+pub(crate) const MAX_SHORT_LEN: usize = 40;
 
 // C: MAX_SIZE defined via llimits.h conditional on pointer vs i64 width
 // macros.tsv: MAX_SIZE → const MAX_SIZE: usize = if size_of::<usize>() < size_of::<i64>() { usize::MAX } else { i64::MAX as usize }

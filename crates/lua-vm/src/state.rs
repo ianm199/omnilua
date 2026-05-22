@@ -1171,24 +1171,27 @@ impl LuaState {
     ///
     /// In C, short strings (≤ LUAI_MAXSHORTLEN = 40 bytes) are interned globally
     /// via `luaS_newlstr`, while long strings allocate a fresh TString each
-    /// call; the parser then deduplicates long-string identifiers through
-    /// `luaX_newstring`'s `ls->h` anchor table. The Rust port collapses both
-    /// layers into this method: every byte sequence maps to a single canonical
-    /// `GcRef<LuaString>`, which is the identity the parser/lexer rely on for
-    /// `GcRef::ptr_eq` comparisons (label/goto matching, upvalue lookup, etc.).
+    /// call so distinct long strings keep distinct object identity (observable
+    /// via `string.format("%p", s)`). The parser separately deduplicates
+    /// long-string literals within a single chunk through `luaX_newstring`'s
+    /// `ls->h` anchor table.
     ///
     /// C: `luaS_newlstr` (and `luaS_new`, which calls `luaS_newlstr`)
     /// macros.tsv: `luaS_new → state.intern_str(s)`
     pub fn intern_str(&mut self, bytes: &[u8]) -> Result<GcRef<LuaString>, LuaError> {
-        if let Some(existing) = self.global().interned_lt.get(bytes) {
-            return Ok(existing.clone());
+        if bytes.len() <= crate::string::MAX_SHORT_LEN {
+            if let Some(existing) = self.global().interned_lt.get(bytes) {
+                return Ok(existing.clone());
+            }
+            let _local = crate::string::new(self, bytes)?;
+            let new_ref = GcRef::new(LuaString::from_bytes(bytes.to_vec()));
+            self.global_mut()
+                .interned_lt
+                .insert(bytes.to_vec().into_boxed_slice(), new_ref.clone());
+            Ok(new_ref)
+        } else {
+            Ok(GcRef::new(LuaString::from_bytes(bytes.to_vec())))
         }
-        let _local = crate::string::new(self, bytes)?;
-        let new_ref = GcRef::new(LuaString::from_bytes(bytes.to_vec()));
-        self.global_mut()
-            .interned_lt
-            .insert(bytes.to_vec().into_boxed_slice(), new_ref.clone());
-        Ok(new_ref)
     }
 
     /// Returns the current CallInfo index (the active call frame).
@@ -1488,16 +1491,16 @@ impl LuaState {
         );
         let child_proto = parent_cl.proto.p[proto_idx].clone();
         let nup = child_proto.upvalues.len();
-        let mut upvals: Vec<GcRef<UpVal>> = Vec::with_capacity(nup);
+        let mut upvals: Vec<std::cell::RefCell<GcRef<UpVal>>> = Vec::with_capacity(nup);
         for i in 0..nup {
             let desc = &child_proto.upvalues[i];
             let uv = if desc.instack {
                 let level = base + desc.idx as i32;
                 crate::func::find_upval(self, level)
             } else {
-                parent_cl.upvals[desc.idx as usize].clone()
+                parent_cl.upval(desc.idx as usize)
             };
-            upvals.push(uv);
+            upvals.push(std::cell::RefCell::new(uv));
         }
         let new_cl = GcRef::new(LuaClosureLua {
             proto: child_proto,
@@ -1511,14 +1514,15 @@ impl LuaState {
     }
 
     pub fn upvalue_get(&self, cl: &GcRef<LuaClosureLua>, n: usize) -> LuaValue {
-        let uv = &cl.upvals[n];
-        match &*uv.slot() {
-            lua_types::UpValState::Closed(v) => v.clone(),
+        let uv = cl.upval(n);
+        let slot = uv.slot().clone();
+        match slot {
+            lua_types::UpValState::Closed(v) => v,
             lua_types::UpValState::Open { thread_id: _, idx } => self.stack[idx.0 as usize].val.clone(),
         }
     }
     pub fn upvalue_set(&mut self, cl: &GcRef<LuaClosureLua>, n: usize, val: LuaValue) -> Result<(), LuaError> {
-        let uv = cl.upvals[n].clone();
+        let uv = cl.upval(n);
         let slot_idx = match &*uv.slot() {
             lua_types::UpValState::Open { idx, .. } => Some(*idx),
             lua_types::UpValState::Closed(_) => None,

@@ -1246,9 +1246,11 @@ fn get_upval_name<'a>(
         LuaValue::Function(LuaClosure::Lua(cl)) => cl.clone(),
         _ => return None,
     };
-    for (i, upval) in lua_cl.upvals.iter().enumerate() {
+    for (i, upval_slot) in lua_cl.upvals.iter().enumerate() {
         // C: if (c->upvals[i]->v.p == o)
-        if let lua_types::UpValState::Open { idx, .. } = *upval.slot() {
+        let upval = upval_slot.borrow().clone();
+        let state = upval.slot().clone();
+        if let lua_types::UpValState::Open { idx, .. } = state {
             if idx == val_idx {
                 // TODO(phase-b): the name needs to be tied to state's lifetime; using
                 // a static fallback keeps the trait bounds satisfied for now.

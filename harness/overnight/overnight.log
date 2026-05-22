@@ -40,3 +40,14 @@ fanout: mode=files  files=12  workers=6  dry_run=0
     status=syntax_failed  cost=$1.43949845  duration=600s  hooks=true  syntax=false (residual=161)
     status=ok  cost=$1.27099995  duration=768s  hooks=true  syntax=true (residual=0)
     status=ok  cost=$1.8371155999999997  duration=1215s  hooks=true  syntax=true (residual=0)
+    status=ok  cost=$0.9982558500000001  duration=1285s  hooks=true  syntax=true (residual=0)
+
+─── SUMMARY ───
+  files processed: 15
+  status=ok:       10
+  total cost USD:  $24.490970499999996  (note: subscription absorbs this; reported for tracking)
+
+Full results: harness/oracle/results/pilot.jsonl
+Per-file outputs: harness/oracle/results/*.translator.json + *.hooks.log
+[2026-05-16T04:22:43Z]   Phase C translate spend: $24.490970499999996
+[2026-05-16T04:22:43Z] ════ Phase C wire: lua-stdlib/src/lib.rs modules ════

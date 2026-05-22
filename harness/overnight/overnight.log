@@ -29,3 +29,5 @@ fanout: mode=files  files=12  workers=6  dry_run=0
   [ldblib.c] → crates/lua-stdlib/src/debug_lib.rs
     status=ok  cost=$1.445318  duration=868s  hooks=true  syntax=true (residual=0)
   [lcorolib.c] → crates/lua-stdlib/src/coro_lib.rs
+    status=hooks_failed  cost=$1.6719821000000001  duration=873s  hooks=false  syntax=true (residual=0)
+  [loadlib.c] → crates/lua-stdlib/src/loadlib.rs

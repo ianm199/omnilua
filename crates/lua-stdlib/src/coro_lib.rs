@@ -110,7 +110,7 @@ fn aux_resume(state: &mut LuaState, _co: GcRef<lua_types::value::LuaThread>, _na
     // re-raises it as a Lua error, matching C-Lua semantics on a coroutine
     // that cannot run.  Phase E will replace this body with the full
     // checkstack / xmove / lua_resume / xmove sequence.
-    let msg_bytes: &[u8] = b"coroutines not yet implemented (Phase E)";
+    let msg_bytes: &[u8] = b"not yet implemented: coroutines (Phase E)";
     match state.intern_str(msg_bytes) {
         Ok(s) => state.push(LuaValue::Str(s)),
         Err(_) => state.push(LuaValue::Nil),
@@ -225,7 +225,7 @@ pub fn co_yield(state: &mut LuaState) -> Result<usize, LuaError> {
     // gracefully rather than crashing the host with a Rust panic.
     let _nargs = state.get_top();
     Err(LuaError::runtime(format_args!(
-        "coroutine.yield: coroutines not yet implemented (Phase E)"
+        "not yet implemented: coroutine.yield (Phase E)"
     )))
 }
 

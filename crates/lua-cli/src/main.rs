@@ -15,10 +15,24 @@ use std::process::ExitCode;
 
 use lua_stdlib::auxlib::load_string;
 use lua_stdlib::init::open_libs;
+use lua_types::closure::LuaLClosure;
 use lua_types::error::LuaError;
+use lua_types::gc::GcRef;
 use lua_types::value::LuaValue;
 use lua_vm::api::{pcall_k, to_lua_string};
-use lua_vm::state::new_state;
+use lua_vm::state::{new_state, LuaState};
+
+fn parser_hook(
+    state: &mut LuaState,
+    name: &[u8],
+    firstchar: i32,
+) -> Result<GcRef<LuaLClosure>, LuaError> {
+    let proto = lua_parse::parse(state, lua_parse::DynData::default(), name, firstchar)?;
+    Ok(GcRef::new(LuaLClosure {
+        proto: GcRef::new(*proto),
+        upvals: Vec::new(),
+    }))
+}
 
 const MULTRET: i32 = -1;
 
@@ -57,6 +71,7 @@ fn main() -> ExitCode {
     eprintln!("[1/4] Creating LuaState...");
     let result = catch_unwind(AssertUnwindSafe(|| {
         let mut state = new_state().ok_or("new_state returned None")?;
+        state.global_mut().parser_hook = Some(parser_hook);
 
         eprintln!("[2/4] Opening standard library...");
         open_libs(&mut state).map_err(|e| format!("open_libs failed: {}", render_lua_error(&e)))?;

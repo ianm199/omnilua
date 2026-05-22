@@ -1,1 +1,1 @@
-load_string returned non-zero status: 1
+load_string status=1: print("hello"): Lua text parser not yet wired (phase-b: lua-parse::parse)

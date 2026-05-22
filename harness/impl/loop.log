@@ -241,3 +241,7 @@ help: use `let _ = ...` to ignore the resulting value
 [2026-05-16T17:12:15Z] ─── iter 1  (spent: $0.00) ───
 [2026-05-16T17:12:15Z]   real-error blocker at step 3/4 Loading source (parse + compile): load_string returned non-zero status: 1
 [2026-05-16T17:12:15Z]   dispatching DEBUG agent for real-error (budget $15)
+[2026-05-16T17:16:35Z]   agent done. iter cost=$2.4356544999999987  total=$0.00
+[2026-05-16T17:16:35Z] ─── iter 2  (spent: $0.00) ───
+[2026-05-16T17:16:36Z]   real-error blocker at step 3/4 Loading source (parse + compile): load_string status=1: print("hello"): Lua text parser not yet wired (phase-b: lua-parse::parse)
+[2026-05-16T17:16:36Z]   dispatching DEBUG agent for real-error (budget $15)

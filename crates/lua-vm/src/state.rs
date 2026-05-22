@@ -556,6 +556,18 @@ impl Collectable for LuaState {}
 
 // ─── GlobalState ─────────────────────────────────────────────────────────────
 
+/// Function-pointer signature for the text-source parser, installed on
+/// [`GlobalState::parser_hook`] by the embedder.
+///
+/// The implementation lives in `lua-parse`; `lua-vm` cannot depend on it
+/// directly (that would form a cycle), so the parser is reached via this
+/// function pointer registered at startup.
+pub type ParserHook = fn(
+    state: &mut LuaState,
+    name: &[u8],
+    firstchar: i32,
+) -> Result<GcRef<lua_types::closure::LuaLClosure>, LuaError>;
+
 /// Process-wide state shared by all Lua threads.
 ///
 /// C: `global_State` in `lstate.h`.
@@ -563,6 +575,13 @@ impl Collectable for LuaState {}
 ///
 /// Not exposed directly at the API; accessed via `state.global()` / `state.global_mut()`.
 pub struct GlobalState {
+    /// Phase-B hook for the Lua text parser. Set by the embedder (`lua-cli`
+    /// or stdlib host) to bridge the cyclic crate split between `lua-vm` and
+    /// `lua-parse`: when `f_parser` decides the chunk is text, it invokes
+    /// this hook instead of the parser stub. `None` leaves the stub in place
+    /// so unit tests that never load text still work.
+    pub parser_hook: Option<ParserHook>,
+
     // C: l_mem totalbytes — Phase D memory accounting
     // types.tsv: global_State.totalbytes → isize
     pub totalbytes: isize,
@@ -2228,6 +2247,7 @@ pub fn new_state() -> Option<LuaState> {
     // PORT NOTE: non-nil nilvalue signals "state not yet complete"; see is_complete().
 
     let global = GlobalState {
+        parser_hook: None,
         totalbytes: std::mem::size_of::<GlobalState>() as isize,
         gc_debt: 0,
         gc_estimate: 0,

@@ -16,3 +16,4 @@ path = "src/main.rs"
 lua-types.workspace = true
 lua-vm.workspace = true
 lua-stdlib.workspace = true
+lua-parse.workspace = true

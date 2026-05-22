@@ -1,10 +1,5 @@
-_soft = true
-_port = true
-_nomsg = true
-_U = false
-arg = arg or {}
-_G = _G or _ENV
-if _VERSION == nil then _VERSION = "Lua 5.4" end
+-- harness preamble (passed via -e, NOT prepended; preserves test file line numbers):
+-- _soft=true; _port=true; _nomsg=true; _U=false; arg=arg or {}; _G=_G or _ENV; if _VERSION==nil then _VERSION="Lua 5.4" end
 
 -- $Id: heavy.lua,v 1.7 2017/12/29 15:42:15 roberto Exp $
 -- See Copyright Notice in file all.lua

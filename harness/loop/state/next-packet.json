@@ -1,0 +1,78 @@
+{
+  "capabilities": [
+    "debug-line-hook-timing",
+    "gc-cycle-convergence"
+  ],
+  "commit": "2162d63",
+  "evidence_path": "harness/evidence/runs/20260522T142457Z-2162d63-test-fixer-fix-db-line-hook-timing.json",
+  "git_dirty": true,
+  "git_status_short": [
+    " M .claude/worktrees/agent-a0c4d7c805c6f1127",
+    " M .claude/worktrees/agent-a227f50474a35f744",
+    " M .claude/worktrees/agent-a287ab4456d3786b2",
+    " M .claude/worktrees/agent-a2e6489db72490802",
+    " M .claude/worktrees/agent-a4076e2d1ac11932b",
+    " M .claude/worktrees/agent-a41e53ce73592160f",
+    " M .claude/worktrees/agent-a45cc5a47e3378549",
+    " M .claude/worktrees/agent-a4bf5249b1d047930",
+    " M .claude/worktrees/agent-a5496c41ee3cf82c9",
+    " M .claude/worktrees/agent-a8083831579e0ffd1",
+    " M .claude/worktrees/agent-a8268512c702a2ca1",
+    " M .claude/worktrees/agent-a86aa43ac9c0b2a3d",
+    " M .claude/worktrees/agent-a8f4bfd7642e42fad",
+    " M .claude/worktrees/agent-a91bc9ac6a0211d0a",
+    " M .claude/worktrees/agent-a969829d177cae990",
+    " M .claude/worktrees/agent-aa6e5c9f19103c7e4",
+    " M .claude/worktrees/agent-ac14bc4de38192508",
+    " M .claude/worktrees/agent-ac7126ea6cd4a079b",
+    " M .claude/worktrees/agent-acacdf716b7d0f636",
+    " M .claude/worktrees/agent-ad6c80c855439690b",
+    " M .claude/worktrees/agent-ad915e819065c299c",
+    " M .claude/worktrees/agent-adf47834f1f9b3005",
+    " M .claude/worktrees/agent-ae51d0e314fe1835e",
+    " M crates/lua-parse/src/lib.rs",
+    " M harness/evidence/ledger.jsonl",
+    " M harness/impl/official/all.out",
+    " M harness/loop/state/dispatch-db.log",
+    " M harness/loop/state/loop-state.json",
+    " M harness/loop/state/transcripts/20260522T134455Z-test-fixer-fix-db-line-hook-timing.jsonl",
+    "?? harness/evidence/runs/20260522T134454Z-9d11e4c-test-fixer-fix-db-line-hook-timing.json"
+  ],
+  "mode": "test-fixer",
+  "packet": {
+    "capabilities": [
+      "debug-line-hook-timing"
+    ],
+    "cost_hint": "small",
+    "depends_on": [],
+    "exclusive": true,
+    "id": "fix-db-line-hook-timing",
+    "note": "db.lua:28 \u2014 assertion `#l == 0` fails because the line-hook callback fired (or recorded events) when it should not have. Test pattern: `debug.sethook(f, 'l')` then `load(s)()` then `debug.sethook()`. Look at `trace_exec` line-hook dispatch around line ~1916 in crates/lua-vm/src/debug.rs and the recently-added C-frame guard. The guard may be too lax. Scope: make ONLY this assertion at db.lua:28 pass; do not refactor the wider debug subsystem. Verify by running `./harness/run_official_test.sh reference/lua-c/testes/db.lua` from project root. Then confirm no regression by re-running the smoke set: `for t in strings closure tracegc big sort math; do ./harness/run_one_test.sh reference/lua-c/testes/$t.lua; done`.",
+    "phase": 6,
+    "resources": [
+      "lua-vm"
+    ],
+    "role": "test-fixer",
+    "schema_version": 1,
+    "selector": "auto",
+    "source_ranges": [
+      "crates/lua-vm/src/debug.rs:1900-1960",
+      "reference/lua-c/testes/db.lua:18-38",
+      "reference/lua-c/ldebug.c:140-220"
+    ],
+    "targets": [
+      "crates/lua-vm/src/debug.rs"
+    ]
+  },
+  "packet_id": "fix-db-line-hook-timing",
+  "prompt_hash": "ee33c8b1c48864cf",
+  "role": "test-fixer",
+  "run_id": "loop-10f5a00d318e1abb",
+  "runner_id": null,
+  "target_commit": "2162d63e41ecc10254e14a7862adf6f9d8376a56",
+  "targets": [
+    "crates/lua-vm/src/debug.rs"
+  ],
+  "tree_hash": "cd93ded2a4804a466091a8ed2071166bc763bd54ee88033cc80bbc6a14a6f8f0",
+  "ts": "2026-05-22T14:24:57.712132Z"
+}

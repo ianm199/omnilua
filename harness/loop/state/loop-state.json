@@ -1,0 +1,32 @@
+{
+  "consecutive_failures": 2,
+  "history": [
+    {
+      "dispatch_rc": 124,
+      "iteration": 0,
+      "packet": "fix-db-line-hook-timing",
+      "phase": "auto-dispatch",
+      "record_rc": 1,
+      "role": "test-fixer",
+      "runtime": "claude",
+      "transcript": "/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/harness/loop/state/transcripts/20260522T134455Z-test-fixer-fix-db-line-hook-timing.jsonl",
+      "ts": "2026-05-22T14:24:57Z"
+    },
+    {
+      "dispatch_rc": 124,
+      "iteration": 0,
+      "packet": "fix-db-line-hook-timing",
+      "phase": "auto-dispatch",
+      "record_rc": 1,
+      "role": "test-fixer",
+      "runtime": "claude",
+      "transcript": "/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/harness/loop/state/transcripts/20260522T142458Z-test-fixer-fix-db-line-hook-timing.jsonl",
+      "ts": "2026-05-22T15:04:59Z"
+    }
+  ],
+  "iteration": 0,
+  "last_failed_packet": "fix-db-line-hook-timing",
+  "last_successful_packet": null,
+  "same_packet_failures": 2,
+  "started_at": "2026-05-22T13:44:54Z"
+}

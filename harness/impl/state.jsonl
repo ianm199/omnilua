@@ -266,3 +266,6 @@
 {"ts":"2026-05-16T20:00:54Z","action":"dispatch_done","detail":"type=implement func=adjust_varargs cost=0.9152015000000001","total_cost":0.00}
 {"ts":"2026-05-16T20:00:54Z","action":"panic_detected","detail":"func=ci_trap iter=3","total_cost":0.00}
 {"ts":"2026-05-16T20:00:54Z","action":"dispatch_start","detail":"type=implement func=ci_trap iter=3","total_cost":0.00}
+{"ts":"2026-05-16T20:01:31Z","action":"dispatch_done","detail":"type=implement func=ci_trap cost=0.39213875","total_cost":0.00}
+{"ts":"2026-05-16T20:01:31Z","action":"panic_detected","detail":"func=upvalue_get iter=4","total_cost":0.00}
+{"ts":"2026-05-16T20:01:31Z","action":"dispatch_start","detail":"type=implement func=upvalue_get iter=4","total_cost":0.00}

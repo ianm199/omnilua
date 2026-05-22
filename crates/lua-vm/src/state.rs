@@ -1255,7 +1255,13 @@ impl LuaState {
     pub fn push_closure<A, B, C, D>(&mut self, _a: A, _b: B, _c: C, _d: D) -> Result<(), LuaError> { todo!("phase-b: push_closure") }
     pub fn new_tbc_upval(&mut self, _idx: StackIdx) -> Result<(), LuaError> { todo!("phase-b: new_tbc_upval") }
 
-    pub fn upvalue_get<F, N>(&mut self, _funcindex: F, _n: N) -> LuaValue { todo!("phase-b: upvalue_get") }
+    pub fn upvalue_get(&self, cl: &GcRef<LuaClosureLua>, n: usize) -> LuaValue {
+        let uv = &cl.upvals[n];
+        match uv.as_ref() {
+            UpVal::Closed(v) => v.clone(),
+            UpVal::Open { thread_id: _, idx } => self.stack[idx.0 as usize].val.clone(),
+        }
+    }
     pub fn upvalue_set<F, N>(&mut self, _funcindex: F, _n: N, _val: LuaValue) -> Result<(), LuaError> { todo!("phase-b: upvalue_set") }
 
     pub fn protected_call_raw(&mut self, func: StackIdx, nresults: i32, errfunc: StackIdx) -> Result<(), LuaError> {

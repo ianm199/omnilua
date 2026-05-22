@@ -4,4 +4,8 @@
 [4/4] Executing chunk...
 testing require
 package config: /|;|?|!|-|
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:55: assertion failed!
+testing 'require' message
++
+testing assignments, logical operators, and constructors
++
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:427: assertion failed!

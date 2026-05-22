@@ -1,2 +1,3 @@
 2 1.6208262500000001 reference/lua-c/testes/strings.lua
 4 1.9597812499999996 reference/lua-c/testes/literals.lua
+5 1.4235165 reference/lua-c/testes/calls.lua

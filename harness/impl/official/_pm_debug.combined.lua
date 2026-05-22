@@ -88,7 +88,6 @@ assert(not f('aaa', 'ab+a'))
 assert(f('aba', 'ab+a') == 'aba')
 assert(f('a$a', '.$') == 'a')
 assert(f('a$a', '.%$') == 'a$')
-assert(f('a$a', '.%$') == 'a$')
 assert(f('a$a', '.$.') == 'a$a')
 assert(not f('a$a', '$$'))
 assert(not f('a$b', 'a$'))
@@ -188,6 +187,7 @@ assert(string.gsub('áéí', '$', '\0óú') == 'áéí\0óú')
 assert(string.gsub('', '^', 'r') == 'r')
 assert(string.gsub('', '$', 'r') == 'r')
 print('+')
+io.write('[m180]\n')
 
 
 do   -- new (5.3.3) semantics for empty matches
@@ -202,10 +202,12 @@ do   -- new (5.3.3) semantics for empty matches
   end
   assert(res == "-a-b-c-d-")
 end
+io.write('[m194]\n')
 
 
 assert(string.gsub("um (dois) tres (quatro)", "(%(%w+%))", string.upper) ==
             "um (DOIS) tres (QUATRO)")
+io.write('[m198]\n')
 
 do
   local function setglobal (n,v) rawset(_G, n, v) end
@@ -213,20 +215,26 @@ do
   assert(_G.a=="roberto" and _G.roberto=="a")
   _G.a = nil; _G.roberto = nil
 end
+io.write('[m205]\n')
 
 function f(a,b) return string.gsub(a,'.',b) end
+io.write('[m207 just-assigned global f]\n')
 assert(string.gsub("trocar tudo em |teste|b| é |beleza|al|", "|([^|]*)|([^|]*)|", f) ==
             "trocar tudo em bbbbb é alalalalalal")
+io.write('[m209]\n')
 
 local function dostring (s) return load(s, "")() or "" end
+io.write('[m211 defined dostring]\n')
 assert(string.gsub("alo $a='x'$ novamente $return a$",
                    "$([^$]*)%$",
                    dostring) == "alo  novamente x")
+io.write('[m214]\n')
 
 local x = string.gsub("$x=string.gsub('alo', '.', string.upper)$ assim vai para $return x$",
          "$([^$]*)%$", dostring)
 assert(x == ' assim vai para ALO')
 _G.a, _G.x = nil
+io.write('[m219]\n')
 
 local t = {}
 local s = 'a alo jose  joao'
@@ -235,7 +243,7 @@ local r = string.gsub(s, '()(%w+)()', function (a,w,b)
              t[a] = b-a;
            end)
 assert(s == r and t[1] == 1 and t[3] == 3 and t[7] == 4 and t[13] == 4)
-io.write('[A227]\n')
+io.write('[m227]\n')
 
 
 local function isbalanced (s)
@@ -245,13 +253,13 @@ end
 assert(isbalanced("(9 ((8))(\0) 7) \0\0 a b ()(c)() a"))
 assert(not isbalanced("(9 ((8) 7) a b (\0 c) a"))
 assert(string.gsub("alo 'oi' alo", "%b''", '"') == 'alo " alo')
-io.write('[A236]\n')
+io.write('[m236]\n')
 
 
 local t = {"apple", "orange", "lime"; n=0}
 assert(string.gsub("x and x and x", "x", function () t.n=t.n+1; return t[t.n] end)
         == "apple and orange and lime")
-io.write('[A241]\n')
+io.write('[m241]\n')
 
 t = {n=0}
 string.gsub("first second word", "%w%w*", function (w) t.n=t.n+1; t[t.n] = w end)
@@ -261,7 +269,7 @@ t = {n=0}
 assert(string.gsub("first second word", "%w+",
          function (w) t.n=t.n+1; t[t.n] = w end, 2) == "first second word")
 assert(t[1] == "first" and t[2] == "second" and t[3] == undef)
-io.write('[A250]\n')
+io.write('[m250]\n')
 
 checkerror("invalid replacement value %(a table%)",
             string.gsub, "alo", ".", {a = {}})
@@ -269,7 +277,7 @@ checkerror("invalid capture index %%2", string.gsub, "alo", ".", "%2")
 checkerror("invalid capture index %%0", string.gsub, "alo", "(%0)", "a")
 checkerror("invalid capture index %%1", string.gsub, "alo", "(%1)", "a")
 checkerror("invalid use of '%%'", string.gsub, "alo", ".", "%x")
-io.write('[A257]\n')
+io.write('[m257]\n')
 
 
 if not _soft then
@@ -283,63 +291,6 @@ if not _soft then
   a = string.rep('a', 10000) .. string.rep('b', 10000)
   assert(not pcall(string.gsub, a, 'b'))
 end
-io.write('[A270]\n')
-
--- recursive nest of gsubs
-local function rev (s)
-  return string.gsub(s, "(.)(.+)", function (c,s1) return rev(s1)..c end)
-end
-
-local x = "abcdef"
-assert(rev(rev(x)) == x)
-io.write('[A278]\n')
-
-
--- gsub with tables
-assert(string.gsub("alo alo", ".", {}) == "alo alo")
-io.write('[A282]\n')
-assert(string.gsub("alo alo", "(.)", {a="AA", l=""}) == "AAo AAo")
-io.write('[A283]\n')
-assert(string.gsub("alo alo", "(.).", {a="AA", l="K"}) == "AAo AAo")
-io.write('[A284]\n')
-assert(string.gsub("alo alo", "((.)(.?))", {al="AA", o=false}) == "AAo AAo")
-io.write('[A285]\n')
-
-assert(string.gsub("alo alo", "().", {'x','yy','zzz'}) == "xyyzzz alo")
-io.write('[A287]\n')
-
-t = {}; setmetatable(t, {__index = function (t,s) return string.upper(s) end})
-assert(string.gsub("a alo b hi", "%w%w+", t) == "a ALO b HI")
-io.write('[A290]\n')
-
-
--- tests for gmatch
-local a = 0
-for i in string.gmatch('abcde', '()') do assert(i == a+1); a=i end
-assert(a==6)
-io.write('[A296]\n')
-
-t = {n=0}
-for w in string.gmatch("first second word", "%w+") do
-      t.n=t.n+1; t[t.n] = w
-end
-assert(t[1] == "first" and t[2] == "second" and t[3] == "word")
-io.write('[A302]\n')
-
-t = {3, 6, 9}
-for i in string.gmatch ("xuxx uu ppar r", "()(.)%2") do
-  assert(i == table.remove(t, 1))
-end
-assert(#t == 0)
-io.write('[A308]\n')
-
-t = {}
-for i,j in string.gmatch("13 14 10 = 11, 15= 16, 22=23", "(%d+)%s*=%s*(%d+)") do
-  t[tonumber(i)] = tonumber(j)
-end
-a = 0
-for k,v in pairs(t) do assert(k+1 == v+0); a=a+1 end
-assert(a == 3)
-io.write('[A316]\n')
+io.write('[m270]\n')
 
 print('END_DEBUG')

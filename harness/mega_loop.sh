@@ -38,7 +38,9 @@ SESSION_BUDGET=${SESSION_BUDGET:-400.00}
 AUTO_COMMIT=${AUTO_COMMIT:-1}
 COMMIT_LOCK_DIR="$OUT_DIR/commit.lock"
 PREV_PASS_COUNT=-1
-declare -a STUCK_PROGS=()
+# Last-seen error sig per prog (key: prog text or label, value: normalized sig).
+# Stuck = same sig as previous round. Reset when sig changes (= progress).
+declare -A LAST_SIG=()
 
 # A frontier of Lua test programs. Each entry is a TSV: program\texpected_stdout.
 # expected_stdout uses literal \n for newlines and \t for tabs (interpreted via printf %b).
@@ -132,6 +134,12 @@ emit() {
     local ts; ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     echo "[$ts mega] $*" | tee -a "$LOG"
 }
+
+# Many official tests do `require 'bwcoercion'` etc. Point LUA_PATH at the
+# testes/ directory so require() finds them. The lua-rs binary inherits this
+# env var. (run_official_test.sh sets the same thing for its wrapper path.)
+TESTES_DIR="$ROOT/reference/lua-c/testes"
+export LUA_PATH="$TESTES_DIR/?.lua;$TESTES_DIR/?/init.lua;./?.lua;./?/init.lua"
 
 # Resolve which test programs to use. Each entry is TSV: prog\texpected.
 # Split into two parallel arrays.
@@ -420,30 +428,30 @@ dispatch_debug() {
     echo "$cost"
 }
 
-# Extract a coarse error signature from a test's output. Used for stuck-detect:
-# two consecutive failures with the same signature on the same program means we
-# can't make progress on that program this session.
+# Extract a coarse error signature from a test's output. Strips the
+# [string "..."] source prefix and line numbers in assertion errors so
+# different assertion sites (line 50 vs line 111) count as the same class
+# — "still failing assert" — while truly different errors (parse error vs
+# runtime panic) come back different.
 error_signature() {
     local out_file="$1"
     if grep -qE "not yet implemented:" "$out_file"; then
         grep -E "not yet implemented:" "$out_file" | head -1 \
-            | sed -E 's/^.*not yet implemented: //' | head -c 80
+            | sed -E 's/^.*not yet implemented: //' \
+            | head -c 80
     elif grep -qE "^thread '[^']+' .* panicked at " "$out_file"; then
         grep -oE "panicked at [^:]+:[0-9]+" "$out_file" | head -1
     elif grep -qE "^\[err\]" "$out_file"; then
-        grep -E "^\[err\]" "$out_file" | head -1 | head -c 80
+        # Strip line numbers and [string "..."] wrapper from error to
+        # normalize across rounds (assertion at line 42 vs line 99 is same
+        # CLASS of failure — both "assertion failed").
+        grep -E "^\[err\]" "$out_file" | head -1 \
+            | sed -E 's/\[string "[^"]*"\]://g' \
+            | sed -E 's/:[0-9]+:/:LINE:/g' \
+            | head -c 100
     else
         echo "unknown"
     fi
-}
-
-# Whether $1 is in the STUCK_PROGS list.
-is_stuck() {
-    local p="$1"
-    for s in "${STUCK_PROGS[@]+"${STUCK_PROGS[@]}"}"; do
-        if [ "$s" = "$p" ]; then return 0; fi
-    done
-    return 1
 }
 
 emit "═════════════════════════════════════════════════════════════════"
@@ -522,14 +530,16 @@ while [ "$OUTER" -lt "$MAX_OUTER" ]; do
                 fi
             fi
             if [ "$failing" = "0" ]; then continue; fi
-            # Stuck-detect: same prog + same error signature as last attempt = skip.
+            # Stuck-detect: skip if this prog has SAME signature as last round.
+            # Different sig = made progress; update LAST_SIG and dispatch.
             current_sig=$(error_signature "$out_file")
-            sig_key="${prog}::${current_sig}"
-            if is_stuck "$sig_key"; then
-                emit "  skip stuck prog (sig: $current_sig): ${LABELS[$((idx-1))]:-inline}"
+            prog_key="${LABELS[$((idx-1))]:-inline-$idx}"
+            prev_sig="${LAST_SIG[$prog_key]:-}"
+            if [ -n "$prev_sig" ] && [ "$prev_sig" = "$current_sig" ]; then
+                emit "  skip stuck prog (same sig 2 rounds: $current_sig): $prog_key"
                 continue
             fi
-            STUCK_PROGS+=("$sig_key")
+            LAST_SIG[$prog_key]="$current_sig"
             debug_iter=$((debug_iter + 1))
             if [ "$debug_iter" -gt "$MAX_PER_OUTER" ]; then break; fi
             ITER=$debug_iter

@@ -1,2 +1,5 @@
 3 2.4103414999999995 reference/lua-c/testes/locals.lua [opus]
 2 1.1940076000000002 reference/lua-c/testes/strings.lua [sonnet]
+4 1.8869812500000007 reference/lua-c/testes/files.lua [opus]
+1 [2026-05-18T19:52:27Z mega]   → committed 9355448 (debug/reference/lua-c/testes/gc.lua )
+12.053621249999999 reference/lua-c/testes/gc.lua [opus]

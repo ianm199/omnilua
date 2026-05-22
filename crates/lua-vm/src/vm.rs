@@ -992,8 +992,14 @@ pub(crate) fn concat(state: &mut LuaState, total: i32) -> Result<(), LuaError> {
             || matches!(v_tm1, LuaValue::Int(_) | LuaValue::Float(_));
         if !top2_coercible || !top1_stringlike {
             state.try_concat_tm(&v_tm1, &v_tm2)?;
-            // C: luaT_tryconcatTM may invalidate `top` — update
+            // C: n stays at 2; the shared `total -= n-1; L->top.p -= n-1`
+            // at the bottom of the do-while runs for this branch too.
+            // The metamethod writes its single result to top-2, leaving
+            // top-1 stale; popping that stale slot is what makes the next
+            // iteration see the just-computed result at the new top-1.
             total -= 1;
+            let top = state.top_idx();
+            state.set_top(top - 1);
             if total <= 1 {
                 break;
             }

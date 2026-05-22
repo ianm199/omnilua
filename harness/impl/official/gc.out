@@ -10,4 +10,8 @@ steps
 steps (2)
 clearing tables
 weak tables
-[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:329: assertion failed!
++
+
+ >>> testC not active: skipping userdata GC tests <<<
+
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:472: assertion failed!

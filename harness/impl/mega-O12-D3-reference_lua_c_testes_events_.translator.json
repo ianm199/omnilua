@@ -1,0 +1,79 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 300605,
+  "duration_api_ms": 300845,
+  "ttft_ms": 3854,
+  "num_turns": 37,
+  "result": "## Root cause\n\n`equal_obj` in `crates/lua-vm/src/vm.rs:931` (and `:933`) was passing the *table operand itself* into `state.fast_tm_table(Some(h1), TagMethod::Eq)`. But `fast_tm_table` expects the **metatable**, not the table — it does `mt.get_short_str(\"__eq\")` on whatever you hand it. So when two distinct tables share a metatable with `__eq` (e.g. `Op(1) == Op(1)`), both lookups returned `Nil` and `equal_obj` reported `Ok(false)`. The user-visible failure landed on `assert(Op(1) == Op(1) and Op(1) ~= Op(2))` (combined line 251 / events.lua line 242).\n\nCompare with the userdata branch (`fast_tm_ud`), which correctly does `u.metatable()` internally — that's why only the Table case was broken.\n\n## Fix\n\nIn `crates/lua-vm/src/vm.rs:925-946`, extract each operand's metatable first (`h1.metatable()` / `h2.metatable()`) and pass those `Option<GcRef<LuaTable>>`s into `fast_tm_table`. This matches the C `fasttm(L, hvalue(t)->metatable, TM_EQ)` shape.\n\n## State after fix\n\n- `cargo build -p lua-cli` compiles cleanly (warnings only, no errors).\n- No temporary instrumentation was added; nothing to remove.\n- Per instructions, I did not re-run the program; the mega-loop will re-test. The next failure inside `events.lua` (if any) will be a separate bug downstream of this one.",
+  "stop_reason": "end_turn",
+  "session_id": "665338f6-031d-4a9d-b858-4992ca84ea35",
+  "total_cost_usd": 2.21702725,
+  "usage": {
+    "input_tokens": 42,
+    "cache_creation_input_tokens": 74721,
+    "cache_read_input_tokens": 2513820,
+    "output_tokens": 19653,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 74721,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 1100,
+        "cache_read_input_tokens": 92995,
+        "cache_creation_input_tokens": 625,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 625
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 1481,
+      "outputTokens": 19,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.001576,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000
+    },
+    "claude-opus-4-7[1m]": {
+      "inputTokens": 42,
+      "outputTokens": 19653,
+      "cacheReadInputTokens": 2513820,
+      "cacheCreationInputTokens": 74721,
+      "webSearchRequests": 0,
+      "costUSD": 2.21545125,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01C1zNknZHJYcPpxtRJLMMrH",
+      "tool_input": {
+        "command": "awk 'NR==241 {print NR \": \" $0}' reference/lua-c/testes/events.lua",
+        "description": "Show line 241 of events.lua"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "uuid": "a5db34d8-4057-42f5-9078-cbba8707f7dc"
+}

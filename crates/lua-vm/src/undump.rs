@@ -20,6 +20,7 @@ use lua_types::value::LuaValue;
 // TODO(port): confirm concrete module paths for all GC types in Phase B.
 use lua_types::proto::{LuaProto, UpvalDesc, LocalVar, AbsLineInfo};
 use lua_types::closure::{LuaClosure, LuaLClosure};
+use lua_types::upval::UpVal;
 use lua_types::string::LuaString;
 use lua_types::gc::GcRef;
 use lua_types::opcode::Instruction;
@@ -1043,6 +1044,9 @@ pub(crate) fn undump(
     // TODO(port): use the proper lfunc::new_lua_closure(state, nupvalues) API
     // once lfunc.rs is translated and the API is settled.
     let mut cl = LuaLClosure::placeholder();
+    cl.upvals = (0..nupvalues as usize)
+        .map(|_| std::cell::RefCell::new(GcRef::new(UpVal::closed(LuaValue::Nil))))
+        .collect();
 
     // C: setclLvalue2s(L, L->top.p, cl);  luaD_inctop(L);
     // macros.tsv: setclLvalue2s → state.set_at(o, LuaValue::Function(LuaClosure::Lua(cl)))

@@ -1279,7 +1279,7 @@ fn precover(state: &mut LuaState, mut status: LuaStatus) -> LuaStatus {
 /// C: `LUA_API int lua_resume(lua_State *L, lua_State *from, int nargs, int *nresults)`
 pub fn lua_resume(
     state: &mut LuaState,
-    from: Option<&mut LuaState>,
+    from: Option<&LuaState>,
     nargs: i32,
     nresults: &mut i32,
 ) -> LuaStatus {

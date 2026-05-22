@@ -3262,6 +3262,33 @@ pub fn new_thread(state: &mut LuaState, initial_body: Option<LuaValue>) -> Resul
     stack_init(&mut new_thread);
 
     if let Some(body) = initial_body {
+        // Close any open upvalues that the body closure captured from this thread's
+        // stack.  In C, open upvalues are pointers that remain valid across threads
+        // because the creating thread is still alive.  In Rust we cannot share a raw
+        // stack pointer, so we materialise the value into the upvalue object now so
+        // the coroutine never needs to reach back into this thread's stack.
+        if let LuaValue::Function(LuaClosure::Lua(ref lcl)) = body {
+            let n = lcl.upvals.len();
+            for i in 0..n {
+                let uv = lcl.upval(i);
+                let idx = match &*uv.slot() {
+                    lua_types::UpValState::Open { idx, .. } => *idx,
+                    lua_types::UpValState::Closed(_) => continue,
+                };
+                let val = state.stack.get(idx.0 as usize)
+                    .map(|s| s.val.clone())
+                    .unwrap_or(LuaValue::Nil);
+                // Remove from the creating thread's openupval list first, so that
+                // a later close_upval call does not encounter a Closed entry there.
+                state.openupval.retain(|open_uv| {
+                    match &*open_uv.slot() {
+                        lua_types::UpValState::Open { idx: i2, .. } => *i2 != idx,
+                        lua_types::UpValState::Closed(_) => true,
+                    }
+                });
+                uv.close_with(val);
+            }
+        }
         new_thread.push(body);
     }
 

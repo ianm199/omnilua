@@ -103,7 +103,9 @@ impl Trace for GlobalState {
         self.main_thread_value.trace(m);
 
         for entry in self.threads.values() {
-            entry.state.borrow().trace(m);
+            if let Ok(s) = entry.state.try_borrow() {
+                s.trace(m);
+            }
             entry.value.trace(m);
         }
 

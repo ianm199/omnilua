@@ -177,7 +177,7 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
         }
         co_state.global_mut().current_thread_id = co_id;
         let mut nres: i32 = 0;
-        let status = lua_vm::do_::lua_resume(&mut *co_state, None, narg, &mut nres);
+        let status = lua_vm::do_::lua_resume(&mut *co_state, Some(state), narg, &mut nres);
         co_state.global_mut().current_thread_id = parent_thread_id;
         let co_top = co_state.top_idx().0 as i32;
         let ci_func = co_state.current_call_info().func.0 as i32;
@@ -286,6 +286,45 @@ fn aux_wrap(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 }
 
+/// Close all open upvalues of `val` (and transitively of any Lua closures
+/// it refers to) by copying their current values from the parent thread's
+/// stack into the `UpVal` struct.
+///
+/// When a closure is transferred to a new coroutine, its open upvalues
+/// point into the parent thread's stack by `StackIdx`. The coroutine has
+/// its own separate `stack` Vec, so reading an open upvalue from inside
+/// the coroutine would access the wrong slot. Closing upvalues before
+/// transfer converts `Open { idx }` → `Closed(current_value)`, making
+/// the value self-contained and accessible across thread boundaries.
+///
+/// Recursion terminates because closing an upvalue changes it from
+/// `Open` to `Closed`; any cycle (e.g. a self-referential `local function`)
+/// is therefore visited at most twice before the second pass is a no-op.
+fn close_open_upvals_for_coroutine(state: &mut LuaState, val: &LuaValue) {
+    let cl = match val {
+        LuaValue::Function(LuaClosure::Lua(cl)) => cl.clone(),
+        _ => return,
+    };
+    for uv_cell in cl.upvals.iter() {
+        let uv = uv_cell.borrow().clone();
+        let idx_opt = match &*uv.slot() {
+            UpValState::Open { idx, .. } => Some(*idx),
+            UpValState::Closed(_) => None,
+        };
+        let idx = match idx_opt {
+            Some(i) => i,
+            None => continue,
+        };
+        let v = state.stack
+            .get(idx.0 as usize)
+            .map(|s| s.val.clone())
+            .unwrap_or(LuaValue::Nil);
+        *uv.state.borrow_mut() = UpValState::Closed(v.clone());
+        state.openupval.retain(|u| !GcRef::ptr_eq(u, &uv));
+        close_open_upvals_for_coroutine(state, &v);
+    }
+}
+
 /// `coroutine.create(f)` — create a new coroutine that will run function `f`.
 ///
 /// Pushes the new thread value and returns 1.
@@ -302,6 +341,7 @@ fn aux_wrap(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn co_create(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_type(1, LuaType::Function)?;
     let body = state.value_at(1);
+    close_open_upvals_for_coroutine(state, &body);
     let _nl = state.new_thread(Some(body))?;
     Ok(1)
 }

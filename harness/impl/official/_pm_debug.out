@@ -22,5 +22,6 @@ testing pattern matching
 [m250]
 [m257]
 [m270]
-END_DEBUG
-[ok] execution completed, status=Ok
+[m278]
+[m282]
+[err] pcall_k failed: Runtime: [string "-- harness preamble: emulate the globals lua-..."]:309: assertion failed!

@@ -293,4 +293,190 @@ if not _soft then
 end
 io.write('[m270]\n')
 
+-- recursive nest of gsubs
+local function rev (s)
+  return string.gsub(s, "(.)(.+)", function (c,s1) return rev(s1)..c end)
+end
+
+local x = "abcdef"
+assert(rev(rev(x)) == x)
+io.write('[m278]\n')
+
+
+-- gsub with tables
+assert(string.gsub("alo alo", ".", {}) == "alo alo")
+io.write('[m282]\n')
+assert(string.gsub("alo alo", "(.)", {a="AA", l=""}) == "AAo AAo")
+io.write('[m283]\n')
+assert(string.gsub("alo alo", "(.).", {a="AA", l="K"}) == "AAo AAo")
+io.write('[m284]\n')
+assert(string.gsub("alo alo", "((.)(.?))", {al="AA", o=false}) == "AAo AAo")
+io.write('[m285]\n')
+
+assert(string.gsub("alo alo", "().", {'x','yy','zzz'}) == "xyyzzz alo")
+io.write('[m287]\n')
+
+t = {}; setmetatable(t, {__index = function (t,s) return string.upper(s) end})
+assert(string.gsub("a alo b hi", "%w%w+", t) == "a ALO b HI")
+io.write('[m290]\n')
+
+-- tests for gmatch
+local a = 0
+for i in string.gmatch('abcde', '()') do assert(i == a+1); a=i end
+assert(a==6)
+io.write('[m296]\n')
+
+t = {n=0}
+for w in string.gmatch("first second word", "%w+") do
+      t.n=t.n+1; t[t.n] = w
+end
+assert(t[1] == "first" and t[2] == "second" and t[3] == "word")
+io.write('[m302]\n')
+
+t = {3, 6, 9}
+for i in string.gmatch ("xuxx uu ppar r", "()(.)%2") do
+  assert(i == table.remove(t, 1))
+end
+assert(#t == 0)
+io.write('[m308]\n')
+
+t = {}
+for i,j in string.gmatch("13 14 10 = 11, 15= 16, 22=23", "(%d+)%s*=%s*(%d+)") do
+  t[tonumber(i)] = tonumber(j)
+end
+a = 0
+for k,v in pairs(t) do assert(k+1 == v+0); a=a+1 end
+assert(a == 3)
+io.write('[m316]\n')
+
+
+do   -- init parameter in gmatch
+  local s = 0
+  for k in string.gmatch("10 20 30", "%d+", 3) do
+    s = s + tonumber(k)
+  end
+  assert(s == 50)
+
+  s = 0
+  for k in string.gmatch("11 21 31", "%d+", -4) do
+    s = s + tonumber(k)
+  end
+  assert(s == 32)
+
+  -- there is an empty string at the end of the subject
+  s = 0
+  for k in string.gmatch("11 21 31", "%w*", 9) do
+    s = s + 1
+  end
+  assert(s == 1)
+
+  -- there are no empty strings after the end of the subject
+  s = 0
+  for k in string.gmatch("11 21 31", "%w*", 10) do
+    s = s + 1
+  end
+  assert(s == 0)
+end
+io.write('[m345]\n')
+
+
+-- tests for `%f' (`frontiers')
+
+assert(string.gsub("aaa aa a aaa a", "%f[%w]a", "x") == "xaa xa x xaa x")
+assert(string.gsub("[[]] [][] [[[[", "%f[[].", "x") == "x[]] x]x] x[[[")
+assert(string.gsub("01abc45de3", "%f[%d]", ".") == ".01abc.45de.3")
+assert(string.gsub("01abc45 de3x", "%f[%D]%w", ".") == "01.bc45 de3.")
+assert(string.gsub("function", "%f[\1-\255]%w", ".") == ".unction")
+assert(string.gsub("function", "%f[^\1-\255]", ".") == "function.")
+io.write('[m355]\n')
+
+assert(string.find("a", "%f[a]") == 1)
+assert(string.find("a", "%f[^%z]") == 1)
+assert(string.find("a", "%f[^%l]") == 2)
+assert(string.find("aba", "%f[a%z]") == 3)
+assert(string.find("aba", "%f[%z]") == 4)
+assert(not string.find("aba", "%f[%l%z]"))
+assert(not string.find("aba", "%f[^%l%z]"))
+io.write('[m363]\n')
+
+local i, e = string.find(" alo aalo allo", "%f[%S].-%f[%s].-%f[%S]")
+assert(i == 2 and e == 5)
+local k = string.match(" alo aalo allo", "%f[%S](.-%f[%s].-%f[%S])")
+assert(k == 'alo ')
+io.write('[m368]\n')
+
+local a = {1, 5, 9, 14, 17,}
+for k in string.gmatch("alo alo th02 is 1hat", "()%f[%w%d]") do
+  assert(table.remove(a, 1) == k)
+end
+assert(#a == 0)
+io.write('[m374]\n')
+
+
+-- malformed patterns
+local function malform (p, m)
+  m = m or "malformed"
+  local r, msg = pcall(string.find, "a", p)
+  assert(not r and string.find(msg, m))
+end
+
+malform("(.", "unfinished capture")
+malform(".)", "invalid pattern capture")
+malform("[a")
+malform("[]")
+malform("[^]")
+malform("[a%]")
+malform("[a%")
+malform("%b")
+malform("%ba")
+malform("%")
+malform("%f", "missing")
+io.write('[m394]\n')
+
+-- \0 in patterns
+assert(string.match("ab\0\1\2c", "[\0-\2]+") == "\0\1\2")
+assert(string.match("ab\0\1\2c", "[\0-\0]+") == "\0")
+assert(string.find("b$a", "$\0?") == 2)
+assert(string.find("abc\0efg", "%\0") == 4)
+assert(string.match("abc\0efg\0\1e\1g", "%b\0\1") == "\0efg\0\1e\1")
+assert(string.match("abc\0\0\0", "%\0+") == "\0\0\0")
+assert(string.match("abc\0\0\0", "%\0%\0?") == "\0\0")
+io.write('[m403]\n')
+
+-- magic char after \0
+assert(string.find("abc\0\0","\0.") == 4)
+assert(string.find("abcx\0\0abc\0abc","x\0\0abc\0a.") == 4)
+io.write('[m407]\n')
+
+
+do   -- test reuse of original string in gsub
+  local s = string.rep("a", 100)
+  local r = string.gsub(s, "b", "c")   -- no match
+  assert(string.format("%p", s) == string.format("%p", r))
+
+  r = string.gsub(s, ".", {x = "y"})   -- no substitutions
+  assert(string.format("%p", s) == string.format("%p", r))
+
+  local count = 0
+  r = string.gsub(s, ".", function (x)
+                            assert(x == "a")
+                            count = count + 1
+                            return nil    -- no substitution
+                          end)
+  r = string.gsub(r, ".", {b = 'x'})   -- "a" is not a key; no subst.
+  assert(count == 100)
+  assert(string.format("%p", s) == string.format("%p", r))
+
+  count = 0
+  r = string.gsub(s, ".", function (x)
+                            assert(x == "a")
+                            count = count + 1
+                            return x    -- substitution...
+                          end)
+  assert(count == 100)
+  -- no reuse in this case
+  assert(r == s and string.format("%p", s) ~= string.format("%p", r))
+end
+io.write('[m437]\n')
+
 print('END_DEBUG')

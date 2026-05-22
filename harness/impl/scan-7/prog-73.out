@@ -1,18 +1,8 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=2 e2=NonReloc info=3 r1=2 r2=3 freereg=4 nactvar=1 line=57
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=2 line=66
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=3 nactvar=2 line=67
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=16 r1=11 r2=16 freereg=17 nactvar=15 line=192
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=16 r1=12 r2=16 freereg=17 nactvar=15 line=193
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=3 nactvar=2 line=214
-[cg_emit_eq] e1=NonReloc info=21 e2=NonReloc info=22 r1=21 r2=22 freereg=23 nactvar=20 line=499
-[cg_emit_eq] e1=NonReloc info=21 e2=NonReloc info=22 r1=21 r2=22 freereg=23 nactvar=20 line=502
-[cg_emit_eq] e1=NonReloc info=21 e2=NonReloc info=22 r1=21 r2=22 freereg=23 nactvar=20 line=504
-[cg_emit_eq] e1=NonReloc info=25 e2=NonReloc info=26 r1=25 r2=26 freereg=27 nactvar=24 line=544
-[cg_emit_eq] e1=NonReloc info=25 e2=NonReloc info=26 r1=25 r2=26 freereg=27 nactvar=24 line=547
-[cg_emit_eq] e1=NonReloc info=27 e2=NonReloc info=28 r1=27 r2=28 freereg=29 nactvar=26 line=555
 [4/4] Executing chunk...
-[ok] execution completed, status=Ok
+'os.tmpname' file cannot be open; skipping file tests
++
+testing date/time
+[err] pcall_k failed: Runtime: field 'year' missing in date table

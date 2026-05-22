@@ -3432,8 +3432,7 @@ fn primaryexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Resu
             lex_next(ls, state)?;
             expr(ls, state, v)?;
             check_match(ls, state, b')' as TokenKind, b'(' as TokenKind, line)?;
-            // C: luaK_dischargevars(ls->fs, v)
-            // TODO(port): lua_code::discharge_vars(ls.fs.as_mut().unwrap(), v)?;
+            cg_discharge_vars(ls.fs.as_mut().unwrap(), line, v)?;
         }
         TK_NAME => {
             singlevar(ls, state, v)?;

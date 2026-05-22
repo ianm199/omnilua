@@ -1,15 +1,5 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=6 e2=NonReloc info=7 r1=6 r2=7 freereg=8 nactvar=5 line=33
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=1 r1=7 r2=1 freereg=8 nactvar=5 line=33
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=44
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=45
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=46
-[cg_emit_eq] e1=NonReloc info=7 e2=KInt info=0 r1=7 r2=127 freereg=8 nactvar=6 line=47
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=49
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=1 r1=8 r2=1 freereg=9 nactvar=6 line=49
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=11 r1=10 r2=11 freereg=12 nactvar=10 line=66
 [4/4] Executing chunk...
 [ok] execution completed, status=Ok

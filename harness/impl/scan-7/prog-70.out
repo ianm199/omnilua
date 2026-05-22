@@ -1,36 +1,6 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=54
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=57
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=11 r1=9 r2=11 freereg=12 nactvar=10 line=114
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=263
-[cg_emit_eq] e1=NonReloc info=8 e2=KInt info=0 r1=8 r2=137 freereg=11 nactvar=10 line=266
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=11 r1=9 r2=11 freereg=12 nactvar=10 line=266
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=2 r1=0 r2=2 freereg=3 nactvar=1 line=269
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=7 r1=10 r2=7 freereg=14 nactvar=13 line=273
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=137 freereg=14 nactvar=13 line=273
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=14 r1=12 r2=14 freereg=15 nactvar=13 line=273
-[cg_emit_eq] e1=NonReloc info=9 e2=KInt info=0 r1=9 r2=131 freereg=10 nactvar=8 line=285
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=1 r1=4 r2=1 freereg=6 nactvar=5 line=403
-[cg_emit_eq] e1=NonReloc info=24 e2=NonReloc info=18 r1=24 r2=18 freereg=25 nactvar=24 line=531
-[cg_emit_eq] e1=NonReloc info=25 e2=NonReloc info=15 r1=25 r2=15 freereg=26 nactvar=24 line=532
-[cg_emit_eq] e1=NonReloc info=28 e2=NonReloc info=29 r1=28 r2=29 freereg=30 nactvar=26 line=540
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=127 freereg=1 nactvar=1 line=544
-[cg_emit_eq] e1=NonReloc info=2 e2=KInt info=0 r1=2 r2=127 freereg=3 nactvar=1 line=558
-[cg_emit_eq] e1=NonReloc info=29 e2=KInt info=0 r1=29 r2=142 freereg=31 nactvar=30 line=561
-[cg_emit_eq] e1=NonReloc info=16 e2=NonReloc info=14 r1=16 r2=14 freereg=18 nactvar=17 line=575
-[cg_emit_eq] e1=NonReloc info=16 e2=NonReloc info=18 r1=16 r2=18 freereg=19 nactvar=17 line=578
-[cg_emit_eq] e1=NonReloc info=19 e2=NonReloc info=20 r1=19 r2=20 freereg=21 nactvar=18 line=582
-[cg_emit_eq] e1=NonReloc info=16 e2=NonReloc info=19 r1=16 r2=19 freereg=20 nactvar=18 line=586
-[cg_emit_eq] e1=NonReloc info=21 e2=NonReloc info=23 r1=21 r2=23 freereg=24 nactvar=19 line=591
-
-thread 'main' (9915300) panicked at crates/lua-parse/src/lib.rs:629:9:
-assertion `left == right` failed
-  left: 21
- right: 22
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] assertion `left == right` failed
-  left: 21
- right: 22
+[4/4] Executing chunk...
+testing syntax
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:234: assertion failed!

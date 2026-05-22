@@ -1,13 +1,6 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=2 e2=NonReloc info=3 r1=2 r2=3 freereg=4 nactvar=1 line=45
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=4 r1=3 r2=4 freereg=5 nactvar=2 line=48
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=4 r1=3 r2=4 freereg=5 nactvar=2 line=49
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=4 r1=3 r2=4 freereg=5 nactvar=2 line=50
-[cg_emit_eq] e1=NonReloc info=3 e2=KInt info=0 r1=3 r2=137 freereg=4 nactvar=2 line=51
-[cg_emit_eq] e1=NonReloc info=1 e2=KInt info=0 r1=1 r2=127 freereg=2 nactvar=1 line=126
 [4/4] Executing chunk...
 testing RK
 [ok] execution completed, status=Ok

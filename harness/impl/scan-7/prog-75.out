@@ -1,35 +1,8 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=12
-[cg_emit_eq] e1=NonReloc info=7 e2=KInt info=0 r1=7 r2=137 freereg=10 nactvar=9 line=27
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=5 r1=4 r2=5 freereg=6 nactvar=3 line=47
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=49
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=49
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=7 r1=9 r2=7 freereg=10 nactvar=8 line=103
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=5 r1=4 r2=5 freereg=6 nactvar=3 line=105
-[cg_emit_eq] e1=NonReloc info=2 e2=NonReloc info=3 r1=2 r2=3 freereg=5 nactvar=4 line=112
-[cg_emit_eq] e1=NonReloc info=5 e2=NonReloc info=6 r1=5 r2=6 freereg=7 nactvar=4 line=112
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=4 r1=3 r2=4 freereg=5 nactvar=2 line=121
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=125
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=23 r1=18 r2=23 freereg=24 nactvar=22 line=159
-[cg_emit_eq] e1=NonReloc info=19 e2=NonReloc info=23 r1=19 r2=23 freereg=24 nactvar=22 line=159
-[cg_emit_eq] e1=NonReloc info=20 e2=NonReloc info=23 r1=20 r2=23 freereg=24 nactvar=22 line=159
-[cg_emit_eq] e1=NonReloc info=21 e2=NonReloc info=23 r1=21 r2=23 freereg=24 nactvar=22 line=159
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=128 freereg=1 nactvar=1 line=237
-[cg_emit_eq] e1=NonReloc info=1 e2=NonReloc info=0 r1=1 r2=0 freereg=2 nactvar=1 line=240
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=1 line=243
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=1 line=246
-[cg_emit_eq] e1=NonReloc info=1 e2=NonReloc info=0 r1=1 r2=0 freereg=2 nactvar=1 line=249
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=1 r1=3 r2=1 freereg=4 nactvar=2 line=283
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=1 r1=3 r2=1 freereg=4 nactvar=2 line=289
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=1 r1=3 r2=1 freereg=4 nactvar=2 line=295
-[cg_emit_eq] e1=NonReloc info=30 e2=NonReloc info=25 r1=30 r2=25 freereg=31 nactvar=29 line=449
-[cg_emit_eq] e1=NonReloc info=30 e2=NonReloc info=31 r1=30 r2=31 freereg=32 nactvar=29 line=452
-[cg_emit_eq] e1=NonReloc info=30 e2=NonReloc info=31 r1=30 r2=31 freereg=32 nactvar=29 line=453
 [4/4] Executing chunk...
 
- >>> testC not active: skipping opcode tests <<<
+ >>> testC not active: skipping API tests <<<
 
 [ok] execution completed, status=Ok

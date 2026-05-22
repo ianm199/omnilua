@@ -1,72 +1,10 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=16
-[cg_emit_eq] e1=NonReloc info=1 e2=NonReloc info=2 r1=1 r2=2 freereg=3 nactvar=0 line=21
-[cg_emit_eq] e1=NonReloc info=1 e2=KInt info=0 r1=1 r2=129 freereg=2 nactvar=1 line=23
-[cg_emit_eq] e1=NonReloc info=1 e2=KInt info=0 r1=1 r2=128 freereg=2 nactvar=1 line=23
-[cg_emit_eq] e1=NonReloc info=1 e2=KInt info=0 r1=1 r2=129 freereg=2 nactvar=1 line=23
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=127 freereg=6 nactvar=4 line=32
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=130 freereg=6 nactvar=4 line=33
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=132 freereg=6 nactvar=4 line=34
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=127 freereg=6 nactvar=4 line=36
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=129 freereg=6 nactvar=4 line=37
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=182 freereg=6 nactvar=4 line=39
-[cg_emit_eq] e1=NonReloc info=4 e2=KInt info=0 r1=4 r2=182 freereg=7 nactvar=6 line=41
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=129 freereg=7 nactvar=6 line=41
-[cg_emit_eq] e1=NonReloc info=4 e2=KInt info=0 r1=4 r2=182 freereg=7 nactvar=6 line=43
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=129 freereg=7 nactvar=6 line=43
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=8 r1=7 r2=8 freereg=9 nactvar=6 line=46
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=7 r1=10 r2=7 freereg=11 nactvar=9 line=49
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=8 r1=10 r2=8 freereg=11 nactvar=9 line=49
-[cg_emit_eq] e1=NonReloc info=10 e2=KInt info=0 r1=10 r2=129 freereg=11 nactvar=9 line=49
-[cg_emit_eq] e1=NonReloc info=10 e2=KInt info=0 r1=10 r2=129 freereg=11 nactvar=9 line=51
-[cg_emit_eq] e1=NonReloc info=10 e2=KInt info=0 r1=10 r2=182 freereg=11 nactvar=9 line=51
-[cg_emit_eq] e1=NonReloc info=10 e2=KInt info=0 r1=10 r2=129 freereg=11 nactvar=9 line=51
-[cg_emit_eq] e1=NonReloc info=6 e2=NonReloc info=10 r1=6 r2=10 freereg=11 nactvar=9 line=53
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=130 freereg=12 nactvar=10 line=57
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=138 freereg=12 nactvar=10 line=57
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=6 r1=0 r2=6 freereg=7 nactvar=5 line=66
-[cg_emit_eq] e1=NonReloc info=6 e2=NonReloc info=7 r1=6 r2=7 freereg=8 nactvar=5 line=66
-[cg_emit_eq] e1=NonReloc info=6 e2=NonReloc info=7 r1=6 r2=7 freereg=8 nactvar=5 line=67
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=4 r1=0 r2=4 freereg=5 nactvar=3 line=71
-[cg_emit_eq] e1=NonReloc info=1 e2=NonReloc info=4 r1=1 r2=4 freereg=5 nactvar=3 line=71
-[cg_emit_eq] e1=NonReloc info=2 e2=NonReloc info=4 r1=2 r2=4 freereg=5 nactvar=3 line=71
-[cg_emit_eq] e1=NonReloc info=15 e2=NonReloc info=10 r1=15 r2=10 freereg=16 nactvar=14 line=80
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=5 r1=4 r2=5 freereg=6 nactvar=3 line=91
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=127 freereg=3 nactvar=3 line=92
-[cg_emit_eq] e1=NonReloc info=2 e2=NonReloc info=4 r1=2 r2=4 freereg=5 nactvar=3 line=97
-[cg_emit_eq] e1=NonReloc info=12 e2=KInt info=0 r1=12 r2=132 freereg=16 nactvar=15 line=103
-[cg_emit_eq] e1=NonReloc info=7 e2=KInt info=0 r1=7 r2=131 freereg=16 nactvar=15 line=103
-[cg_emit_eq] e1=NonReloc info=8 e2=KInt info=0 r1=8 r2=130 freereg=16 nactvar=15 line=103
-[cg_emit_eq] e1=NonReloc info=16 e2=KInt info=0 r1=16 r2=129 freereg=17 nactvar=15 line=103
-[cg_emit_eq] e1=NonReloc info=16 e2=KInt info=0 r1=16 r2=128 freereg=17 nactvar=15 line=103
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=16 r1=12 r2=16 freereg=17 nactvar=15 line=106
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=16 r1=7 r2=16 freereg=17 nactvar=15 line=106
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=16 r1=8 r2=16 freereg=17 nactvar=15 line=106
-[cg_emit_eq] e1=NonReloc info=16 e2=NonReloc info=17 r1=16 r2=17 freereg=18 nactvar=15 line=106
-[cg_emit_eq] e1=NonReloc info=16 e2=NonReloc info=17 r1=16 r2=17 freereg=18 nactvar=15 line=106
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=129 freereg=19 nactvar=17 line=112
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=130 freereg=19 nactvar=17 line=112
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=19 r1=18 r2=19 freereg=20 nactvar=17 line=112
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=129 freereg=19 nactvar=17 line=126
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=157 freereg=19 nactvar=17 line=126
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=167 freereg=19 nactvar=17 line=126
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=19 r1=18 r2=19 freereg=20 nactvar=17 line=128
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=134 freereg=19 nactvar=17 line=130
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=19 r1=18 r2=19 freereg=20 nactvar=17 line=130
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=132 freereg=19 nactvar=17 line=132
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=134 freereg=19 nactvar=17 line=132
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=19 r1=18 r2=19 freereg=20 nactvar=17 line=132
-[cg_emit_eq] e1=NonReloc info=19 e2=NonReloc info=22 r1=19 r2=22 freereg=23 nactvar=21 line=156
-[cg_emit_eq] e1=NonReloc info=20 e2=KInt info=0 r1=20 r2=129 freereg=22 nactvar=21 line=156
 [4/4] Executing chunk...
 testing vararg
 +
 +
 +
-[cg_emit_eq] e1=NonReloc info=6 e2=NonReloc info=7 r1=6 r2=7 freereg=8 nactvar=5 line=2
-[cg_emit_eq] e1=NonReloc info=2 e2=NonReloc info=3 r1=2 r2=3 freereg=4 nactvar=1 line=3
 OK
 [ok] execution completed, status=Ok

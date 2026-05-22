@@ -1,57 +1,8 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=0 r1=4 r2=0 freereg=5 nactvar=3 line=40
-[cg_emit_eq] e1=NonReloc info=5 e2=NonReloc info=3 r1=5 r2=3 freereg=6 nactvar=4 line=50
-[cg_emit_eq] e1=NonReloc info=5 e2=NonReloc info=3 r1=5 r2=3 freereg=6 nactvar=4 line=50
-[cg_emit_eq] e1=NonReloc info=5 e2=NonReloc info=0 r1=5 r2=0 freereg=6 nactvar=4 line=51
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=128 freereg=6 nactvar=4 line=53
-[cg_emit_eq] e1=NonReloc info=6 e2=NonReloc info=7 r1=6 r2=7 freereg=8 nactvar=5 line=59
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=11 r1=10 r2=11 freereg=12 nactvar=9 line=60
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=9 r1=12 r2=9 freereg=13 nactvar=11 line=66
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=9 r1=12 r2=9 freereg=13 nactvar=11 line=67
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=13 r1=12 r2=13 freereg=14 nactvar=11 line=68
-[cg_emit_eq] e1=NonReloc info=16 e2=NonReloc info=9 r1=16 r2=9 freereg=17 nactvar=15 line=70
-[cg_emit_eq] e1=NonReloc info=12 e2=KInt info=0 r1=12 r2=128 freereg=13 nactvar=11 line=75
-[cg_emit_eq] e1=NonReloc info=12 e2=KInt info=0 r1=12 r2=128 freereg=13 nactvar=11 line=76
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=13 r1=12 r2=13 freereg=14 nactvar=11 line=77
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=13 r1=12 r2=13 freereg=14 nactvar=11 line=78
-[cg_emit_eq] e1=NonReloc info=12 e2=NonReloc info=8 r1=12 r2=8 freereg=13 nactvar=11 line=79
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=13 r1=11 r2=13 freereg=14 nactvar=12 line=85
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=13 r1=10 r2=13 freereg=14 nactvar=12 line=85
-[cg_emit_eq] e1=NonReloc info=13 e2=NonReloc info=11 r1=13 r2=11 freereg=14 nactvar=12 line=86
-[cg_emit_eq] e1=NonReloc info=5 e2=NonReloc info=7 r1=5 r2=7 freereg=8 nactvar=6 line=88
-[cg_emit_eq] e1=NonReloc info=10 e2=NonReloc info=12 r1=10 r2=12 freereg=13 nactvar=11 line=93
-[cg_emit_eq] e1=NonReloc info=5 e2=NonReloc info=7 r1=5 r2=7 freereg=8 nactvar=6 line=95
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=98
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=1 r1=3 r2=1 freereg=5 nactvar=4 line=107
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=137
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=138
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=139
-[cg_emit_eq] e1=NonReloc info=13 e2=NonReloc info=14 r1=13 r2=14 freereg=15 nactvar=12 line=159
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=130 freereg=12 nactvar=10 line=167
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=167
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=167
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=167
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=127 freereg=12 nactvar=10 line=171
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=175
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=176
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=177
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=178
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=179
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=182
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=183
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=185
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=10 r1=9 r2=10 freereg=11 nactvar=8 line=186
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=139 freereg=12 nactvar=10 line=231
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=137 freereg=12 nactvar=10 line=235
-[cg_emit_eq] e1=NonReloc info=11 e2=KInt info=0 r1=11 r2=135 freereg=12 nactvar=10 line=239
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=15 r1=18 r2=15 freereg=19 nactvar=17 line=258
-[cg_emit_eq] e1=NonReloc info=18 e2=NonReloc info=19 r1=18 r2=19 freereg=20 nactvar=17 line=259
-[cg_emit_eq] e1=NonReloc info=18 e2=KInt info=0 r1=18 r2=128 freereg=19 nactvar=17 line=260
-[cg_emit_eq] e1=NonReloc info=22 e2=NonReloc info=15 r1=22 r2=15 freereg=23 nactvar=21 line=262
 [4/4] Executing chunk...
-testing UTF-8 library
-ok
-[ok] execution completed, status=Ok
+testing local variables and environments
++
+testing to-be-closed variables
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:270: assertion failed!

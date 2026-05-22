@@ -817,3 +817,22 @@
 [2026-05-18T05:38:58Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 270: assertion failed!): reference/lua-c/testes/locals.lua
 [2026-05-18T05:42:09Z mega]   [O6.D5] DEBUG dispatch on file: reference/lua-c/testes/calls.lua [parallel]
 [2026-05-18T05:45:42Z mega]   → committed a60fbe7 (debug/reference/lua-c/testes/closure.lua )
+[2026-05-18T05:56:20Z mega]   [O6.D4] DEBUG done. iter cost=$0.9738510000000001  total=$36.2965
+[2026-05-18T05:56:20Z mega]   [O6.D1] DEBUG done. iter cost=$[2026-05-18T05:45:42Z  total=$36.2965
+[2026-05-18T05:56:20Z mega]   [O6.D2.99566725] DEBUG done. iter cost=$reference/lua-c/testes/closure.lua  total=$36.2965
+[2026-05-18T05:56:20Z mega]   [O6.D3] DEBUG done. iter cost=$3.585486500000001  total=$39.8820
+[2026-05-18T05:56:20Z mega]   [O6.D5] DEBUG done. iter cost=$2.1665522500000005  total=$42.0486
+[2026-05-18T05:56:20Z mega]   [O6.D2] DEBUG done. iter cost=$6.010565749999998  total=$48.0592
+[2026-05-18T05:56:20Z mega] ─── outer round 7 (spent: $48.0592) ───
+[2026-05-18T05:56:24Z mega]   scan: 65/79 programs pass cleanly
+[2026-05-18T05:56:24Z mega]   surface scan returned 0 unique stub blockers
+[2026-05-18T05:56:24Z mega]   no stub blockers — falling back to DEBUG agents on failing programs
+[2026-05-18T05:56:25Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 76: no visible label 'l0123456789012345678901234567890123456789012345): reference/lua-c/testes/goto.lua
+[2026-05-18T05:56:25Z mega]   [O7.D1] DEBUG dispatch on file: reference/lua-c/testes/gc.lua [parallel]
+[2026-05-18T05:56:25Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: attempt to call a string value): reference/lua-c/testes/gengc.lua
+[2026-05-18T05:56:25Z mega]   [O7.D2] DEBUG dispatch on file: reference/lua-c/testes/strings.lua [parallel]
+[2026-05-18T05:56:25Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 820: assertion failed!): reference/lua-c/testes/math.lua
+[2026-05-18T05:56:25Z mega]   [O7.D3] DEBUG dispatch on file: reference/lua-c/testes/literals.lua [parallel]
+[2026-05-18T05:56:25Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 270: assertion failed!): reference/lua-c/testes/locals.lua
+[2026-05-18T05:56:25Z mega]   [O7.D4] DEBUG dispatch on file: reference/lua-c/testes/calls.lua [parallel]
+[2026-05-18T05:56:25Z mega]   skip stuck prog (same sig 2 rounds: [err] pcall_k failed: Runtime: 234: assertion failed!): reference/lua-c/testes/constructs.lua

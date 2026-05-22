@@ -3,3 +3,4 @@
 2.99566725 reference/lua-c/testes/closure.lua
 3 3.585486500000001 reference/lua-c/testes/strings.lua
 5 2.1665522500000005 reference/lua-c/testes/calls.lua
+2 6.010565749999998 reference/lua-c/testes/gc.lua

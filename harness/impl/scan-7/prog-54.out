@@ -1,15 +1,9 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=127 freereg=1 nactvar=0 line=45
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=127 freereg=1 nactvar=0 line=102
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=127 freereg=1 nactvar=0 line=105
-[cg_emit_eq] e1=NonReloc info=4 e2=KInt info=0 r1=4 r2=127 freereg=5 nactvar=4 line=141
-[cg_emit_eq] e1=NonReloc info=4 e2=KInt info=0 r1=4 r2=127 freereg=5 nactvar=4 line=159
 [4/4] Executing chunk...
 
-memory: 	1496.0
+memory: 	1552.0
 expected error: 	bad 'for' limit (number expected, got number)
 size:	0
 OK

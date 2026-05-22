@@ -1,42 +1,5 @@
 [1/4] Creating LuaState...
 [2/4] Opening standard library...
 [3/4] Loading source (parse + compile)...
-[cg_emit_eq] e1=NonReloc info=0 e2=NonReloc info=1 r1=0 r2=1 freereg=2 nactvar=0 line=7
-[cg_emit_eq] e1=NonReloc info=1 e2=KInt info=0 r1=1 r2=140 freereg=3 nactvar=2 line=59
-[cg_emit_eq] e1=NonReloc info=5 e2=KInt info=0 r1=5 r2=158 freereg=6 nactvar=4 line=76
-[cg_emit_eq] e1=NonReloc info=1 e2=KInt info=0 r1=1 r2=140 freereg=3 nactvar=2 line=95
-[cg_emit_eq] e1=NonReloc info=2 e2=KInt info=0 r1=2 r2=130 freereg=3 nactvar=1 line=115
-[cg_emit_eq] e1=NonReloc info=2 e2=KInt info=0 r1=2 r2=128 freereg=3 nactvar=1 line=115
-[cg_emit_eq] e1=NonReloc info=2 e2=KInt info=0 r1=2 r2=129 freereg=3 nactvar=1 line=115
-[cg_emit_eq] e1=NonReloc info=2 e2=KInt info=0 r1=2 r2=132 freereg=3 nactvar=1 line=116
-[cg_emit_eq] e1=NonReloc info=2 e2=KInt info=0 r1=2 r2=131 freereg=3 nactvar=1 line=116
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=6 r1=4 r2=6 freereg=7 nactvar=5 line=127
-[cg_emit_eq] e1=NonReloc info=3 e2=NonReloc info=5 r1=3 r2=5 freereg=6 nactvar=5 line=129
-[cg_emit_eq] e1=NonReloc info=3 e2=KInt info=0 r1=3 r2=129 freereg=6 nactvar=5 line=135
-[cg_emit_eq] e1=NonReloc info=4 e2=NonReloc info=6 r1=4 r2=6 freereg=7 nactvar=5 line=135
-[cg_emit_eq] e1=NonReloc info=7 e2=KInt info=0 r1=7 r2=133 freereg=8 nactvar=6 line=192
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=196
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=202
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=203
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=208
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=209
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=211
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=212
-[cg_emit_eq] e1=NonReloc info=11 e2=NonReloc info=12 r1=11 r2=12 freereg=13 nactvar=10 line=217
-[cg_emit_eq] e1=NonReloc info=15 e2=NonReloc info=16 r1=15 r2=16 freereg=17 nactvar=14 line=223
-[cg_emit_eq] e1=NonReloc info=9 e2=NonReloc info=13 r1=9 r2=13 freereg=16 nactvar=14 line=224
-[cg_emit_eq] e1=NonReloc info=15 e2=NonReloc info=16 r1=15 r2=16 freereg=17 nactvar=14 line=224
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=128 freereg=1 nactvar=1 line=232
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=129 freereg=1 nactvar=1 line=235
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=130 freereg=1 nactvar=1 line=236
-[cg_emit_eq] e1=NonReloc info=0 e2=KInt info=0 r1=0 r2=131 freereg=1 nactvar=1 line=237
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=255
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=256
-[cg_emit_eq] e1=NonReloc info=8 e2=NonReloc info=9 r1=8 r2=9 freereg=10 nactvar=7 line=257
-[cg_emit_eq] e1=NonReloc info=8 e2=KInt info=0 r1=8 r2=132 freereg=9 nactvar=7 line=258
-[cg_emit_eq] e1=NonReloc info=8 e2=KInt info=0 r1=8 r2=137 freereg=9 nactvar=7 line=259
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=10 r1=7 r2=10 freereg=11 nactvar=9 line=270
-[cg_emit_eq] e1=NonReloc info=7 e2=NonReloc info=9 r1=7 r2=9 freereg=10 nactvar=8 line=274
 [4/4] Executing chunk...
-OK
-[ok] execution completed, status=Ok
+[err] pcall_k failed: Runtime: [string "_soft = true..."]:76: no visible label 'l0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789a' for <goto> at line 3

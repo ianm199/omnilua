@@ -1,1 +1,2 @@
 1 1.4817462499999998 reference/lua-c/testes/locals.lua [opus]
+3 1.4020322500000002 reference/lua-c/testes/errors.lua [opus]

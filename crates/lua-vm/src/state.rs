@@ -1997,7 +1997,7 @@ impl LuaState {
     pub fn new_lclosure(&mut self, proto: GcRef<LuaProto>, nupvals: usize) -> GcRef<LuaClosureLua> {
         let mut upvals = Vec::with_capacity(nupvals);
         for _ in 0..nupvals {
-            upvals.push(std::cell::RefCell::new(self.new_upval_closed(LuaValue::Nil)));
+            upvals.push(std::cell::Cell::new(self.new_upval_closed(LuaValue::Nil)));
         }
         GcRef::new(LuaClosureLua { proto, upvals })
     }
@@ -2038,7 +2038,7 @@ impl LuaState {
         );
         let child_proto = parent_cl.proto.p[proto_idx].clone();
         let nup = child_proto.upvalues.len();
-        let mut upvals: Vec<std::cell::RefCell<GcRef<UpVal>>> = Vec::with_capacity(nup);
+        let mut upvals: Vec<std::cell::Cell<GcRef<UpVal>>> = Vec::with_capacity(nup);
         for i in 0..nup {
             let desc = &child_proto.upvalues[i];
             let uv = if desc.instack {
@@ -2047,7 +2047,7 @@ impl LuaState {
             } else {
                 parent_cl.upval(desc.idx as usize)
             };
-            upvals.push(std::cell::RefCell::new(uv));
+            upvals.push(std::cell::Cell::new(uv));
         }
         // TODO(D-1c-bridge): upvals are pre-populated from parent frame; state.new_lclosure
         // fills with fresh Nil upvals which would drop the captured bindings.
@@ -2084,12 +2084,9 @@ impl LuaState {
     ///    resume boundary.
     pub fn upvalue_get(&self, cl: &GcRef<LuaClosureLua>, n: usize) -> LuaValue {
         let uv = cl.upval(n);
-        let (thread_id, idx) = {
-            let slot_ref = uv.slot();
-            match &*slot_ref {
-                lua_types::UpValState::Closed(v) => return v.clone(),
-                lua_types::UpValState::Open { thread_id, idx } => (*thread_id, *idx),
-            }
+        let (thread_id, idx) = match uv.try_open_payload() {
+            Some(p) => p,
+            None => return uv.closed_value().clone(),
         };
         let current = self.cached_thread_id;
         let tid = thread_id as u64;
@@ -2121,12 +2118,9 @@ impl LuaState {
     /// the home thread is borrow-locked further up the call stack).
     pub fn upvalue_set(&mut self, cl: &GcRef<LuaClosureLua>, n: usize, val: LuaValue) -> Result<(), LuaError> {
         let uv = cl.upval(n);
-        let open_slot = match &*uv.slot() {
-            lua_types::UpValState::Open { thread_id, idx } => Some((*thread_id as u64, *idx)),
-            lua_types::UpValState::Closed(_) => None,
-        };
-        match open_slot {
-            Some((tid, idx)) => {
+        match uv.try_open_payload() {
+            Some((thread_id, idx)) => {
+                let tid = thread_id as u64;
                 let current = self.cached_thread_id;
                 if tid == current {
                     self.set_at(idx, val);
@@ -2146,8 +2140,7 @@ impl LuaState {
                 g.cross_thread_upvals.insert((tid, idx), val);
             }
             None => {
-                let mut g = uv.state.borrow_mut();
-                *g = lua_types::UpValState::Closed(val);
+                uv.set_closed_value(val);
             }
         }
         Ok(())

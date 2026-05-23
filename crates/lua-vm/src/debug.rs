@@ -1425,7 +1425,7 @@ fn get_upval_name<'a>(
     };
     for (i, upval_slot) in lua_cl.upvals.iter().enumerate() {
         // C: if (c->upvals[i]->v.p == o)
-        let upval = upval_slot.borrow().clone();
+        let upval = upval_slot.get();
         let state = upval.slot().clone();
         if let lua_types::UpValState::Open { idx, .. } = state {
             if idx == val_idx {

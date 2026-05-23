@@ -1050,7 +1050,7 @@ pub(crate) fn undump(
     let mut cl = LuaLClosure::placeholder();
     let mut upvals_vec = Vec::with_capacity(nupvalues as usize);
     for _ in 0..nupvalues as usize {
-        upvals_vec.push(std::cell::RefCell::new(s.state.new_upval_closed(LuaValue::Nil)));
+        upvals_vec.push(std::cell::Cell::new(s.state.new_upval_closed(LuaValue::Nil)));
     }
     cl.upvals = upvals_vec;
 

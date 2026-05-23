@@ -109,6 +109,8 @@ impl<T: Trace + 'static> Clone for GcRef<T> {
     }
 }
 
+impl<T: Trace + 'static> Copy for GcRef<T> {}
+
 impl<T: Trace + 'static> std::ops::Deref for GcRef<T> {
     type Target = T;
     fn deref(&self) -> &T {

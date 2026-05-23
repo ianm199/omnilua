@@ -16,6 +16,7 @@ use lua_types::arith::ArithOp;
 use lua_types::gc::GcRef;
 use lua_types::string::LuaString;
 use lua_types::{LuaType, LuaStatus};
+use lua_vm::state::LuaTableRefExt as _;
 use crate::state_stub::{LuaState, LuaStateStubExt as _, lua_CFunction, upvalue_index, CompareOp, LuaDebug};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1208,37 +1209,40 @@ pub fn str_match(state: &mut LuaState) -> Result<usize, LuaError> {
 ///   t[3] = current source position (1-based; equals `lastmatch` after a
 ///   successful match), t[4] = end of last match (`0` ≡ NULL in C, meaning
 ///   "no match yet").
+///
+/// PERF NOTE: The previous version pushed the upvalue table onto the stack
+/// and then issued six `raw_geti` / `raw_seti` calls plus four `to_lua_string`
+/// / `to_integer_x` reads — each of which re-resolves the stack index via
+/// `index_to_value`. That made `index_to_value` the #1 non-algorithm frame in
+/// `string_ops_long` at 9.4% of wall. The current version resolves the
+/// upvalue once via `value_at`, extracts the `GcRef<LuaTable>`, and reads /
+/// writes its integer-keyed slots directly through `LuaTableRefExt`. This is
+/// the same shape as C-Lua's `luaH_getint` / `luaH_setint` direct table ops
+/// against the embedded `GMatchState` struct fields — no stack roundtrip
+/// per probe.
 pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
-    // C: GMatchState *gm = (GMatchState *)lua_touserdata(L, lua_upvalueindex(3));
-    // Pull the state table from upvalue 1 onto the top of the stack.
-    state.push_value(upvalue_index(1))?;
-    let tbl_idx = state.top();
+    let upval = state.value_at(upvalue_index(1));
+    let tbl = match upval {
+        LuaValue::Table(t) => t,
+        _ => return Ok(0),
+    };
 
-    // Read t[1] = src, t[2] = pat as GcRef<LuaString> (no byte copy — was
-    // copying the entire source string Vec<u8> on every match iteration via
-    // to_lua_string_bytes, which is _platform_memmove 62% of wall on
-    // string-heavy workloads). Holding the GcRef keeps the bytes alive for
-    // the &[u8] borrow that follows.
-    state.raw_geti(tbl_idx, 1)?;
-    let s_ref = state.to_lua_string(-1);
-    state.pop_n(1);
-    state.raw_geti(tbl_idx, 2)?;
-    let p_ref = state.to_lua_string(-1);
-    state.pop_n(1);
-    let (Some(s_str), Some(p_str)) = (s_ref, p_ref) else {
-        // C: the upvalue must hold strings; if not, the iterator stops.
-        state.pop_n(1);
+    let s_val = tbl.get_int(1);
+    let p_val = tbl.get_int(2);
+    let (LuaValue::Str(s_str), LuaValue::Str(p_str)) = (&s_val, &p_val) else {
         return Ok(0);
     };
     let s: &[u8] = s_str.as_bytes();
     let p: &[u8] = p_str.as_bytes();
 
-    state.raw_geti(tbl_idx, 3)?;
-    let pos = state.to_integer_x(-1).unwrap_or(1);
-    state.pop_n(1);
-    state.raw_geti(tbl_idx, 4)?;
-    let lastmatch_raw = state.to_integer_x(-1).unwrap_or(0);
-    state.pop_n(1);
+    let pos = match tbl.get_int(3) {
+        LuaValue::Int(n) => n,
+        _ => 1,
+    };
+    let lastmatch_raw = match tbl.get_int(4) {
+        LuaValue::Int(n) => n,
+        _ => 0,
+    };
     let last_match: Option<usize> = if lastmatch_raw <= 0 {
         None
     } else {
@@ -1250,32 +1254,20 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let mut ms = MatchState::new(s, p);
 
-    // C: for (src = gm->src; src <= gm->ms.src_end; src++)
     let mut src = start_pos;
     while src <= ls {
-        // C: reprepstate(&gm->ms);
         ms.reset_level();
-        // C: if ((e = match(&gm->ms, src, gm->p)) != NULL && e != gm->lastmatch)
         if let Some(e) = match_pat(&mut ms, src, 0)? {
             if Some(e) != last_match {
-                // C: gm->src = gm->lastmatch = e;
-                // Write back into the state table. The table is still on top of
-                // the stack at tbl_idx.
-                state.push(LuaValue::Int((e + 1) as i64));
-                state.raw_seti(tbl_idx, 3)?;
-                state.push(LuaValue::Int((e + 1) as i64));
-                state.raw_seti(tbl_idx, 4)?;
-                // Pop the state table before pushing captures.
-                state.pop_n(1);
-                // C: return push_captures(&gm->ms, src, e);
+                let e_val = LuaValue::Int((e + 1) as i64);
+                tbl.raw_set_int(state, 3, e_val.clone())?;
+                tbl.raw_set_int(state, 4, e_val)?;
                 return push_captures(state, &ms, src, e);
             }
         }
         src += 1;
     }
 
-    // C: return 0;  /* not found */
-    state.pop_n(1);
     Ok(0)
 }
 
@@ -2714,7 +2706,7 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //   target_crate:  lua-stdlib
 //   confidence:    medium
 //   todos:         13
-//   port_notes:    5
+//   port_notes:    6
 //   unsafe_blocks: 0
 //   notes:         Pattern engine uses index-based MatchState (not raw ptrs).
 //                  string.format delegates numeric widths/precision/flags to
@@ -2736,4 +2728,12 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //                  check_arg_string, mirroring the gmatch_aux fix (685482d).
 //                  string_ops 3.00x→2.00x, string_ops_long 2.25x→1.48x on
 //                  best-of-5 (Apple M3 Max).
+//                  gmatch_aux reads / writes its 4-slot state table directly
+//                  through LuaTableRefExt::{get_int, raw_set_int} after a
+//                  single value_at(upvalue_index(1)) resolution, replacing
+//                  six raw_geti / raw_seti + four to_lua_string / to_integer_x
+//                  calls that each re-resolved the stack index via
+//                  index_to_value. Drops string_ops_long 1.58x→1.38x
+//                  (below the 1.5x parity threshold) and index_to_value share
+//                  9.4%→2.0% on Apple M3 Max best-of-5.
 // ────────────────────────────────────────────────────────────────────────────

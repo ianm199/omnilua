@@ -5,6 +5,8 @@
 //! `LuaValue::Nil` when no metamethod is present; callers check with
 //! `value.is_nil()` (the `notm` macro in C).
 
+use std::borrow::Cow;
+
 use crate::state::LuaState;
 #[allow(unused_imports)] use crate::prelude::*;
 use lua_types::{CallInfoIdx, GcRef, LuaError, LuaType, LuaValue, StackIdx};
@@ -316,50 +318,56 @@ pub(crate) fn get_tm_by_obj(
 // ── luaT_objtypename ─────────────────────────────────────────────────────────
 
 // C: const char *luaT_objtypename (lua_State *L, const TValue *o)
-/// Return the human-readable type name for a Lua value.
+/// Return the human-readable type name for a Lua value without any heap
+/// allocation in the common case.
 ///
 /// For tables and full userdata whose metatable defines `__name` as a string,
-/// that string is returned.  Otherwise falls back to the standard `type_name()`
-/// for the base type.
+/// returns `Cow::Owned` with the custom name bytes.  For every other case
+/// returns `Cow::Borrowed` pointing into the static `TYPE_NAMES` table —
+/// no allocation, no interning, no `LuaState` access required.
 ///
-/// PORT NOTE: C returns `const char*` (static or LuaString bytes with stable
-/// lifetime).  Rust returns `Vec<u8>` to avoid lifetime entanglement between
-/// the static `TYPE_NAMES` entries and GcRef'd `LuaString` bytes.
-/// PERF(port): Vec allocation on every call — profile in Phase B; may become
-/// a `Cow<'static, [u8]>` once lifetimes are firmed up.
-pub(crate) fn obj_type_name(state: &mut LuaState, o: &LuaValue) -> Result<Vec<u8>, LuaError> {
-    // C: Table *mt;
-    // C: if ((ttistable(o) && (mt = hvalue(o)->metatable) != NULL) ||
-    //        (ttisfulluserdata(o) && (mt = uvalue(o)->metatable) != NULL)) {
-    //
-    // TODO(port): same GcRef accessor TBD as in get_tm_by_obj.
-    // C: else if (ttislightuserdata(o)) return "light userdata"
+/// PORT NOTE: C returns `const char*` — either a pointer into a GC-managed
+/// `LuaString` or a pointer into the static `luaT_typenames_` array.  Rust
+/// models this as `Cow<'static, [u8]>`: `Borrowed` for static names,
+/// `Owned` only when the metatable `__name` field overrides the default.
+/// Uses `LuaTable::get_str_bytes` (linear byte-scan) instead of
+/// `intern_str` + `get_short_str` so the lookup is infallible and requires
+/// no mutable state access.
+pub(crate) fn obj_type_name_cow(o: &LuaValue) -> Cow<'static, [u8]> {
+    // C: if (ttislightuserdata(o)) return "light userdata";
     if matches!(o, LuaValue::LightUserData(_)) {
-        return Ok(b"light userdata".to_vec());
+        return Cow::Borrowed(b"light userdata");
     }
+    // C: if ((ttistable(o) && (mt = hvalue(o)->metatable) != NULL) ||
+    //        (ttisfulluserdata(o) && (mt = uvalue(o)->metatable) != NULL))
     let mt: Option<GcRef<lua_types::value::LuaTable>> = match o {
         LuaValue::Table(t) => t.metatable(),
         LuaValue::UserData(u) => u.metatable(),
         _ => None,
     };
-
     if let Some(mt_ref) = mt {
         // C: const TValue *name = luaH_getshortstr(mt, luaS_new(L, "__name"));
-        // TODO(port): intern_str can fail with LuaError::Memory; propagating
-        // here means obj_type_name is now fallible (it wasn't in C, because
-        // luaS_new's OOM longjmp'd). The caller must use `?`.
-        let name_key = state.intern_str(b"__name")?;
-        let name_val = mt_ref.get_short_str(&name_key);
-        // C: if (ttisstring(name))  /* is '__name' a string? */
-        //      return getstr(tsvalue(name));  /* use it as type name */
+        // Uses get_str_bytes (raw byte scan) rather than intern_str + get_short_str
+        // so no mutable state is needed and no error can propagate.
+        let name_val = mt_ref.get_str_bytes(b"__name");
+        // C: if (ttisstring(name))  return getstr(tsvalue(name));
         if let LuaValue::Str(s) = name_val {
-            // C: getstr(tsvalue(name))  →  ts.as_bytes()  →  &[u8]
-            return Ok(s.as_bytes().to_vec());
+            return Cow::Owned(s.as_bytes().to_vec());
         }
     }
+    // C: return ttypename(ttype(o));
+    Cow::Borrowed(type_name(o.base_type()))
+}
 
-    // C: return ttypename(ttype(o));  /* else use standard type name */
-    Ok(type_name(o.base_type()).to_vec())
+/// Compatibility wrapper returning `Vec<u8>` for callers that have not yet
+/// migrated to `obj_type_name_cow`.  Always allocates; prefer
+/// `obj_type_name_cow` for allocation-free lookup in error-path code.
+///
+/// PORT NOTE: `state` parameter retained for API compatibility; it is no
+/// longer used since the implementation delegates to `obj_type_name_cow`.
+/// Fallibility (`Result`) is also retained for the same reason.
+pub(crate) fn obj_type_name(_state: &mut LuaState, o: &LuaValue) -> Result<Vec<u8>, LuaError> {
+    Ok(obj_type_name_cow(o).into_owned())
 }
 
 // ── luaT_callTM ──────────────────────────────────────────────────────────────
@@ -894,23 +902,27 @@ pub(crate) fn get_varargs(
 //                  src/ltm.h  (104 lines; merged into this file)
 //   target_crate:  lua-vm
 //   confidence:    medium
-//   todos:         12
+//   todos:         10
 //   port_notes:    7
 //   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
 //   notes:
 //     Logic translation is faithful; the main uncertainties are:
 //     (1) GcRef<LuaTable> accessor pattern (.metatable() / .borrow().metatable)
-//         is TBD — annotated TODO(port) in get_tm_by_obj and obj_type_name.
+//         is TBD — annotated TODO(port) in get_tm_by_obj.
 //     (2) call_tm / call_tm_res use a `do_call` / `do_call_no_yield` naming
 //         convention that must be confirmed against the LuaState API in Phase B.
 //     (3) call_order_tm uses `top_idx()` as a scratch slot matching C's
 //         EXTRA_STACK convention — annotated with TODO(port) for Phase B review.
 //     (4) StackIdx (u32) arithmetic in adjust_varargs / get_varargs can
 //         underflow — annotated TODO(port); add checked arithmetic in Phase B.
-//     (5) obj_type_name returns Vec<u8> (PERF alloc) to avoid lifetime issues
-//         between static TYPE_NAMES and GcRef<LuaString>; revisit in Phase B.
+//     (5) PERF(port) callout for obj_type_name Vec alloc retired: the
+//         allocation-free `obj_type_name_cow` is now the canonical
+//         implementation; `obj_type_name` is a compat wrapper.  Existing
+//         callers can migrate to `obj_type_name_cow` to avoid the
+//         `.into_owned()` allocation.
 //     (6) LUA_COMPAT_LT_LE block in call_order_tm omitted per PORTING.md §13.
-//     (7) intern_str in obj_type_name is now fallible (propagates LuaError);
-//         the C version would longjmp on OOM — Rust callers must use `?`.
+//     (7) intern_str fallibility in obj_type_name resolved: obj_type_name_cow
+//         uses get_str_bytes (infallible) and obj_type_name wraps it with
+//         Ok(...), so no OOM propagation risk remains.
 //     (8) luaC_fix in init() is stubbed as gc().fix_object() — no-op Phase A-C.
 // ──────────────────────────────────────────────────────────────────────────────

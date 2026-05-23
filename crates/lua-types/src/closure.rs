@@ -58,3 +58,15 @@ impl LuaLClosure {
         *self.upvals[i].borrow_mut() = new;
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/lobject.h (CClosure / LClosure / Closure union)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         LuaClosure enum covering the C-Lua C/LightC/Lua closure variants.
+//                  C uses a union with a common header; we use a tagged enum.
+// ──────────────────────────────────────────────────────────────────────────────

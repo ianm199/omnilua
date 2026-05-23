@@ -139,3 +139,16 @@ impl LuaThread {
     pub fn new(id: u64) -> Self { LuaThread { id } }
     pub fn placeholder() -> Self { LuaThread { id: 0 } }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/lobject.h (TValue, Value union, tags)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         Canonical LuaValue tagged enum. C uses a {value, tag} struct with a
+//                  union of (gco/number/bool/light-userdata); we use a Rust enum
+//                  with each variant carrying its payload directly.
+// ──────────────────────────────────────────────────────────────────────────────

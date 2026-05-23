@@ -49,3 +49,16 @@ impl UpVal {
         }
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/lfunc.h, src/lfunc.c (UpVal struct)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         UpVal + UpValState (Open/Closed). C uses a TValue* that switches
+//                  between stack-pointing (open) and embedded (closed) via union; we
+//                  use an enum with the equivalent two states.
+// ──────────────────────────────────────────────────────────────────────────────

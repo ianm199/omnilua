@@ -172,3 +172,15 @@ impl Trace for GlobalState {
         // `heap` — they are the universe of allocated objects, not roots.
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        n/a (GC Trace impls bridging lua-vm and lua-gc)
+//   target_crate:  lua-vm
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         Implements lua_gc::Trace for LuaState + GlobalState. C does this via
+//                  hand-written mark routines in lgc.c; we use a trait dispatch.
+// ──────────────────────────────────────────────────────────────────────────────

@@ -118,3 +118,15 @@ impl fmt::Display for LuaError {
     }
 }
 impl std::error::Error for LuaError {}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        n/a (Rust-native error enum; no C analogue)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         LuaError + supporting variants. Pure Rust idiom (Result<T, LuaError>) replacing
+//                  C's setjmp/longjmp error propagation. No direct C-source mapping.
+// ──────────────────────────────────────────────────────────────────────────────

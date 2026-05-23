@@ -48,3 +48,16 @@ impl PartialEq for LuaString {
     fn eq(&self, other: &Self) -> bool { self.bytes == other.bytes }
 }
 impl Eq for LuaString {}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/lstring.h, src/lstring.c (TString)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         LuaString interned-string type. Mirrors C's TString with the short/long
+//                  variant distinction and the hash field; uses GcRef-style ptr
+//                  identity for interning.
+// ──────────────────────────────────────────────────────────────────────────────

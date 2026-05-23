@@ -1271,3 +1271,17 @@ mod tests {
         assert_eq!(h2.bytes_used(), bytes_full);
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/lmem.c (allocator) + src/lgc.c (collector core)
+//   target_crate:  lua-gc
+//   confidence:    medium
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 13
+//   notes:         Mark-and-sweep collector heap + the Gc<T> raw-pointer substrate. Uses
+//                  NonNull<GcBox<T>> with linked-list allgc walking; unsafe is
+//                  required for raw pointer ops and Box::into_raw/from_raw. See
+//                  unsafe-budgets.toml for the per-crate ceiling.
+// ──────────────────────────────────────────────────────────────────────────────

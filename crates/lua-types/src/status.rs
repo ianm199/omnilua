@@ -27,3 +27,15 @@ impl LuaStatus {
         }
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/lua.h (LUA_OK / LUA_YIELD / LUA_ERR*)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         LuaStatus enum. Mirrors C's status constants used as return codes from
+//                  lua_pcall / lua_resume / lua_load.
+// ──────────────────────────────────────────────────────────────────────────────

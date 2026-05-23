@@ -33,3 +33,15 @@ pub enum TagMethod {
 impl TagMethod {
     pub const N: usize = 25;
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        src/ltm.h (TM_INDEX / TM_NEWINDEX / ...)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         TagMethod enum + name lookup table. Mirrors C's TM_* constants and
+//                  the order in luaT_eventname[].
+// ──────────────────────────────────────────────────────────────────────────────

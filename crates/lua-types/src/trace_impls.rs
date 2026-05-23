@@ -191,3 +191,15 @@ impl Trace for LuaUserData {
 impl Trace for LuaThread {
     fn trace(&self, _m: &mut Marker) {}
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        n/a (GC Trace impls scoped to lua-types public surface)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         Trace impls for GC visitor over the canonical type set. No C analogue;
+//                  the C GC walks struct fields directly via macros.
+// ──────────────────────────────────────────────────────────────────────────────

@@ -127,3 +127,15 @@ impl<T: PartialEq + Trace + 'static> PartialEq for GcRef<T> {
         Gc::ptr_eq(self.0, other.0) || **self == **other
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:        n/a (GcRef public wrapper around lua-gc::Gc<T>)
+//   target_crate:  lua-types
+//   confidence:    high
+//   todos:         0
+//   port_notes:    0
+//   unsafe_blocks: 0
+//   notes:         Thin wrapper type so consumers across crates don't depend on lua-gc's
+//                  raw Gc<T>. Clone/Deref/PartialEq forwarded; no unsafe surface.
+// ──────────────────────────────────────────────────────────────────────────────

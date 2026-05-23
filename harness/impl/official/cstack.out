@@ -13,4 +13,10 @@ final count: 	98
 testing limits in coroutines inside deep calls
 final count: 	195
 chain of 'coroutine.close'
-.
+final count: 	196
+nesting of resuming yielded coroutines
+final count: 	194
+nesting coroutines running after recoverable errors
+final count: 	196
+OK
+[ok] execution completed, status=Ok

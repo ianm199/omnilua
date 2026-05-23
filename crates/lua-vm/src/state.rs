@@ -497,45 +497,41 @@ impl StackIdxExt for StackIdx {
 /// methods are needed by api.rs and tagmethods.rs but the lua-types
 /// placeholders don't yet expose them. TODO(phase-b): replace with real
 /// accessor methods on the canonical types in lua-types.
-/// Reject table keys that Lua semantics disallow:
-///   * `nil` — would shadow the "absent" sentinel.
-///   * NaN floats — `NaN != NaN` makes the key unfindable by any equality
-///     comparison, so insertion is forbidden too.
 ///
-/// `gc.lua`, `math.lua`, and `attrib.lua` all assert `pcall(rawset, t, ...)`
-/// returns false for these cases.
-fn reject_invalid_table_key(k: &LuaValue) -> Result<(), LuaError> {
-    match k {
-        LuaValue::Nil => Err(LuaError::runtime(format_args!("table index is nil"))),
-        LuaValue::Float(f) if f.is_nan() => {
-            Err(LuaError::runtime(format_args!("table index is NaN")))
-        }
-        _ => Ok(()),
-    }
-}
-
+/// PORT NOTE: the historical `reject_invalid_table_key` precheck used to
+/// guard nil/NaN keys at this layer; it has moved inside
+/// [`LuaTable::try_raw_set`] (alongside the integer-fast-path match) so
+/// the lua-vm wrapper does not double-check.
 pub trait LuaTableRefExt {
     fn metatable(&self) -> Option<GcRef<LuaTable>>;
     fn as_ptr(&self) -> *const ();
     fn get(&self, _k: &LuaValue) -> LuaValue;
     fn get_int(&self, _k: i64) -> LuaValue;
     fn get_short_str(&self, _k: &GcRef<LuaString>) -> LuaValue;
-    fn raw_set(&self, _state: &mut LuaState, _k: &LuaValue, _v: LuaValue) -> Result<(), LuaError>;
+    fn raw_set(&self, _state: &mut LuaState, _k: LuaValue, _v: LuaValue) -> Result<(), LuaError>;
     fn raw_set_int(&self, _state: &mut LuaState, _k: i64, _v: LuaValue) -> Result<(), LuaError>;
     fn invalidate_tm_cache(&self);
     fn resize(&self, _state: &mut LuaState, _na: usize, _nh: usize) -> Result<(), LuaError>;
     fn next(&self, _k: LuaValue) -> Result<Option<(LuaValue, LuaValue)>, LuaError>;
 }
 impl LuaTableRefExt for GcRef<LuaTable> {
+    #[inline]
     fn metatable(&self) -> Option<GcRef<LuaTable>> { (**self).metatable() }
+    #[inline]
     fn as_ptr(&self) -> *const () { GcRef::identity(self) as *const () }
+    #[inline]
     fn get(&self, k: &LuaValue) -> LuaValue { (**self).get(k) }
+    #[inline]
     fn get_int(&self, k: i64) -> LuaValue { (**self).get_int(k) }
+    #[inline]
     fn get_short_str(&self, k: &GcRef<LuaString>) -> LuaValue { (**self).get_short_str(k) }
-    fn raw_set(&self, _state: &mut LuaState, k: &LuaValue, v: LuaValue) -> Result<(), LuaError> {
-        reject_invalid_table_key(k)?;
-        (**self).try_raw_set(k.clone(), v)
+    /// Forwards to [`LuaTable::try_raw_set`], which performs the nil/NaN
+    /// key validation internally as part of its integer-fast-path match.
+    #[inline]
+    fn raw_set(&self, _state: &mut LuaState, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
+        (**self).try_raw_set(k, v)
     }
+    #[inline]
     fn raw_set_int(&self, _state: &mut LuaState, k: i64, v: LuaValue) -> Result<(), LuaError> {
         (**self).try_raw_set_int(k, v)
     }
@@ -2412,33 +2408,43 @@ impl LuaState {
         self.pop();
         Ok(value)
     }
+    /// Set `t[k] = v` with `__newindex` metamethod awareness.
+    ///
+    /// Fast path: when the table has no metatable, `__newindex` can never
+    /// fire, so the existence check via `fast_get` is pure waste —
+    /// `try_raw_set` handles both "key exists" and "key absent" cases via
+    /// a single lookup internally. Removing the `fast_get` halves the
+    /// lookups per set on the metamethod-free path (table.remove/insert
+    /// hot loops, most user code).
+    ///
+    /// The GC backward barrier is invoked before the store (with `&v`)
+    /// instead of after; the barrier only inspects the value's color, not
+    /// its location, so the order is semantically equivalent to upstream
+    /// C-Lua and lets us move `v` straight into `table_raw_set` without
+    /// the extra `v.clone()` that the post-store ordering forced.
+    #[inline]
     pub fn table_set_with_tm(&mut self, t: &LuaValue, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
-        // Fast path: when the table has no metatable, `__newindex` can never
-        // fire, so the existence check via fast_get is pure waste — try_raw_set
-        // handles both "key exists" and "key absent" cases via a single lookup
-        // internally. Removing the fast_get halves the lookups per set on the
-        // metamethod-free path (table.remove/insert hot loops, most user code).
         if let LuaValue::Table(tbl) = t {
             if tbl.metatable().is_none() {
-                self.table_raw_set(t, k, v.clone())?;
                 self.gc_barrier_back(t, &v);
-                return Ok(());
+                return self.table_raw_set(t, k, v);
             }
         }
         if self.fast_get(t, &k)?.is_some() {
-            self.table_raw_set(t, k, v.clone())?;
             self.gc_barrier_back(t, &v);
-            return Ok(());
+            return self.table_raw_set(t, k, v);
         }
         crate::vm::finish_set(self, t.clone(), k, v, true, None, None)
     }
+    #[inline]
     pub fn table_raw_set(&mut self, t: &LuaValue, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
         let LuaValue::Table(tbl) = t else {
             return Err(LuaError::type_error(t, "index"));
         };
         let tbl = tbl.clone();
-        tbl.raw_set(self, &k, v)
+        tbl.raw_set(self, k, v)
     }
+    #[inline]
     pub fn table_array_set(&mut self, t: &LuaValue, idx: usize, v: LuaValue) -> Result<(), LuaError> {
         let LuaValue::Table(tbl) = t else {
             return Err(LuaError::type_error(t, "index"));
@@ -4232,6 +4238,18 @@ pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
 //                      instead of borrowing global.current_thread_id on every read.
 //                      Invariant survives coroutine resume because each thread caches its
 //                      OWN id, not the global's id (see field doc on cached_thread_id).
+//                  (8) Perf: LuaTableRefExt::{raw_set, raw_set_int, get, get_int,
+//                      get_short_str, metatable, as_ptr} and table_{raw,set_with_tm,
+//                      array_set} carry #[inline] so the per-set dispatch chain
+//                      collapses into set_i_value / vm.rs OP_SETI callers. The
+//                      historical reject_invalid_table_key precheck moved into
+//                      LuaTable::try_raw_set (lua-types) and was dropped at this
+//                      layer; raw_set now takes the key by value, eliminating a
+//                      24-byte LuaValue clone per set. gc_barrier_back is invoked
+//                      before the store in table_set_with_tm (semantically
+//                      equivalent: the barrier only inspects the value's color,
+//                      not its location), letting v be moved directly into
+//                      table_raw_set without an intermediate clone.
 //                  Key TODOs: luaT_init and luaX_init cross-crate calls (Phase B);
 //                  init_registry table mutations through Rc (needs RefCell<LuaTable>);
 //                  luaD_closeprotected/seterrorobj/reallocstack in reset_thread (ldo.c);

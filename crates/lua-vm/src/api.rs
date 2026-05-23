@@ -1573,9 +1573,8 @@ fn aux_raw_set(state: &mut LuaState, idx: i32, key: LuaValue, n: u32) -> Result<
         .ok_or_else(|| LuaError::runtime(format_args!("table expected")))?;
     let top = state.top_idx();
     let val = state.get_at(top - 1);
-    t.raw_set(state, &key, val)?;
+    t.raw_set(state, key, val)?;
     t.invalidate_tm_cache();
-    // C: luaC_barrierback(L, obj2gco(t), s2v(L->top.p - 1));
     let top_val = state.get_at(top - 1);
     state.gc().barrier_back(&t, &top_val);
     // C: L->top.p -= n;

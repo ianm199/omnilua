@@ -164,10 +164,49 @@ OVERALL_RATIO=$(awk -v a="$TOTAL_RS" -v b="$TOTAL_REF" 'BEGIN{if (b>0) printf "%
     printf '}\n'
 } > "$JSON"
 
+# Append rows to the chassis evidence ledger so the dashboard can plot perf
+# over commits. One row per (workload, metric) pair. Schema matches the
+# kind=bench/target=rust-vs-reference convention used in redis-rs-port's
+# history.py.
+LEDGER="$ROOT/harness/evidence/ledger.jsonl"
+mkdir -p "$(dirname "$LEDGER")"
+EVIDENCE_REL="harness/bench/results/$(basename "$JSON")"
+
+# Use Python (already available, no jq dependency) to emit well-formed JSON
+# Lines from the same JSON_ROWS string we just built.
+python3 - "$JSON" "$COMMIT" "$TS" "$OS_NAME" "$ARCH" "$CPU" "$EVIDENCE_REL" "$RUNS" "$LEDGER" <<'PY'
+import json, sys
+json_path, commit, ts, os_name, arch, cpu, evidence_rel, runs, ledger = sys.argv[1:]
+with open(json_path) as f:
+    data = json.load(f)
+with open(ledger, "a") as out:
+    for row in data["rows"]:
+        for metric in ("wall_ratio", "rss_ratio"):
+            entry = {
+                "schema_version": 1,
+                "ts": ts,
+                "commit": commit,
+                "kind": "bench",
+                "target": "rust-vs-reference",
+                "metric": metric,
+                "workload": row["workload"],
+                "value": row[metric],
+                "unit": "ratio",
+                "evidence": evidence_rel,
+                "runner": "bench-vs-reference",
+                "runs": int(runs),
+                "os": os_name,
+                "arch": arch,
+                "cpu": cpu,
+            }
+            out.write(json.dumps(entry, sort_keys=True) + "\n")
+PY
+
 echo "" >&2
 echo "==> results:" >&2
-echo "    tsv:  $TSV" >&2
-echo "    json: $JSON" >&2
+echo "    tsv:    $TSV" >&2
+echo "    json:   $JSON" >&2
+echo "    ledger: $LEDGER (appended $(grep -c '"kind": "bench"' "$LEDGER") total bench rows)" >&2
 echo "" >&2
 column -t -s $'\t' "$TSV"
 echo ""

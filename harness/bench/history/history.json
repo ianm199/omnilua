@@ -1,0 +1,80 @@
+{
+  "commits": [
+    {
+      "sha": "88e1aef",
+      "subject": "agent: auto-commit at stop (2026-05-22T20:26:23Z)",
+      "ts": "2026-05-22T22:17:47Z"
+    },
+    {
+      "sha": "7682720",
+      "subject": "perf: route #t through canonical LuaTable::getn (O(log n) boundary search)",
+      "ts": "20260523T023822Z"
+    }
+  ],
+  "metrics": [
+    "wall_ratio",
+    "rss_ratio"
+  ],
+  "series": {
+    "rss_ratio": {
+      "binarytrees": [
+        2.7,
+        2.48
+      ],
+      "closure_ops": [
+        2.68,
+        2.39
+      ],
+      "fibonacci": [
+        1.61,
+        1.7
+      ],
+      "mandelbrot": [
+        1.39,
+        1.45
+      ],
+      "string_ops": [
+        3.93,
+        3.29
+      ],
+      "table_ops": [
+        2.09,
+        1.89
+      ]
+    },
+    "wall_ratio": {
+      "binarytrees": [
+        3.0,
+        3.2
+      ],
+      "closure_ops": [
+        143.33,
+        4.0
+      ],
+      "fibonacci": [
+        5.22,
+        5.24
+      ],
+      "mandelbrot": [
+        2.25,
+        2.25
+      ],
+      "string_ops": [
+        35.0,
+        9.0
+      ],
+      "table_ops": [
+        10473.4,
+        5.4
+      ]
+    }
+  },
+  "workloads": [
+    "binarytrees",
+    "closure_ops",
+    "fibonacci",
+    "mandelbrot",
+    "string_ops",
+    "table_ops"
+  ]
+}

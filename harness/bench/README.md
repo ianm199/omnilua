@@ -26,6 +26,11 @@ harness/bench/
 ```
 
 Generated artifacts land under `results/` and `profiles/` (gitignored).
+The static dashboard at `history/index.html` IS tracked so it can be viewed
+directly from GitHub via [raw.githack.com][dash] or by opening the file
+locally in a browser.
+
+[dash]: https://raw.githack.com/ianm199/lua-rs-port/main/harness/bench/history/index.html
 
 Every workload is **deterministic** — same output on every run, same on
 both interpreters. The compare runner asserts checksum equality (any drift
@@ -48,6 +53,15 @@ bash harness/bench/compare.sh --runs 2 --workloads fibonacci,mandelbrot
 Output:
 - `harness/bench/results/<UTC>-<sha>-compare.tsv` (header + per-workload rows)
 - `harness/bench/results/<UTC>-<sha>-compare.json` (machine-readable)
+- Appends 2 rows per workload (`wall_ratio`, `rss_ratio`) to
+  `harness/evidence/ledger.jsonl` so the dashboard can plot trends
+
+To rebuild the dashboard after a bench run:
+
+```bash
+python3 harness/bench/history.py        # writes harness/bench/history/index.html
+python3 harness/bench/history.py --open # also opens it in your browser
+```
 
 ## How to read the numbers
 

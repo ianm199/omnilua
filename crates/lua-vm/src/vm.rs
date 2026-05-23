@@ -36,22 +36,119 @@ use crate::state::LuaState;
 /// all 5.4 opcodes so call sites in vm.rs/debug.rs resolve; the real numeric
 /// values and per-opcode mode flags live in `lua-types/src/opcode.rs` once
 /// translated.
+///
+/// `#[repr(u8)]` with explicit discriminants matching C-Lua's `lopcodes.h`
+/// numbering (0=OP_MOVE, 1=OP_LOADI, ..., 82=OP_EXTRAARG). The ordered, dense
+/// 0..=82 layout lets LLVM compile `opcode()` to a bounds-checked cast on the
+/// low 7 bits of the instruction word and fuse it with the dispatch `match`
+/// downstream. Discriminant order intentionally matches the integer keys in
+/// `InstructionExt::opcode`, not the prior compile-order grouping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
+#[repr(u8)]
 pub enum OpCode {
-    Move, LoadI, LoadF, LoadK, LoadKX, LoadKx, LoadFalse, LFalseSkip, LoadTrue, LoadNil,
-    GetUpVal, GetUpval, SetUpVal, GetTabUp, GetTable, GetI, GetField, SetTabUp, SetTable, SetI, SetField,
-    NewTable, Self_,
-    AddI, AddK, SubK, MulK, ModK, PowK, DivK, IDivK, BAndK, BOrK, BXOrK,
-    Add, Sub, Mul, Mod, Pow, Div, IDiv, BAnd, BOr, BXOr, Shl, Shr, ShlI, ShrI,
-    MmBin, MmBinI, MmBinK,
-    Unm, BNot, Not, Len, Concat,
-    Close, Tbc, Jmp,
-    Eq, Lt, Le, EqK, EqI, LtI, LeI, GtI, GeI, Test, TestSet,
-    Call, TailCall, Return,
-    ForLoop, ForPrep, TForPrep, TForCall, TForLoop,
-    SetList, Closure, VarArg, VarArgPrep, ExtraArg,
-    Return0, Return1,
+    Move = 0,
+    LoadI = 1,
+    LoadF = 2,
+    LoadK = 3,
+    LoadKX = 4,
+    LoadFalse = 5,
+    LFalseSkip = 6,
+    LoadTrue = 7,
+    LoadNil = 8,
+    GetUpVal = 9,
+    SetUpVal = 10,
+    GetTabUp = 11,
+    GetTable = 12,
+    GetI = 13,
+    GetField = 14,
+    SetTabUp = 15,
+    SetTable = 16,
+    SetI = 17,
+    SetField = 18,
+    NewTable = 19,
+    Self_ = 20,
+    AddI = 21,
+    AddK = 22,
+    SubK = 23,
+    MulK = 24,
+    ModK = 25,
+    PowK = 26,
+    DivK = 27,
+    IDivK = 28,
+    BAndK = 29,
+    BOrK = 30,
+    BXOrK = 31,
+    ShrI = 32,
+    ShlI = 33,
+    Add = 34,
+    Sub = 35,
+    Mul = 36,
+    Mod = 37,
+    Pow = 38,
+    Div = 39,
+    IDiv = 40,
+    BAnd = 41,
+    BOr = 42,
+    BXOr = 43,
+    Shl = 44,
+    Shr = 45,
+    MmBin = 46,
+    MmBinI = 47,
+    MmBinK = 48,
+    Unm = 49,
+    BNot = 50,
+    Not = 51,
+    Len = 52,
+    Concat = 53,
+    Close = 54,
+    Tbc = 55,
+    Jmp = 56,
+    Eq = 57,
+    Lt = 58,
+    Le = 59,
+    EqK = 60,
+    EqI = 61,
+    LtI = 62,
+    LeI = 63,
+    GtI = 64,
+    GeI = 65,
+    Test = 66,
+    TestSet = 67,
+    Call = 68,
+    TailCall = 69,
+    Return = 70,
+    Return0 = 71,
+    Return1 = 72,
+    ForLoop = 73,
+    ForPrep = 74,
+    TForPrep = 75,
+    TForCall = 76,
+    TForLoop = 77,
+    SetList = 78,
+    Closure = 79,
+    VarArg = 80,
+    VarArgPrep = 81,
+    ExtraArg = 82,
+}
+
+/// Number of distinct opcodes (matches C-Lua's `NUM_OPCODES`). Used as the
+/// dispatch-table bound in `InstructionExt::opcode`.
+const NUM_OPCODES: u8 = 83;
+
+impl OpCode {
+    /// Legacy alias retained because the prior duplicate enum variant
+    /// `LoadKx` (case-typo of `LoadKX`) is still referenced from
+    /// `crates/lua-vm/src/debug.rs`. Both names denote the same C
+    /// `OP_LOADKX` opcode. Kept as an associated `const` so existing call
+    /// sites compile unchanged while the enum remains a clean 0..=82 dense
+    /// discriminant set required by `#[repr(u8)]`.
+    #[allow(non_upper_case_globals)]
+    pub const LoadKx: OpCode = OpCode::LoadKX;
+
+    /// Legacy alias for `GetUpVal` retained for the same reason as `LoadKx`.
+    #[allow(non_upper_case_globals)]
+    pub const GetUpval: OpCode = OpCode::GetUpVal;
 }
 
 /// TODO(phase-b): Instruction accessor extension trait. The real per-mode
@@ -76,94 +173,45 @@ pub trait InstructionExt {
     fn is_in_top(&self) -> bool;
 }
 
+/// One entry per opcode (indexed by `instruction & 0x7F`). Mirrors the
+/// `enum OpCode` discriminants 0..=82 exactly. Used by `opcode()` so the
+/// hot dispatch tick is a single bounded array load + 7-bit mask, with no
+/// 83-arm jump table emitted at the call site.
+///
+/// Keeping the lookup table in sync with `OpCode` is enforced at runtime
+/// by the bounds check below; the slot order also matches `lopcodes.h`.
+static OPCODE_TABLE: [OpCode; NUM_OPCODES as usize] = [
+    OpCode::Move,        OpCode::LoadI,       OpCode::LoadF,       OpCode::LoadK,
+    OpCode::LoadKX,      OpCode::LoadFalse,   OpCode::LFalseSkip,  OpCode::LoadTrue,
+    OpCode::LoadNil,     OpCode::GetUpVal,    OpCode::SetUpVal,    OpCode::GetTabUp,
+    OpCode::GetTable,    OpCode::GetI,        OpCode::GetField,    OpCode::SetTabUp,
+    OpCode::SetTable,    OpCode::SetI,        OpCode::SetField,    OpCode::NewTable,
+    OpCode::Self_,       OpCode::AddI,        OpCode::AddK,        OpCode::SubK,
+    OpCode::MulK,        OpCode::ModK,        OpCode::PowK,        OpCode::DivK,
+    OpCode::IDivK,       OpCode::BAndK,       OpCode::BOrK,        OpCode::BXOrK,
+    OpCode::ShrI,        OpCode::ShlI,        OpCode::Add,         OpCode::Sub,
+    OpCode::Mul,         OpCode::Mod,         OpCode::Pow,         OpCode::Div,
+    OpCode::IDiv,        OpCode::BAnd,        OpCode::BOr,         OpCode::BXOr,
+    OpCode::Shl,         OpCode::Shr,         OpCode::MmBin,       OpCode::MmBinI,
+    OpCode::MmBinK,      OpCode::Unm,         OpCode::BNot,        OpCode::Not,
+    OpCode::Len,         OpCode::Concat,      OpCode::Close,       OpCode::Tbc,
+    OpCode::Jmp,         OpCode::Eq,          OpCode::Lt,          OpCode::Le,
+    OpCode::EqK,         OpCode::EqI,         OpCode::LtI,         OpCode::LeI,
+    OpCode::GtI,         OpCode::GeI,         OpCode::Test,        OpCode::TestSet,
+    OpCode::Call,        OpCode::TailCall,    OpCode::Return,      OpCode::Return0,
+    OpCode::Return1,     OpCode::ForLoop,     OpCode::ForPrep,     OpCode::TForPrep,
+    OpCode::TForCall,    OpCode::TForLoop,    OpCode::SetList,     OpCode::Closure,
+    OpCode::VarArg,      OpCode::VarArgPrep,  OpCode::ExtraArg,
+];
+
 impl InstructionExt for Instruction {
-    #[inline]
+    #[inline(always)]
     fn opcode(&self) -> OpCode {
-        match self.raw() & 0x7F {
-            0  => OpCode::Move,
-            1  => OpCode::LoadI,
-            2  => OpCode::LoadF,
-            3  => OpCode::LoadK,
-            4  => OpCode::LoadKX,
-            5  => OpCode::LoadFalse,
-            6  => OpCode::LFalseSkip,
-            7  => OpCode::LoadTrue,
-            8  => OpCode::LoadNil,
-            9  => OpCode::GetUpVal,
-            10 => OpCode::SetUpVal,
-            11 => OpCode::GetTabUp,
-            12 => OpCode::GetTable,
-            13 => OpCode::GetI,
-            14 => OpCode::GetField,
-            15 => OpCode::SetTabUp,
-            16 => OpCode::SetTable,
-            17 => OpCode::SetI,
-            18 => OpCode::SetField,
-            19 => OpCode::NewTable,
-            20 => OpCode::Self_,
-            21 => OpCode::AddI,
-            22 => OpCode::AddK,
-            23 => OpCode::SubK,
-            24 => OpCode::MulK,
-            25 => OpCode::ModK,
-            26 => OpCode::PowK,
-            27 => OpCode::DivK,
-            28 => OpCode::IDivK,
-            29 => OpCode::BAndK,
-            30 => OpCode::BOrK,
-            31 => OpCode::BXOrK,
-            32 => OpCode::ShrI,
-            33 => OpCode::ShlI,
-            34 => OpCode::Add,
-            35 => OpCode::Sub,
-            36 => OpCode::Mul,
-            37 => OpCode::Mod,
-            38 => OpCode::Pow,
-            39 => OpCode::Div,
-            40 => OpCode::IDiv,
-            41 => OpCode::BAnd,
-            42 => OpCode::BOr,
-            43 => OpCode::BXOr,
-            44 => OpCode::Shl,
-            45 => OpCode::Shr,
-            46 => OpCode::MmBin,
-            47 => OpCode::MmBinI,
-            48 => OpCode::MmBinK,
-            49 => OpCode::Unm,
-            50 => OpCode::BNot,
-            51 => OpCode::Not,
-            52 => OpCode::Len,
-            53 => OpCode::Concat,
-            54 => OpCode::Close,
-            55 => OpCode::Tbc,
-            56 => OpCode::Jmp,
-            57 => OpCode::Eq,
-            58 => OpCode::Lt,
-            59 => OpCode::Le,
-            60 => OpCode::EqK,
-            61 => OpCode::EqI,
-            62 => OpCode::LtI,
-            63 => OpCode::LeI,
-            64 => OpCode::GtI,
-            65 => OpCode::GeI,
-            66 => OpCode::Test,
-            67 => OpCode::TestSet,
-            68 => OpCode::Call,
-            69 => OpCode::TailCall,
-            70 => OpCode::Return,
-            71 => OpCode::Return0,
-            72 => OpCode::Return1,
-            73 => OpCode::ForLoop,
-            74 => OpCode::ForPrep,
-            75 => OpCode::TForPrep,
-            76 => OpCode::TForCall,
-            77 => OpCode::TForLoop,
-            78 => OpCode::SetList,
-            79 => OpCode::Closure,
-            80 => OpCode::VarArg,
-            81 => OpCode::VarArgPrep,
-            82 => OpCode::ExtraArg,
-            n  => unreachable!("invalid opcode 0x{:02x} in instruction word 0x{:08x}", n, self.raw()),
+        let idx = (self.raw() & 0x7F) as usize;
+        if idx < NUM_OPCODES as usize {
+            OPCODE_TABLE[idx]
+        } else {
+            unreachable!("invalid opcode {} in instruction word 0x{:08x}", idx, self.raw())
         }
     }
     #[inline] fn arg_a(&self) -> i32 { ((self.raw() >> 7) & 0xFF) as i32 }
@@ -213,9 +261,9 @@ fn op_mode_byte(op: OpCode) -> u8 {
     match op {
         Move => 0x08,
         LoadI | LoadF => 0x0a,
-        LoadK | LoadKX | LoadKx => 0x09,
+        LoadK | LoadKX => 0x09,
         LoadFalse | LFalseSkip | LoadTrue | LoadNil => 0x08,
-        GetUpVal | GetUpval => 0x08,
+        GetUpVal => 0x08,
         SetUpVal => 0x00,
         GetTabUp | GetTable | GetI | GetField => 0x08,
         SetTabUp | SetTable | SetI | SetField => 0x00,

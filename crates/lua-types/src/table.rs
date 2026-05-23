@@ -809,6 +809,42 @@ impl TableInner {
         }
     }
 
+    /// Read a short-string key directly to a [`LuaValue`], mirroring the
+    /// shape of [`Self::get_int_value`]: a single hash-chain walk that
+    /// produces the slot's value without constructing an intermediate
+    /// [`TableSlotRef`] enum. Short strings are interned, so pointer
+    /// equality wins almost every comparison; the byte-equality fallback
+    /// handles the rare cross-interning-table path. Callers must ensure
+    /// `key.is_short()` before dispatching here.
+    #[inline]
+    fn get_str_value(&self, key: &GcRef<LuaString>) -> LuaValue {
+        debug_assert!(key.is_short());
+        if self.is_dummy() { return LuaValue::Nil; }
+        let mut n = self.hashpow2_idx(key.hash());
+        loop {
+            if self.node[n].key_is_short_str() {
+                let ks = self.node[n].key_string();
+                if GcRef::ptr_eq(ks, key) || ks.as_bytes() == key.as_bytes() {
+                    return self.node[n].value.clone();
+                }
+            }
+            let nx = self.node[n].next;
+            if nx == 0 { return LuaValue::Nil; }
+            n = (n as isize + nx as isize) as usize;
+        }
+    }
+
+    /// Cold fallback for keys that miss the integer- and short-string
+    /// fast paths in [`LuaTable::get`] (long strings, booleans,
+    /// non-integer floats, table / function keys, light userdata, …).
+    /// Routes through the existing `get_slot` + `slot_value` pair.
+    #[cold]
+    #[inline(never)]
+    fn get_generic_value(&self, key: &LuaValue) -> LuaValue {
+        let slot = self.get_slot(key);
+        self.slot_value(slot)
+    }
+
     fn get_str_slot(&self, key: &GcRef<LuaString>) -> TableSlotRef {
         if key.is_short() {
             self.get_short_str_slot(key)
@@ -1113,18 +1149,22 @@ impl LuaTable {
     }
 
     /// Read a key. Returns `LuaValue::Nil` if absent or if `k` is nil.
-    /// Integer keys take the same direct array-part fast path used by
-    /// [`LuaTable::get_int`]; other key shapes fall through to the
-    /// generic slot lookup.
+    /// Integer keys take the direct array-part fast path used by
+    /// [`LuaTable::get_int`]; short-string keys take the analogous
+    /// hash-chain fast path used by [`LuaTable::get_short_str`]; every
+    /// other key shape falls through to the cold generic slot lookup.
+    /// Marked `#[inline(always)]` so the dispatch folds into the
+    /// caller (the hot `state::fast_get` / `state::table_get_with_tm`
+    /// frames in the VM); profiling at #[inline] showed LLVM was still
+    /// emitting a cross-crate function call here.
+    #[inline(always)]
     pub fn get(&self, k: &LuaValue) -> LuaValue {
         let inner = self.inner.borrow();
         match k {
             LuaValue::Nil => LuaValue::Nil,
             LuaValue::Int(i) => inner.get_int_value(*i),
-            _ => {
-                let slot = inner.get_slot(k);
-                inner.slot_value(slot)
-            }
+            LuaValue::Str(s) if s.is_short() => inner.get_str_value(s),
+            _ => inner.get_generic_value(k),
         }
     }
 
@@ -1133,7 +1173,7 @@ impl LuaTable {
     /// access in user code (`t[1]`, `OP_GETI`, ipairs loops, etc.). The
     /// array-part lookup folds into a single bounds-checked load,
     /// matching C's `luaH_getint`.
-    #[inline]
+    #[inline(always)]
     pub fn get_int(&self, key: i64) -> LuaValue {
         let inner = self.inner.borrow();
         inner.get_int_value(key)
@@ -1141,11 +1181,20 @@ impl LuaTable {
 
     /// Read by string key. Despite the name (kept for compatibility
     /// with the old API), this dispatches internally to either the
-    /// short- or long-string path; passing a long string is safe.
+    /// short- or long-string path; passing a long string is safe. The
+    /// short-string branch (the common case — all interned identifiers
+    /// and most table-field keys are short) takes the folded hash-walk
+    /// in [`TableInner::get_str_value`]; long strings still go through
+    /// the slot indirection.
+    #[inline(always)]
     pub fn get_short_str(&self, k: &GcRef<LuaString>) -> LuaValue {
         let inner = self.inner.borrow();
-        let slot = inner.get_str_slot(k);
-        inner.slot_value(slot)
+        if k.is_short() {
+            inner.get_str_value(k)
+        } else {
+            let slot = inner.get_str_slot(k);
+            inner.slot_value(slot)
+        }
     }
 
     /// Read by raw byte-string key. Linear scan over the hash part —
@@ -1452,7 +1501,14 @@ fn extract_weak_mode(mt: &LuaTable) -> u8 {
 //                  mirrors C's luaH_getint by returning the array slot directly
 //                  in one bounds-checked load (no TableSlotRef indirection) and
 //                  splitting the rare alimit-aliased / hash-part path into a
-//                  cold helper. Weak-table mode flags + the prune_weak_dead /
-//                  ephemeron_values_to_mark helpers integrate with the lua-gc
-//                  Trace impl.
+//                  cold helper. The short-string read path mirrors that shape
+//                  via get_str_value (single hash-chain walk, no TableSlotRef
+//                  round-trip); LuaTable::get dispatches on integer/short-string
+//                  keys inline and routes everything else through a #[cold]
+//                  get_generic_value, matching C's luaH_get fast-path structure.
+//                  LuaTable::get / get_int / get_short_str are #[inline(always)]
+//                  so the dispatch folds into the cross-crate VM hot frames
+//                  (state::fast_get / state::table_get_with_tm). Weak-table mode
+//                  flags + the prune_weak_dead / ephemeron_values_to_mark
+//                  helpers integrate with the lua-gc Trace impl.
 // ──────────────────────────────────────────────────────────────────────────────

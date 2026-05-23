@@ -26,8 +26,8 @@ DBG: after mod operator tests (line 557)
 DBG: after math fn tests (line 666)
 testing -0 and NaN
 testing 'math.random'
-random seeds: 1779560384, 0
-float random range in 31800 calls: [0.000057, 0.999984]
-integer random range in 44800 calls: [minint + 67ppm, maxint - 19ppm]
+random seeds: 1779560586, 0
+float random range in 37100 calls: [0.000005, 0.999966]
+integer random range in 76800 calls: [minint + 24ppm, maxint - 3ppm]
 OK
 [ok] execution completed, status=Ok

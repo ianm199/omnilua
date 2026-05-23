@@ -392,15 +392,15 @@ warning: function `inc_c_stack` is never used
      |               ^^^^^^^^^^^
 
 warning: function `free_thread` is never used
-    --> crates/lua-vm/src/state.rs:3766:15
+    --> crates/lua-vm/src/state.rs:3767:15
      |
-3766 | pub(crate) fn free_thread(caller: &mut LuaState, thread: &mut LuaState) {
+3767 | pub(crate) fn free_thread(caller: &mut LuaState, thread: &mut LuaState) {
      |               ^^^^^^^^^^^
 
 warning: function `warn_error` is never used
-    --> crates/lua-vm/src/state.rs:4183:15
+    --> crates/lua-vm/src/state.rs:4184:15
      |
-4183 | pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
+4184 | pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
      |               ^^^^^^^^^^
 
 warning: type alias `LocalGcRef` is never used

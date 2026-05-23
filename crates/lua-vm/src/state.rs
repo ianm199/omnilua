@@ -3546,6 +3546,7 @@ fn lua_open(state: &mut LuaState) -> Result<(), LuaError> {
     // TODO(port): luaX_init lives in the lua-lex crate; cross-crate call needed in Phase B
     // C: g->gcstp = 0; /* allow gc */
     state.global_mut().gcstp = 0;
+    state.global().heap.unpause();
     // C: setnilvalue(&g->nilvalue); /* now state is complete */
     // macros.tsv: setnilvalue → *o = LuaValue::Nil
     // PORT NOTE: setting nilvalue = Nil signals completestate() → is_complete() = true

@@ -739,6 +739,24 @@ fn main() -> ExitCode {
         let final_status = pcall_k(&mut state, 0, MULTRET, 0, 0, None)
             .map_err(|e| format!("pcall_k failed: {}", render_lua_error(&e)))?;
 
+        if std::env::var("LUA_RS_GC_DIAG").is_ok() {
+            let tracked = state.global().heap.bytes_used();
+            let allgc = state.global().heap.allgc_count();
+            let threshold = state.global().heap.threshold_bytes();
+            let collections = state.global().heap.collections();
+            let paused = state.global().heap.is_paused();
+            let gc_state = state.global().heap.gc_state();
+            eprintln!(
+                "[gc-diag] tracked={:.1}MB  allgc={}  threshold={:.1}MB  collections={}  paused={}  state={:?}",
+                tracked as f64 / (1024.0 * 1024.0),
+                allgc,
+                threshold as f64 / (1024.0 * 1024.0),
+                collections,
+                paused,
+                gc_state,
+            );
+        }
+
         Ok::<_, String>(final_status)
     }));
 

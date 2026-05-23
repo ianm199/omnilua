@@ -2291,6 +2291,16 @@ impl LuaState {
     }
 
     pub fn table_get_with_tm(&mut self, t: &LuaValue, k: &LuaValue) -> Result<LuaValue, LuaError> {
+        // Fast path: when the table has no metatable, `__index` can never
+        // fire — so we can return the raw slot value (Nil if absent) without
+        // routing through finish_get's push/pop scaffolding. Halves the
+        // get-hot-path cost on tables without metamethods, which is the
+        // common case in table.remove/insert shift loops and most user code.
+        if let LuaValue::Table(tbl) = t {
+            if tbl.metatable().is_none() {
+                return Ok(tbl.get(k));
+            }
+        }
         if let Some(v) = self.fast_get(t, k)? {
             return Ok(v);
         }
@@ -2302,6 +2312,18 @@ impl LuaState {
         Ok(value)
     }
     pub fn table_set_with_tm(&mut self, t: &LuaValue, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
+        // Fast path: when the table has no metatable, `__newindex` can never
+        // fire, so the existence check via fast_get is pure waste — try_raw_set
+        // handles both "key exists" and "key absent" cases via a single lookup
+        // internally. Removing the fast_get halves the lookups per set on the
+        // metamethod-free path (table.remove/insert hot loops, most user code).
+        if let LuaValue::Table(tbl) = t {
+            if tbl.metatable().is_none() {
+                self.table_raw_set(t, k, v.clone())?;
+                self.gc_barrier_back(t, &v);
+                return Ok(());
+            }
+        }
         if self.fast_get(t, &k)?.is_some() {
             self.table_raw_set(t, k, v.clone())?;
             self.gc_barrier_back(t, &v);

@@ -229,10 +229,18 @@ fn get_end_pos(pos: i64, len: usize) -> usize {
 /// `string.len(s)` — return byte-length of `s`.
 ///
 /// C: `static int str_len(lua_State *L)`
+///
+/// Reads only the byte-length, never the bytes themselves, so go through
+/// `to_lua_string_len` (which never copies) rather than `check_arg_string`
+/// (which `to_vec`s the entire payload only for `.len()` to throw it away).
 pub fn str_len(state: &mut LuaState) -> Result<usize, LuaError> {
-    // C: luaL_checklstring(L, 1, &l); lua_pushinteger(L, (lua_Integer)l);
-    let s = state.check_arg_string(1)?;
-    let l = s.len();
+    let l = match state.to_lua_string_len(1) {
+        Some(n) => n,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
     state.push(LuaValue::Int(l as i64));
     Ok(1)
 }
@@ -240,18 +248,28 @@ pub fn str_len(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `string.sub(s, i [, j])` — return substring.
 ///
 /// C: `static int str_sub(lua_State *L)`
+///
+/// Borrow through `to_lua_string` so the full source string is not copied just
+/// to slice a (typically small) substring out of it. The `GcRef` keeps the
+/// bytes rooted across the `check_arg_integer` / `opt_arg_integer` calls (none
+/// of which can collect the string at arg #1).
 pub fn str_sub(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s = state.check_arg_string(1)?;
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
     let l = s.len();
     let start = pos_relat_i(state.check_arg_integer(2)?, l);
     let end_pos_raw = state.opt_arg_integer(3, -1)?;
     let end = get_end_pos(end_pos_raw, l);
     if start <= end {
-        // C: lua_pushlstring(L, s + start - 1, (end - start) + 1);
         let slice = &s[(start - 1)..end];
         state.push_string(slice)?;
     } else {
-        // C: lua_pushliteral(L, "");
         state.push_string(b"")?;
     }
     Ok(1)
@@ -260,9 +278,19 @@ pub fn str_sub(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `string.reverse(s)` — return string with bytes reversed.
 ///
 /// C: `static int str_reverse(lua_State *L)`
+///
+/// Borrow the source bytes; the previous `check_arg_string` made a full owned
+/// copy that was discarded after the single iteration.
 pub fn str_reverse(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s = state.check_arg_string(1)?;
-    let mut buf: Vec<u8> = s.iter().copied().rev().collect();
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
+    let buf: Vec<u8> = s.iter().copied().rev().collect();
     state.push_bytes(&buf)?;
     Ok(1)
 }
@@ -270,8 +298,18 @@ pub fn str_reverse(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `string.lower(s)` — return lowercase copy.
 ///
 /// C: `static int str_lower(lua_State *L)`
+///
+/// Borrow the source bytes; one allocation (the output `Vec`) is unavoidable,
+/// but the intermediate copy from `check_arg_string` was not.
 pub fn str_lower(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s = state.check_arg_string(1)?;
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
     let buf: Vec<u8> = s.iter().map(|&c| c.to_ascii_lowercase()).collect();
     state.push_bytes(&buf)?;
     Ok(1)
@@ -280,8 +318,19 @@ pub fn str_lower(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `string.upper(s)` — return uppercase copy.
 ///
 /// C: `static int str_upper(lua_State *L)`
+///
+/// Borrow the source bytes; called as the `string.gsub` replacement function
+/// in `string_ops_long` ~700k times against `%w+` matches, so the intermediate
+/// copy from `check_arg_string` added up.
 pub fn str_upper(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s = state.check_arg_string(1)?;
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
     let buf: Vec<u8> = s.iter().map(|&c| c.to_ascii_uppercase()).collect();
     state.push_bytes(&buf)?;
     Ok(1)
@@ -290,11 +339,23 @@ pub fn str_upper(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `string.rep(s, n [, sep])` — return `n` copies of `s` separated by `sep`.
 ///
 /// C: `static int str_rep(lua_State *L)`
+///
+/// Borrow `s` through `to_lua_string`. The previous version did the
+/// `check_arg_string` copy and then a second redundant `s.to_vec()` inside the
+/// build loop — that double-copy is gone too.
 pub fn str_rep(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s = state.check_arg_string(1)?;
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
     let l = s.len();
     let n = state.check_arg_integer(2)?;
-    let sep = state.opt_arg_string(3, b"")?;
+    let sep_owned = state.opt_arg_string(3, b"")?;
+    let sep: &[u8] = &sep_owned;
     let lsep = sep.len();
 
     if n <= 0 {
@@ -309,12 +370,10 @@ pub fn str_rep(state: &mut LuaState) -> Result<usize, LuaError> {
         let total = per * (n as usize) - lsep;
 
         let mut buf: Vec<u8> = Vec::with_capacity(total);
-        let s_data = s.to_vec();
-        let sep_data = sep.to_vec();
         for i in 0..(n as usize) {
-            buf.extend_from_slice(&s_data);
+            buf.extend_from_slice(s);
             if i < (n as usize - 1) && lsep > 0 {
-                buf.extend_from_slice(&sep_data);
+                buf.extend_from_slice(sep);
             }
         }
         state.push_bytes(&buf)?;
@@ -325,8 +384,21 @@ pub fn str_rep(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `string.byte(s [, i [, j]])` — return numeric codes of characters.
 ///
 /// C: `static int str_byte(lua_State *L)`
+///
+/// Borrow the source bytes through `to_lua_string` (returns a `GcRef<LuaString>`)
+/// instead of `check_arg_string` (which copies the entire string into a fresh
+/// `Vec<u8>`). On the `string_ops_long` workload `string.byte` is called 700k
+/// times against the same ~14 KB string, so the previous copy was on the order
+/// of 10 GB of memcpy. The `GcRef` keeps the bytes rooted while the borrow lives.
 pub fn str_byte(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s = state.check_arg_string(1)?;
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
     let l = s.len();
     let pi = state.opt_arg_integer(2, 1)?;
     let posi = pos_relat_i(pi, l);
@@ -334,10 +406,8 @@ pub fn str_byte(state: &mut LuaState) -> Result<usize, LuaError> {
     let pose = get_end_pos(pose_raw, l);
 
     if posi > pose {
-        return Ok(0); // empty interval
+        return Ok(0);
     }
-    // C: if (l_unlikely(pose - posi >= (size_t)INT_MAX))
-    //        return luaL_error(L, "string slice too long");
     let count = pose.saturating_sub(posi - 1) + 1;
     if count > i32::MAX as usize {
         return Err(LuaError::runtime(format_args!("string slice too long")));
@@ -1041,26 +1111,31 @@ fn push_captures(
 ///
 /// C: `static int str_find_aux(lua_State *L, int find)`
 fn str_find_aux(state: &mut LuaState, find: bool) -> Result<usize, LuaError> {
-    let s_bytes = state.check_arg_string(1)?;
-    let p_bytes = state.check_arg_string(2)?;
-    let ls = s_bytes.len();
-    let lp = p_bytes.len();
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let p_ref = match state.to_lua_string(2) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(2)?;
+            unreachable!("check_arg_string raises when arg #2 is not a string");
+        }
+    };
+    let s: &[u8] = s_ref.as_bytes();
+    let p: &[u8] = p_ref.as_bytes();
+    let ls = s.len();
+    let lp = p.len();
     let init_raw = state.opt_arg_integer(3, 1)?;
     let init = pos_relat_i(init_raw, ls).saturating_sub(1);
 
     if init > ls {
-        // C: luaL_pushfail(L); return 1;
         state.push(LuaValue::Nil);
         return Ok(1);
     }
-
-    // s_bytes and p_bytes are already owned (check_arg_string returns Vec<u8>).
-    // The previous comment "Clone to avoid borrow-across-push issues" was wrong —
-    // no borrow is being escaped here; the .to_vec() was a pure double-copy.
-    let s_owned = s_bytes;
-    let p_owned = p_bytes;
-    let s = &s_owned[..];
-    let p = &p_owned[..];
 
     // C: if (find && (lua_toboolean(L, 4) || nospecials(p, lp)))
     if find && (state.arg_to_bool(4) || nospecials(p)) {
@@ -1213,34 +1288,41 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
 /// state into a 4-element Lua table held in a single upvalue (see
 /// `gmatch_aux`).
 pub fn gmatch(state: &mut LuaState) -> Result<usize, LuaError> {
-    let s: Vec<u8> = state.check_arg_string(1)?;
-    let p: Vec<u8> = state.check_arg_string(2)?;
-    let ls = s.len();
-    // C: size_t init = posrelatI(luaL_optinteger(L, 3, 1), ls) - 1;
+    let s_ref = match state.to_lua_string(1) {
+        Some(r) => r,
+        None => {
+            state.check_arg_string(1)?;
+            unreachable!("check_arg_string raises when arg #1 is not a string");
+        }
+    };
+    let ls = s_ref.len();
+    match state.to_lua_string(2) {
+        Some(_) => {}
+        None => {
+            state.check_arg_string(2)?;
+            unreachable!("check_arg_string raises when arg #2 is not a string");
+        }
+    };
+    drop(s_ref);
     let init_raw = state.opt_arg_integer(3, 1)?;
     let mut init = pos_relat_i(init_raw, ls).saturating_sub(1);
-    // C: if (init > ls) init = ls + 1;
     if init > ls {
         init = ls + 1;
     }
 
-    // C: lua_settop(L, 2);
     lua_vm::api::set_top(state, 2)?;
 
-    // Build the iterator-state table: t = {src, pat, pos, lastmatch}.
     state.create_table(4, 0)?;
     let tbl_idx = state.top();
-    state.push_bytes(&s)?;
+    state.push_value_at(1)?;
     state.raw_seti(tbl_idx, 1)?;
-    state.push_bytes(&p)?;
+    state.push_value_at(2)?;
     state.raw_seti(tbl_idx, 2)?;
     state.push(LuaValue::Int((init + 1) as i64));
     state.raw_seti(tbl_idx, 3)?;
     state.push(LuaValue::Int(0));
     state.raw_seti(tbl_idx, 4)?;
 
-    // C: lua_pushcclosure(L, gmatch_aux, 3);
-    // Our version uses 1 upvalue (the state table) instead of 3.
     state.push_c_closure(gmatch_aux, 1)?;
     Ok(1)
 }
@@ -2632,7 +2714,7 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //   target_crate:  lua-stdlib
 //   confidence:    medium
 //   todos:         13
-//   port_notes:    4
+//   port_notes:    5
 //   unsafe_blocks: 0
 //   notes:         Pattern engine uses index-based MatchState (not raw ptrs).
 //                  string.format delegates numeric widths/precision/flags to
@@ -2648,4 +2730,10 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //                  defined; Phase B wires up the ldump.c port.
 //                  addquoted uses 3-digit escape for all control chars (slight
 //                  deviation from C which uses 1-digit when safe); benign.
+//                  str_len/str_sub/str_byte/str_reverse/str_lower/str_upper/
+//                  str_rep/gmatch/str_find_aux borrow source bytes through
+//                  to_lua_string (GcRef) instead of copying via
+//                  check_arg_string, mirroring the gmatch_aux fix (685482d).
+//                  string_ops 3.00x→2.00x, string_ops_long 2.25x→1.48x on
+//                  best-of-5 (Apple M3 Max).
 // ────────────────────────────────────────────────────────────────────────────

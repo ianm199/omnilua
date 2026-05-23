@@ -179,6 +179,9 @@ import json, sys
 json_path, commit, ts, os_name, arch, cpu, evidence_rel, runs, ledger = sys.argv[1:]
 with open(json_path) as f:
     data = json.load(f)
+# Parity threshold: workloads above this wall_ratio are considered "failing
+# perf parity" and the chassis will dispatch test-fixer packets against them.
+PARITY_THRESHOLD = 1.5
 with open(ledger, "a") as out:
     for row in data["rows"]:
         for metric in ("wall_ratio", "rss_ratio"):
@@ -200,6 +203,28 @@ with open(ledger, "a") as out:
                 "cpu": cpu,
             }
             out.write(json.dumps(entry, sort_keys=True) + "\n")
+        # Oracle-style row so the chassis's failing_rust_vs_ref_fixtures
+        # filter sees this workload as a failing target. Format mirrors
+        # the test-suite oracle rows: kind=oracle, target=rust-vs-reference,
+        # numerator < denominator when failing parity.
+        passing = row["wall_ratio"] <= PARITY_THRESHOLD
+        oracle = {
+            "schema_version": 1,
+            "ts": ts,
+            "commit": commit,
+            "kind": "oracle",
+            "target": "rust-vs-reference",
+            "metric": "perf_parity",
+            "fixture": row["workload"],
+            "capability": "lua-perf-" + row["workload"].replace("_", "-"),
+            "numerator": 1 if passing else 0,
+            "denominator": 1,
+            "wall_ratio": row["wall_ratio"],
+            "threshold": PARITY_THRESHOLD,
+            "evidence": evidence_rel,
+            "runner": "bench-vs-reference",
+        }
+        out.write(json.dumps(oracle, sort_keys=True) + "\n")
 PY
 
 echo "" >&2

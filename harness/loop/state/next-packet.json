@@ -1,27 +1,41 @@
 {
   "capabilities": [
     "debug-line-hook-timing",
-    "gc-cycle-convergence"
+    "gc-cycle-convergence",
+    "lua-perf-binarytrees",
+    "lua-perf-closure-ops",
+    "lua-perf-fibonacci",
+    "lua-perf-mandelbrot",
+    "lua-perf-string-ops",
+    "lua-perf-string-ops-long",
+    "lua-perf-table-ops",
+    "lua-perf-table-ops-long"
   ],
-  "commit": "2162d63",
-  "evidence_path": "harness/evidence/runs/20260522T142457Z-2162d63-test-fixer-fix-db-line-hook-timing.json",
+  "commit": "8d1ab73",
+  "evidence_path": "harness/evidence/runs/20260523T045334Z-8d1ab73-test-fixer-perf-obj-type-name-vec-alloc.json",
   "git_dirty": true,
   "git_status_short": [
     " M .claude/worktrees/agent-a0c4d7c805c6f1127",
+    " M .claude/worktrees/agent-a122a3b92258fd7e2",
     " M .claude/worktrees/agent-a227f50474a35f744",
     " M .claude/worktrees/agent-a287ab4456d3786b2",
     " M .claude/worktrees/agent-a2e6489db72490802",
+    " M .claude/worktrees/agent-a32372c7d91d04a10",
+    " M .claude/worktrees/agent-a3cff2dc28600646d",
     " M .claude/worktrees/agent-a4076e2d1ac11932b",
     " M .claude/worktrees/agent-a41e53ce73592160f",
     " M .claude/worktrees/agent-a45cc5a47e3378549",
     " M .claude/worktrees/agent-a4bf5249b1d047930",
     " M .claude/worktrees/agent-a5496c41ee3cf82c9",
+    " M .claude/worktrees/agent-a78227b37e1b30b7e",
+    " M .claude/worktrees/agent-a7fcacb7450d302a9",
     " M .claude/worktrees/agent-a8083831579e0ffd1",
     " M .claude/worktrees/agent-a8268512c702a2ca1",
     " M .claude/worktrees/agent-a86aa43ac9c0b2a3d",
     " M .claude/worktrees/agent-a8f4bfd7642e42fad",
     " M .claude/worktrees/agent-a91bc9ac6a0211d0a",
     " M .claude/worktrees/agent-a969829d177cae990",
+    " M .claude/worktrees/agent-aa4920ddc13972d60",
     " M .claude/worktrees/agent-aa6e5c9f19103c7e4",
     " M .claude/worktrees/agent-ac14bc4de38192508",
     " M .claude/worktrees/agent-ac7126ea6cd4a079b",
@@ -30,25 +44,28 @@
     " M .claude/worktrees/agent-ad915e819065c299c",
     " M .claude/worktrees/agent-adf47834f1f9b3005",
     " M .claude/worktrees/agent-ae51d0e314fe1835e",
-    " M crates/lua-parse/src/lib.rs",
+    " M .claude/worktrees/agent-ae62591602981c664",
+    " M .claude/worktrees/agent-af9e88a6dc78c1a3f",
+    " M .claude/worktrees/agent-afb541d64485bb915",
+    " M harness/bench/compare.sh",
+    " M harness/envelope.toml",
     " M harness/evidence/ledger.jsonl",
-    " M harness/impl/official/all.out",
-    " M harness/loop/state/dispatch-db.log",
-    " M harness/loop/state/loop-state.json",
-    " M harness/loop/state/transcripts/20260522T134455Z-test-fixer-fix-db-line-hook-timing.jsonl",
-    "?? harness/evidence/runs/20260522T134454Z-9d11e4c-test-fixer-fix-db-line-hook-timing.json"
+    " M harness/loop/prompt-template-test-fixer.md",
+    " M harness/loop/state/next-packet.json",
+    " M harness/loop/state/next-prompt.md",
+    " M harness/work-packets.jsonl"
   ],
   "mode": "test-fixer",
   "packet": {
     "capabilities": [
-      "debug-line-hook-timing"
+      "lua-perf-fibonacci"
     ],
     "cost_hint": "small",
     "depends_on": [],
     "exclusive": true,
-    "id": "fix-db-line-hook-timing",
-    "note": "db.lua:28 \u2014 assertion `#l == 0` fails because the line-hook callback fired (or recorded events) when it should not have. Test pattern: `debug.sethook(f, 'l')` then `load(s)()` then `debug.sethook()`. Look at `trace_exec` line-hook dispatch around line ~1916 in crates/lua-vm/src/debug.rs and the recently-added C-frame guard. The guard may be too lax. Scope: make ONLY this assertion at db.lua:28 pass; do not refactor the wider debug subsystem. Verify by running `./harness/run_official_test.sh reference/lua-c/testes/db.lua` from project root. Then confirm no regression by re-running the smoke set: `for t in strings closure tracegc big sort math; do ./harness/run_one_test.sh reference/lua-c/testes/$t.lua; done`.",
-    "phase": 6,
+    "id": "perf-obj-type-name-vec-alloc",
+    "note": "EXISTING PERF(port) CALLOUT at crates/lua-vm/src/tagmethods.rs:328 says 'Vec allocation on every call \u2014 profile in Phase B; may become a Cow<\\'static, [u8]> once lifetimes are firmed up'. obj_type_name returns Vec<u8> for the type name, allocating per call. The static type names (b\"nil\", b\"boolean\", b\"number\" etc.) can be returned as &'static [u8] without allocation. HYPOTHESIS: change obj_type_name to return Cow<'static, [u8]> \u2014 Borrowed for the static-name case (no metatable __name), Owned only when reading a custom __name from a metatable. Update callers to accept Cow or call .as_ref() at the use site. Look at TYPE_NAMES in the same file. EXPECTED IMPACT: small per-call savings, may show up indirectly. The point is to retire the PERF(port) callout. Bench via compare.sh. 44/44 must stay green.",
+    "phase": 7,
     "resources": [
       "lua-vm"
     ],
@@ -56,23 +73,23 @@
     "schema_version": 1,
     "selector": "auto",
     "source_ranges": [
-      "crates/lua-vm/src/debug.rs:1900-1960",
-      "reference/lua-c/testes/db.lua:18-38",
-      "reference/lua-c/ldebug.c:140-220"
+      "crates/lua-vm/src/tagmethods.rs:300-370",
+      "reference/lua-c/lstate.c:200-280",
+      "reference/lua-c/lobject.c:300-400"
     ],
     "targets": [
-      "crates/lua-vm/src/debug.rs"
+      "crates/lua-vm/src/tagmethods.rs"
     ]
   },
-  "packet_id": "fix-db-line-hook-timing",
-  "prompt_hash": "ee33c8b1c48864cf",
+  "packet_id": "perf-obj-type-name-vec-alloc",
+  "prompt_hash": "7e4b62324b69e1bc",
   "role": "test-fixer",
   "run_id": "loop-10f5a00d318e1abb",
   "runner_id": null,
-  "target_commit": "2162d63e41ecc10254e14a7862adf6f9d8376a56",
+  "target_commit": "8d1ab73837914448f9b7027db45dde00e0488b8c",
   "targets": [
-    "crates/lua-vm/src/debug.rs"
+    "crates/lua-vm/src/tagmethods.rs"
   ],
-  "tree_hash": "cd93ded2a4804a466091a8ed2071166bc763bd54ee88033cc80bbc6a14a6f8f0",
-  "ts": "2026-05-22T14:24:57.712132Z"
+  "tree_hash": "b83ef80e48c7e8b34d18edd8233ec55af54f99d17ee76564aa5421ab38fd46ca",
+  "ts": "2026-05-23T04:53:34.711694Z"
 }

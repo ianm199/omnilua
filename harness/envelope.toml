@@ -43,9 +43,69 @@ fixtures = ["db"]
 benchmarks = []
 security_cases = []
 
+[[capability]]
+id = "lua-perf-table-ops"
+description = "table_ops + table_ops_long bench workloads run within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-vm/src/state.rs", "crates/lua-types/src/table.rs", "crates/lua-stdlib/src/table_lib.rs"]
+architecture_objects = ["LuaTable", "TableInner"]
+fixtures = ["table_ops", "table_ops_long"]
+benchmarks = ["table_ops", "table_ops_long"]
+security_cases = []
+
+[[capability]]
+id = "lua-perf-string-ops"
+description = "string_ops + string_ops_long bench workloads run within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-stdlib/src/string_lib.rs", "crates/lua-vm/src/api.rs"]
+architecture_objects = ["LuaString"]
+fixtures = ["string_ops", "string_ops_long"]
+benchmarks = ["string_ops", "string_ops_long"]
+security_cases = []
+
+[[capability]]
+id = "lua-perf-fibonacci"
+description = "fibonacci bench workload runs within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-vm/src/vm.rs", "crates/lua-vm/src/state.rs", "crates/lua-vm/src/do_.rs"]
+architecture_objects = ["LuaState", "CallInfo", "Instruction"]
+fixtures = ["fibonacci"]
+benchmarks = ["fibonacci"]
+security_cases = []
+
+[[capability]]
+id = "lua-perf-closure-ops"
+description = "closure_ops bench workload runs within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-vm/src/vm.rs", "crates/lua-vm/src/func.rs", "crates/lua-vm/src/state.rs"]
+architecture_objects = ["LuaClosureLua", "UpVal"]
+fixtures = ["closure_ops"]
+benchmarks = ["closure_ops"]
+security_cases = []
+
+[[capability]]
+id = "lua-perf-binarytrees"
+description = "binarytrees bench workload runs within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-gc/src/heap.rs", "crates/lua-vm/src/state.rs", "crates/lua-types/src/table.rs"]
+architecture_objects = ["Heap", "LuaTable"]
+fixtures = ["binarytrees"]
+benchmarks = ["binarytrees"]
+security_cases = []
+
+[[capability]]
+id = "lua-perf-mandelbrot"
+description = "mandelbrot bench workload runs within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-vm/src/vm.rs"]
+architecture_objects = ["Instruction"]
+fixtures = ["mandelbrot"]
+benchmarks = ["mandelbrot"]
+security_cases = []
+
 [[non_claim]]
 id = "luajit-performance"
-description = "No LuaJIT-level performance. We match reference Lua interpreter speed."
+description = "No LuaJIT-level performance without a JIT. We're aiming for parity with reference Lua 5.4.7's interpreter."
 
 [[non_claim]]
 id = "c-extension-abi"

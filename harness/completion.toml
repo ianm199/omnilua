@@ -1,0 +1,18 @@
+schema_version = 1
+
+[project]
+name = "lua-rs-port"
+
+# The overnight perf-attack loop is "done" only when every per-workload
+# perf-parity oracle row in the ledger reports the workload within 1.5x of
+# reference Lua. Until then, the chassis keeps dispatching perf-fixer
+# packets.
+
+[[criterion]]
+id = "perf-parity-all-workloads"
+kind = "latest_full_pass"
+required = true
+ledger_kind = "oracle"
+target = "rust-vs-reference"
+metric = "perf_parity"
+item_field = "fixture"

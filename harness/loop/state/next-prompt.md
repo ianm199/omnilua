@@ -112,5 +112,5 @@ If the bench did not actually improve, the commit message should explain why
 code is cleaner"). Hygiene is fine; lying about perf is not.
 
 Project root: `/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port`
-Prompt hash: `7e4b62324b69e1bc`
-Evidence path: `harness/evidence/runs/20260523T045334Z-8d1ab73-test-fixer-perf-obj-type-name-vec-alloc.json`
+Prompt hash: `6dee07733740eb2a`
+Evidence path: `harness/evidence/runs/20260523T134350Z-e0f6cdd-test-fixer-perf-obj-type-name-vec-alloc.json`

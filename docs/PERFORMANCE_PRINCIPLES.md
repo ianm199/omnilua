@@ -128,6 +128,29 @@ overhead on every integer lookup, even when the table has no
 metatable. **Solution:** add an integer-key fast path that
 short-circuits when the table is metamethod-free for `__index`.
 
+A second flavor of this pattern: C does work IMPLICITLY that we do
+explicitly. C-Lua's `lua_geti(L, 1, n)` resolves stack index 1 with a
+single pointer arithmetic op (`ci->func.p + idx`) folded into the
+load — never materializes a "resolution function call." Our
+`index_to_value(state, idx)` is a real function with branches for
+positive, negative, pseudo, and upvalue indices. **In a shift loop
+over an N-element array we re-resolved the same stack slot N times.**
+The fix is to resolve ONCE at the top of the calling function (e.g.
+`table.remove`) and pass the resolved `&LuaValue` through a sibling
+method that skips the resolution.
+
+Example (lua, applied f179afb): `table.remove(arr, pos)` now calls
+`state.value_at(1)` once, then uses `table_get_i_value` /
+`table_set_i_value` in the shift loop body. The new methods take the
+resolved table directly. `table_ops_long` ratio dropped from 4.76x
+to 4.02x — a 15% workload-level speedup from skipping the per-iteration
+resolution.
+
+The general lesson: **if the C version's runtime cost is "essentially
+free" relative to ours, the question to ask is "what does C do
+implicitly that we do explicitly?"** The fix is to hoist or fold the
+implicit work, not to remove it.
+
 ### 3. Avoid allocation on the hot path
 
 Every `Vec::new()`, `to_vec()`, `clone()`, `Box::new()` in an inner

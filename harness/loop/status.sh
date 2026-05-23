@@ -21,7 +21,7 @@ snapshot() {
     echo "═══════════════════════════════════════════════════════════════════════"
     echo ""
 
-    LOOP_PID=$(pgrep -f 'run-loop.py.*--project \.' | head -1)
+    LOOP_PID=$(pgrep -f "run-loop.py.*lua-rs-port" | head -1)
     if [ -n "$LOOP_PID" ]; then
         LOOP_START=$(ps -p "$LOOP_PID" -o lstart= 2>/dev/null | sed 's/^ *//')
         printf "  LOOP        : RUNNING  PID=%s  started=%s\n" "$LOOP_PID" "$LOOP_START"

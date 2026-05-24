@@ -2704,36 +2704,48 @@ impl LuaState {
     pub fn hook_call(&mut self, idx: CallInfoIdx) -> Result<(), LuaError> {
         crate::do_::hookcall(self, idx)
     }
+    #[inline(always)]
+    fn gc_step_flags(&self) -> Option<(bool, bool)> {
+        let g = self.global();
+        if !g.is_gc_running() {
+            return None;
+        }
+        let should_collect = g.heap.would_collect();
+        let has_finalizers = !g.to_be_finalized.is_empty();
+        if should_collect || has_finalizers {
+            Some((should_collect, has_finalizers))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
     pub fn gc_check_step(&mut self) {
         if !self.allowhook {
             return;
         }
-        // C: `luaC_step` starts with `if (!gcrunning(g)) ... else collect`.
-        // Automatic allocation-triggered GC must respect
-        // `collectgarbage("stop")`; explicit `collectgarbage("step")`
-        // temporarily clears the stop flag in `api::gc`, matching lapi.c.
-        if !self.global().is_gc_running() {
+        let Some((should_collect, has_finalizers)) = self.gc_step_flags() else {
             return;
+        };
+        if should_collect {
+            self.gc().check_step();
         }
-        // Let the heap's debt/threshold-driven check decide whether this
-        // allocation point should collect. Pending finalizers are discovered
-        // by the post-mark hook when a real collection runs; merely having a
-        // pending-finalizer registry is not itself a reason to force a full
-        // collection on every allocation.
-        self.gc().check_step();
-        if !self.global().to_be_finalized.is_empty() {
+        if has_finalizers || !self.global().to_be_finalized.is_empty() {
             crate::api::run_pending_finalizers(self);
         }
     }
+    #[inline(always)]
     pub fn gc_cond_step(&mut self) {
         if !self.allowhook {
             return;
         }
-        if !self.global().is_gc_running() {
+        let Some((should_collect, has_finalizers)) = self.gc_step_flags() else {
             return;
+        };
+        if should_collect {
+            self.gc().check_step();
         }
-        self.gc().check_step();
-        if !self.global().to_be_finalized.is_empty() {
+        if has_finalizers || !self.global().to_be_finalized.is_empty() {
             crate::api::run_pending_finalizers(self);
         }
     }

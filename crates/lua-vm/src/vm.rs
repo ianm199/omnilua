@@ -1600,19 +1600,19 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                 let i: Instruction = state.proto_code(&cl, pc);
                 pc += 1;
                 let op = i.opcode();
-                let op_mode = op_mode_byte(op);
 
                 debug_assert!(base == state.ci_base(ci));
 
                 // C: `lua_assert(isIT(i) || (cast_void(L->top.p = base), 1));`
-                //
-                // Most Lua instructions do not consume the previous dynamic
-                // stack top. Resetting it at dispatch time keeps temporary
-                // registers from being traced as live GC roots after their
-                // expression has finished. CALL/RETURN/VARARG instructions
-                // with B == 0 are IT-mode and intentionally preserve `top`.
-                if (op_mode & (1 << 5)) == 0 || i.arg_b() != 0 {
-                    state.set_top(base);
+                // In normal C-Lua builds, `lua_assert` compiles away; keep the
+                // stack-top invalidation only for debug parity so release
+                // dispatch avoids an opcode-mode lookup and a `top` write.
+                #[cfg(debug_assertions)]
+                {
+                    let op_mode = op_mode_byte(op);
+                    if (op_mode & (1 << 5)) == 0 || i.arg_b() != 0 {
+                        state.set_top(base);
+                    }
                 }
 
                 // C: vmdispatch(GET_OPCODE(i))

@@ -759,8 +759,6 @@ fn prep_call_info(
     // next_ci → L->ci->next ? L->ci->next : luaE_extendCI(L)
     let ci_idx = state.next_ci()?;
     state.ci = ci_idx;
-    let live_top = state.top_idx();
-    state.clear_stack_range(live_top, top_idx);
     {
         let ci = state.get_ci_mut(ci_idx);
         ci.func = func_idx;

@@ -2440,7 +2440,7 @@ fn adjust_assign(
     e: &mut ExprDesc,
 ) -> Result<(), LuaError> {
     let needed = nvars - nexps;
-    let line = ls.linenumber;
+    let line = ls.lastline;
     let fs = ls.fs.as_mut().unwrap();
     if e.k.has_mult_ret() {
         // C: extra = needed + 1; if (extra < 0) extra = 0; luaK_setreturns(fs, e, extra)
@@ -2892,7 +2892,10 @@ fn leave_block(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> 
     let has_prev_block = ls.fs.as_ref().unwrap().bl.is_some();
     if !hasclose && has_prev_block && bl_upval {
         // C: luaK_codeABC(fs, OP_CLOSE, stklevel, 0, 0)
-        let line = ls.linenumber;
+        // Use `lastline` so the OP_CLOSE attributes to the block's terminating
+        // token (END/UNTIL) rather than whatever the parser has peeked to next.
+        // Mirrors lua-c's `savelineinfo(fs, f, fs->ls->lastline)`.
+        let line = ls.lastline;
         let inst = lua_code::opcodes::Instruction::abck(
             lua_code::opcodes::OpCode::Close,
             stklevel as u32,
@@ -2945,7 +2948,7 @@ fn add_prototype(ls: &mut LexState, state: &mut LuaState) -> Result<Box<LuaProto
 /// C: static void codeclosure(LexState *ls, expdesc *v)
 /// Emits OP_CLOSURE in the parent function and fixes up v.
 fn codeclosure(ls: &mut LexState, _state: &mut LuaState, v: &mut ExprDesc) -> Result<(), LuaError> {
-    let line = ls.lastline;
+    let line = ls.linenumber;
     let mut child = ls.fs.take().expect("codeclosure: no current FuncState");
     let result = (|| -> Result<(), LuaError> {
         let parent = child.prev.as_mut().expect(
@@ -3015,7 +3018,7 @@ fn close_func(ls: &mut LexState, state: &mut LuaState) -> Result<Box<LuaProto>, 
             let fs = ls.fs.as_ref().unwrap();
             nvarstack(ls, fs)
         };
-        let line = ls.lastline;
+        let line = ls.linenumber;
         let fs = ls.fs.as_mut().unwrap();
         let inst = lua_code::opcodes::Instruction::abck(
             lua_code::opcodes::OpCode::Return0,
@@ -3775,14 +3778,14 @@ fn restassign(
         if nexps != nvars {
             adjust_assign(ls, state, nvars, nexps, &mut e)?;
         } else {
-            let line = ls.lastline;
+            let line = ls.linenumber;
             let fs = ls.fs.as_mut().unwrap();
             cg_set_one_ret(fs, &mut e);
             cg_storevar(fs, line, &lh.v, &mut e)?;
             return Ok(());
         }
     }
-    let line = ls.lastline;
+    let line = ls.linenumber;
     let fs = ls.fs.as_mut().unwrap();
     let freereg = fs.freereg as i32 - 1;
     let mut e = ExprDesc::default();
@@ -3892,7 +3895,11 @@ fn whilestat(ls: &mut LexState, state: &mut LuaState, line: i32) -> Result<(), L
     check_next(ls, state, TK_DO)?;
     block(ls, state)?;
     // C: luaK_jumpto(fs, whileinit) === luaK_patchlist(fs, luaK_jump(fs), whileinit)
-    let back = cg_jump(ls.fs.as_mut().unwrap(), ls.linenumber);
+    // Use `lastline` (line of the just-parsed body's last token) rather than
+    // `linenumber` (which has already advanced to END) so the back-jump's
+    // line attribution matches lua-c's bytecode and the line hook does not
+    // spuriously fire for the END line on every iteration.
+    let back = cg_jump(ls.fs.as_mut().unwrap(), ls.lastline);
     cg_patch_list(ls.fs.as_mut().unwrap(), back, whileinit)?;
     check_match(ls, state, TK_END, TK_WHILE, line)?;
     leave_block(ls, state)?;
@@ -4124,7 +4131,7 @@ fn test_then_block(
             jf = cg_jump(ls.fs.as_mut().unwrap(), ls.linenumber);
         }
     } else {
-        let line = ls.lastline;
+        let line = ls.linenumber;
         cg_go_if_true(ls.fs.as_mut().unwrap(), line, &mut v)?;
         enter_block(ls, false);
         jf = v.f;
@@ -4135,7 +4142,7 @@ fn test_then_block(
 
     if ls.t.token == TK_ELSE || ls.t.token == TK_ELSEIF {
         // C: luaK_concat(fs, escapelist, luaK_jump(fs))
-        let line = ls.lastline;
+        let line = ls.linenumber;
         let j = cg_jump(ls.fs.as_mut().unwrap(), line);
         cg_concat(ls.fs.as_mut().unwrap(), escapelist, j)?;
     }
@@ -4362,7 +4369,7 @@ fn retstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         }
     }
     // C: luaK_ret(fs, first, nret)
-    let line = ls.lastline;
+    let line = ls.linenumber;
     cg_emit_return(ls.fs.as_mut().unwrap(), line, first, nret);
     // C: testnext(ls, ';')
     test_next(ls, state, b';' as TokenKind)?;

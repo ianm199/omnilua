@@ -1535,39 +1535,39 @@ warning: unused variable: `gt_nactvar`
      |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_gt_nactvar`
 
 warning: unused variable: `state`
-    --> crates/lua-parse/src/lib.rs:2926:37
+    --> crates/lua-parse/src/lib.rs:2929:37
      |
-2926 | fn add_prototype(ls: &mut LexState, state: &mut LuaState) -> Result<Box<LuaProto>, LuaError> {
+2929 | fn add_prototype(ls: &mut LexState, state: &mut LuaState) -> Result<Box<LuaProto>, LuaError> {
      |                                     ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
 
 warning: unused variable: `state`
-    --> crates/lua-parse/src/lib.rs:2970:33
+    --> crates/lua-parse/src/lib.rs:2973:33
      |
-2970 | fn open_func(ls: &mut LexState, state: &mut LuaState, mut new_fs: FuncState) -> Result<(), LuaError> {
+2973 | fn open_func(ls: &mut LexState, state: &mut LuaState, mut new_fs: FuncState) -> Result<(), LuaError> {
      |                                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
 
 warning: unused variable: `fvar`
-    --> crates/lua-parse/src/lib.rs:4166:9
+    --> crates/lua-parse/src/lib.rs:4173:9
      |
-4166 |     let fvar = ls.fs.as_ref().unwrap().nactvar as i32;
+4173 |     let fvar = ls.fs.as_ref().unwrap().nactvar as i32;
      |         ^^^^ help: if this is intentional, prefix it with an underscore: `_fvar`
 
 warning: unused variable: `pc`
-    --> crates/lua-parse/src/lib.rs:4173:9
+    --> crates/lua-parse/src/lib.rs:4180:9
      |
-4173 |     let pc = ls.fs.as_ref().unwrap().pc;
+4180 |     let pc = ls.fs.as_ref().unwrap().pc;
      |         ^^ help: if this is intentional, prefix it with an underscore: `_pc`
 
 warning: unused variable: `state`
-    --> crates/lua-parse/src/lib.rs:4200:36
+    --> crates/lua-parse/src/lib.rs:4207:36
      |
-4200 | fn checktoclose(ls: &mut LexState, state: &mut LuaState, level: i32) -> Result<(), LuaError> {
+4207 | fn checktoclose(ls: &mut LexState, state: &mut LuaState, level: i32) -> Result<(), LuaError> {
      |                                    ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
 
 warning: value assigned to `vidx` is never read
-    --> crates/lua-parse/src/lib.rs:4222:20
+    --> crates/lua-parse/src/lib.rs:4229:20
      |
-4222 |     let mut vidx = 0i32;
+4229 |     let mut vidx = 0i32;
      |                    ^^^^
      |
      = help: maybe it is overwritten before being read?

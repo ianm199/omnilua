@@ -98,8 +98,8 @@ buffer and FFI code without compromising the overall safety story.
 
 ## What we've actually shipped (evidence)
 
-Three commits this session, each with a `compare.sh` ledger row that shows
-up on the dashboard:
+Representative commits, each with a `compare.sh` ledger row that shows up on
+the dashboard:
 
 ### 1. `7682720` — `#t` boundary search via canonical `LuaTable::getn()`
 
@@ -165,9 +165,56 @@ code. Bench impact marginal (2.61× → 2.60×) because LLVM was already inlinin
 some via LTO, but it's the right hygiene and shows up in the profile
 re-sample: `Instruction::opcode` dropped from a top-5 frame to invisible.
 
+### 4. `d8c1423` — inline VM stack and call accessors
+
+**Pattern:** *C macros are a code-generation contract, not just syntax.*
+
+After the table fast path (`92c905e`) removed the obvious stdlib overhead, the
+remaining `fibonacci` profile was mostly VM/call mechanics:
+
+- before profile (`dc0a693`, `fibonacci`): `execute` 72.2%, `precall` 8.5%,
+  `prep_call_info` 7.6%, `upvalue_get` 4.4%, `collect_via_heap` 3.6%,
+  `set_ci_previous` 1.8%, `set_top` 1.8%;
+- after profile (`a313817`, `fibonacci`): `execute` 89.3%,
+  `upvalue_get` 6.4%, `collect_via_heap` 4.3%.
+
+The important reading is not "execute got worse." It means the C-macro-shaped
+helpers disappeared as separate call frames and got attributed back into the
+dispatch loop, where C-Lua would have had them all along.
+
+The source diagnosis: C-Lua expresses a lot of VM mechanics as macros or
+`l_sinline` helpers (`s2v`, `ci_func`, `RA`, `updatebase`, `prepCallInfo`,
+`moveresults`). A literal Rust port tends to translate those into ordinary
+methods split across crates (`state.get_at`, `state.set_top`, `state.ci_base`,
+`state.precall`, `do_::prep_call_info`). That preserves behavior but loses the
+code-generation shape: one C pointer arithmetic expression becomes an actual
+Rust function call at the hottest point in the interpreter.
+
+`d8c1423` added `#[inline(always)]` to the stack-index arithmetic, stack
+accessors, CallInfo accessors, `precall` / `poscall` wrappers, and the
+`l_sinline`-equivalent call helpers. It did not change semantics.
+
+Bench impact (best-of-3, `92c905e`/`dc0a693` evidence baseline to
+`d8c1423`/`a313817`):
+
+| workload | before | after | note |
+|---|---:|---:|---|
+| fibonacci | 3.04x | 2.41x | call/return-heavy recursion |
+| closure_ops | 2.61x | 2.41x | closure calls + upvalues |
+| binarytrees | 2.41x | 2.22x | mixed VM + allocation/GC |
+| string_ops_long | 1.38x | 1.35x | small incidental win |
+| table_ops_long | 0.39x | 0.39x | unchanged; already direct-table bound |
+| overall | 1.71x | 1.45x | broad VM win |
+
+Lesson: when a profile shows helpers whose C origin is a macro or static
+inline, do a "macro boundary audit" before inventing a new algorithm. The
+right Rust fix is often to restore the same code-generation boundary C had:
+inline the helper, split cold paths away, or move the tiny operation back into
+the dispatch arm.
+
 ## The patterns by name
 
-Distilled from the three commits above, plus the redis-rs-port hotpath
+Distilled from the representative commits above, plus the redis-rs-port hotpath
 methodology we adapted:
 
 ### Pattern 1: Use the fast path that already exists
@@ -234,6 +281,30 @@ shapes.
 Single-instruction operations (bit-shifts, masks, enum tag reads) should
 NOT be function calls on the hot path. `#[inline]` is the cheap fix; sometimes
 it's not enough and you have to flatten the abstraction.
+
+The stronger version: **C macros and `static inline` helpers are performance
+architecture.** Treat them as "must compile away" contracts. A translated
+Rust method may be behaviorally faithful and still be structurally wrong if it
+survives as a call frame in profiles.
+
+Macro-boundary audit procedure:
+
+1. When a hot Rust frame appears, find its C origin. If the C source spells it
+   as `#define`, `l_sinline`, `static inline`, or a one-expression helper, it
+   was probably intended to disappear into the caller.
+2. Check whether the Rust equivalent crosses a crate/module boundary, is
+   generic, returns an owned value, or calls through another wrapper. Those are
+   common reasons LLVM stops inlining.
+3. First try `#[inline(always)]` on the tiny helper and its immediate wrapper.
+   If the body is large, split the cold/error/metamethod path into
+   `#[cold] #[inline(never)]` so the hot path is inlineable.
+4. Re-sample. A successful fix makes the helper frame disappear and the parent
+   hot frame grow; only keep the packet if the workload wall ratio also moves.
+
+Evidence from this port: `d8c1423` inlined VM stack and call accessors that
+map to C-Lua macros / `l_sinline` helpers. `fibonacci` moved 3.04x -> 2.41x
+and the separate `precall`, `prep_call_info`, `set_ci_previous`, and `set_top`
+frames vanished from the profile.
 
 ### Pattern 6: Wall-clock sampling beats hypothesizing
 
@@ -449,21 +520,26 @@ performance parity (or close), the lessons from this one in priority order:
    rare case, specialized for the common one. Routing everything through
    the generic path is the default Rust port mistake.
 
-7. **"Cache the precondition" is the second.** Features that short-circuit
+7. **Treat C macros as code-generation evidence.** If upstream wrote a hot
+   operation as a macro, `l_sinline`, or `static inline`, the Rust version
+   should compile away too. If profiling shows it as a frame, audit the
+   abstraction boundary before looking for a bigger algorithmic rewrite.
+
+8. **"Cache the precondition" is the second.** Features that short-circuit
    on inactive cases need the short-circuit at the outer layer, not
    inside.
 
-8. **Every commit cites its evidence.** Profile artifact path in the
+9. **Every commit cites its evidence.** Profile artifact path in the
    commit body. Dashboard row showing before/after. 44/44 oracle test
    gate. No exceptions, even on "obvious" fixes — the GC fix looked
    obvious AFTER the profile said so.
 
-9. **The interpreter is the substrate, not the endpoint.** Plan for a
+10. **The interpreter is the substrate, not the endpoint.** Plan for a
    future JIT — keep safepoints explicit, type tests cheap, semantics
    clean. None of this costs anything if the C source you're porting
    already does it.
 
-10. **`unsafe_code = "forbid"` is not the bottleneck. Sloppy idioms are.**
+11. **`unsafe_code = "forbid"` is not the bottleneck. Sloppy idioms are.**
     The gap you should worry about is the one between "Rust that
     type-checks" and "Rust that compiles to the same machine code C
     does." That gap is most of the work. Safety is rarely where the

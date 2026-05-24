@@ -238,8 +238,21 @@ out the 7.6% profile share was attribution noise on an
 already-inlined function. **Profile share ≠ recoverable wall.**
 The way to distinguish: re-sample after the change. If the frame
 moves AND the workload wall drops, the inline did real work. If the
-frame moves AND the workload wall doesn't drop, only profile
-attribution changed (cosmetic).
+frame only moves, it was attribution cleanup.
+
+**Macro-boundary rule.** When upstream C uses a macro, `l_sinline`, or
+`static inline` helper in a hot path, treat that as a code-generation
+requirement: the translated Rust equivalent should compile away too.
+A behaviorally faithful Rust method is still too expensive if it shows
+up as a leaf frame in the interpreter profile.
+
+Concrete lua-rs example (applied `d8c1423`, evidenced by `a313817`):
+after the table fast path, `fibonacci` still showed separate frames for
+`precall`, `prep_call_info`, `set_ci_previous`, and `set_top`. Those map
+to C-Lua macro/static-inline call-frame mechanics, not algorithmic work.
+Inlining stack index arithmetic, stack accessors, CallInfo accessors, and
+`precall`/`poscall` wrappers moved `fibonacci` from 3.04x to 2.41x and
+overall from 1.71x to 1.45x, while keeping 44/44 official tests green.
 
 **The negative-result variant: clones aren't always the cost.** Example
 (lua, da9401e): we suspected `LuaValue::Clone` in the arith opcodes

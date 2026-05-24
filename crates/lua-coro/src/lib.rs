@@ -1,7 +1,7 @@
 //! Lua coroutines via stackful context switching (`corosensei`). Phase E scope.
 //!
-//! This crate is permitted `unsafe` (ceiling: 10 blocks per
-//! `harness/unsafe-budgets.toml`). Every block requires `// SAFETY: ...`.
+//! This crate currently has no unsafe implementation. A future stackful backend
+//! must raise its explicit unsafe budget in `harness/unsafe-budgets.toml`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -80,7 +80,7 @@ state-owned helper instead:
 
 If &mut LuaState is not in scope at this site, mark the site:
   // TODO(D-1c-bridge): allocation outside state context
-  let x = GcRef::new(...);  // FIXME after D-1e: route via current_heap()
+  let x = GcRef::new(...);  // FIXME after D-1e: route via with_current_heap(...)
 and surface it for the agent loop to migrate later.
 
 File: $TARGET_PATH

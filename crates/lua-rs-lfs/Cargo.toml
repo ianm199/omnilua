@@ -1,9 +1,12 @@
 [package]
 name = "lua-rs-lfs"
 version.workspace = true
+description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 # Phase G-1: Rust-native port of LuaFileSystem (lfs). Linked statically into
 # `lua-cli` and exposed through `package.preload.lfs`, so `require('lfs')`

@@ -37,7 +37,9 @@ The ordering should be:
 
 Relevant current surfaces:
 
-- `crates/lua-coro/src/lib.rs` is a skeleton with an unsafe allowance.
+- `crates/lua-coro/src/lib.rs` is a skeleton with no active unsafe budget.
+  If a future stackful backend needs raw context switching, it must raise the
+  crate's explicit unsafe budget in the same patch.
 - `crates/lua-stdlib/src/coro_lib.rs` has the `lcorolib.c` stdlib shape, but
   execution operations are stubs or temporary emulation.
 - `crates/lua-vm/src/do_.rs` already has translated `lua_resume`,
@@ -719,7 +721,8 @@ Cons:
 
 #### Option B: New `lua-loadlib` Crate
 
-Create a crate with unsafe allowance and a safe facade:
+If reusable embedder loading becomes a requirement, create a crate with an
+explicit unsafe budget and a safe facade:
 
 ```text
 lua-stdlib -> lua-vm types only

@@ -633,7 +633,7 @@ pub fn open_utf8(state: &mut LuaState) -> Result<usize, LuaError> {
 //   confidence:    medium
 //   todos:         13
 //   port_notes:    2
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Core UTF-8 logic (utf8_decode, encode_utf8_codepoint,
 //                  pos_relat, is_cont_at) is a faithful translation and should
 //                  be correct. All 13 TODOs are unresolved LuaState API names:

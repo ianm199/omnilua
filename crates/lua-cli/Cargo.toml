@@ -1,9 +1,12 @@
 [package]
 name = "lua-cli"
 version.workspace = true
+description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 # Phase D-3.5: lua-cli now hosts the libloading-backed dynamic library
 # backend. `libloading` is FFI and unavoidably uses `unsafe`; the workspace

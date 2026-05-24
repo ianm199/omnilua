@@ -10,20 +10,13 @@
 "lua-code"   = 0
 "lua-vm"     = 0
 "lua-stdlib" = 0
-"lua-gc"     = 25   # incremental tri-color collector — Phase D.
-                    # 2026-05-16: raised 20 to 22 after consolidation pass.
-                    # Phase-D agent over-allocated to 90; audit drove it to
-                    # 22 with SAFETY comments on each remaining block.
-                    # 2026-05-23: raised 22 to 25 to cover three new genuine
-                    # blocks added in heap.rs since the last audit (allgc
-                    # chain walking + GcBox header access in the sweep
-                    # phase). Each block remains a raw-pointer op required
-                    # for the mark-and-sweep substrate; safe-Rust
-                    # alternatives would require switching the GC
-                    # algorithm. Per-file: heap.rs=17, mem.rs=15-ish (mem
-                    # blocks count `unsafe fn` declarations), lib.rs=1
-                    # (current_heap's & 'static transmute).
-"lua-coro"   = 10   # stackful coroutine context switching — Phase E
+"lua-gc"     = 13   # production heap/collector substrate. Historical
+                    # reference-only partial ports were removed from src/ so
+                    # this ceiling tracks only active heap.rs unsafe. Each
+                    # block remains a raw-pointer op required by the current
+                    # mark-and-sweep architecture.
+"lua-coro"   = 0    # no active unsafe implementation; raise only with a
+                    # future stackful coroutine backend.
 "lua-cli"    = 5    # libloading-backed dynlib backend — Phase D-3.5.
                     # 2026-05-23: raised 4 to 5. Real `unsafe { ... }` blocks
                     # in dynlib_*_hook: Library::new + 2× Symbol::get = 3

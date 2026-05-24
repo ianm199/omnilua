@@ -1691,7 +1691,7 @@ pub fn luaopen_io(state: &mut LuaState) -> Result<usize, LuaError> {
 //   confidence:    medium
 //   todos:         62
 //   port_notes:    2
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Logic faithfully translated. Phase F closed the io_readline
 //                  is_closed/g_read stubs via lstream_from_upvalue (looks up
 //                  the LStream side-table from the GcRef<LuaUserData> sitting

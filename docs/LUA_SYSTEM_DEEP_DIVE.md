@@ -250,10 +250,10 @@ the whole project; the goal is a tiny, auditable unsafe kernel with a budget
 and tests.
 
 Current important point: `lua_types::gc::GcRef<T>` is now a newtype around
-`lua_gc::Gc<T>`, not `Rc<T>`. `GcRef::new(value)` checks
-`lua_gc::current_heap()`; inside a `HeapGuard` it allocates into the active
-heap, otherwise it uses `Gc::new_uncollected(value)` as a bootstrap/leak
-fallback.
+`lua_gc::Gc<T>`, not `Rc<T>`. `GcRef::new(value)` calls
+`lua_gc::with_current_heap(...)`; inside a `HeapGuard` it allocates into the
+active heap, otherwise it uses `Gc::new_uncollected(value)` as a
+bootstrap/leak fallback.
 
 That means the old "paper-only GC" diagnosis is no longer accurate in the
 simple form. The current state is better:
@@ -445,10 +445,10 @@ pcall_k:
   run protected call
 
 GcRef::new(value):
-  if current_heap() exists:
+  with_current_heap(|heap| if heap exists:
     heap.allocate(value)
   else:
-    Gc::new_uncollected(value)
+    Gc::new_uncollected(value))
 
 collectgarbage("collect"):
   state.gc().full_collect()
@@ -474,6 +474,46 @@ The practical version:
 - every live heap reference reachable from the stack, call frames, globals,
   registry, metatables, intern pools, upvalues, and closures must be traced;
 - unsafe stays inside `lua-gc`.
+
+### Unsafe Audit Snapshot
+
+Current unsafe budgets:
+
+- `lua-gc`: 13 counted sites, all in `heap.rs`;
+- `lua-cli`: 5 counted sites for the `libloading` dynamic-library backend;
+- `lua-coro`: 0, with `unsafe_code = "forbid"` until a concrete stackful
+  backend lands.
+
+What was retired during the audit:
+
+- the public `current_heap() -> Option<&'static Heap>` lifetime lie became
+  closure-scoped `with_current_heap(...)`;
+- reference-only `gc.rs`/`mem.rs` partial ports were removed from
+  `crates/lua-gc/src/` so source scans only count compiled code;
+- `lua-coro` no longer carries a speculative unsafe budget;
+- `Heap::allocate` sets `header.next` while the `Box` is still owned, before
+  `Box::into_raw`, avoiding an unnecessary raw-pointer write.
+
+The remaining `lua-gc` unsafe sites are the expected trusted kernel:
+
+- converting the scoped `HeapGuard` TLS pointer back to `&Heap`;
+- dereferencing `Gc<T>` handles to reach their `GcBox<T>`;
+- dereferencing gray-queue and allgc-list `NonNull<GcBox<dyn Trace>>` nodes;
+- maintaining the sweep cursor, which points at an intrusive `next` cell;
+- reclaiming unreachable boxes with `Box::from_raw`.
+
+Reduction rules for future audits:
+
+- never budget dead or uncompiled files; delete or move reference material out
+  of `src/`;
+- never return a fake `'static` reference from TLS or registry state; use a
+  closure-scoped API so the borrow cannot escape;
+- before using raw pointers, ask whether the value is still owned as a `Box` or
+  ordinary Rust reference, and do the mutation there instead;
+- raise `harness/unsafe-budgets.toml` only in the same patch that introduces a
+  real compiled unsafe site and its `SAFETY` argument;
+- after changing this surface, run `.claude/hooks/unsafe-budget.sh`,
+  `cargo test -p lua-gc`, and the official suite.
 
 ### Known Gaps
 

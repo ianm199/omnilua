@@ -171,7 +171,7 @@ translate_one() {
 This is a Phase A task: faithful logic translation. The file does NOT need to compile.
 Strict rules from PORTING.md:
 - No String/&str/from_utf8 for Lua data — use &[u8], Vec<u8>, LuaString
-- No unsafe outside lua-gc/lua-coro
+- No unsafe outside explicit unsafe-budget crates
 - No tokio/async fn/futures/rayon
 - Errors → Result<T, LuaError>; constructors from PORTING.md §6.1
 - Stack refs → StackIdx, never borrows

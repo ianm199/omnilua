@@ -1883,7 +1883,7 @@ pub fn pcall_k(
 ) -> Result<LuaStatus, LuaError> {
     // Phase D-1c: activate the heap for the duration of this protected call.
     // GcRef::new (post D-1e) and any future allocator-aware code will route
-    // through state.global.heap via current_heap(). Stacked so nested
+    // through state.global.heap via with_current_heap(...). Stacked so nested
     // pcalls inside the same thread don't clobber each other.
     let _heap_guard = {
         let g = state.global.borrow();
@@ -2536,7 +2536,7 @@ pub fn upvalue_join(state: &mut LuaState, fidx1: i32, n1: i32, fidx2: i32, n2: i
 //   confidence:    low
 //   todos:         18
 //   port_notes:    8
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Heavy use of interior mutability TODOs (GcRef writes for
 //                  metatables, upvalue writes, userdata uv writes). The
 //                  index2value helper returns cloned LuaValue not a pointer,

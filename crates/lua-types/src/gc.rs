@@ -2,7 +2,7 @@
 //!
 //! Phase A/B/C: thin newtype around `Rc<T>`.
 //! Phase D-1e (current): newtype around `lua_gc::Gc<T>` — Copy under the hood,
-//! tracks allocation in the active `Heap` (via `lua_gc::current_heap()`).
+//! tracks allocation in the active `Heap` (via `lua_gc::with_current_heap(...)`).
 //!
 //! Surface kept stable across the swap: `new`, `ptr_eq`, `identity`,
 //! `strong_count`, `weak_count`, `downgrade`. Existing code touching
@@ -29,10 +29,10 @@ impl<T: Trace + 'static> GcRef<T> {
     /// allgc chain. Otherwise it allocates "uncollected" — leaks until
     /// process exit, same as the old `Rc::new` behavior.
     pub fn new(value: T) -> Self {
-        let gc = match lua_gc::current_heap() {
+        let gc = lua_gc::with_current_heap(|heap| match heap {
             Some(heap) => heap.allocate(value),
             None => Gc::new_uncollected(value),
-        };
+        });
         GcRef(gc)
     }
 

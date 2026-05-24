@@ -1074,7 +1074,7 @@ use lua_types::LuaError;
 //   confidence:    medium
 //   todos:         14
 //   port_notes:    30
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Logic is faithful to the C.  The two largest structural changes
 //                  are: (1) `tablerehash` + intrusive `hnext` chain replaced by
 //                  `HashMap` in `StringPool`; (2) `luaS_new`'s `point2uint`

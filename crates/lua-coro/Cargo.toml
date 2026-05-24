@@ -1,15 +1,17 @@
 [package]
 name = "lua-coro"
 version.workspace = true
+description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
-# Per harness/unsafe-budgets.toml, this crate may use up to 10 unsafe blocks
-# (stackful coroutine context switches need raw asm/inline). Every block
-# requires `// SAFETY: <invariant>`. See PORTING.md §11.
+# This crate currently has no unsafe implementation. Raise the budget in
+# harness/unsafe-budgets.toml only if a future stackful backend lands.
 [lints.rust]
-unsafe_code = "allow"
+unsafe_code = "forbid"
 
 [dependencies]
 lua-types.workspace = true

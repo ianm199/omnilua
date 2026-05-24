@@ -3,6 +3,14 @@ target/
 **/*.rs.bk
 Cargo.lock
 
+# Accidental local runtime artifacts
+/appendonly.aof
+/dump.rdb
+/luac.out
+*.rdb
+*.aof
+*.luac
+
 # C build artifacts
 reference/lua-5.4.7/src/*.o
 reference/lua-5.4.7/src/lua

@@ -904,7 +904,7 @@ pub(crate) fn get_varargs(
 //   confidence:    medium
 //   todos:         10
 //   port_notes:    7
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:
 //     Logic translation is faithful; the main uncertainties are:
 //     (1) GcRef<LuaTable> accessor pattern (.metatable() / .borrow().metatable)

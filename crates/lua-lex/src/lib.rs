@@ -2007,7 +2007,7 @@ fn utf8_encode_stub(codepoint: u32) -> Vec<u8> {
 //   confidence:    medium
 //   todos:         18
 //   port_notes:    12
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Logic is faithful to the C.  The main structural differences:
 //                  (1) LexState.L removed — state threaded via fn params;
 //                  (2) save/save_and_next/inclinenumber/helpers are all fallible

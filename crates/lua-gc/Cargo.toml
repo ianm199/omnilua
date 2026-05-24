@@ -1,12 +1,15 @@
 [package]
 name = "lua-gc"
 version.workspace = true
+description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
-# Per harness/unsafe-budgets.toml, this crate may use up to 20 unsafe blocks
-# (incremental tri-color GC unavoidably needs some). Every block requires
+# Per harness/unsafe-budgets.toml, this crate may use a small unsafe kernel
+# for the production heap/collector substrate. Every block requires
 # `// SAFETY: <invariant>`. See PORTING.md §11.
 [lints.rust]
 unsafe_code = "allow"

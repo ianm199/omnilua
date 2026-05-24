@@ -749,7 +749,7 @@ pub enum FmtArg<'a> {
     /// `%U` — a Unicode codepoint (u32), encoded as UTF-8.
     Utf8Codepoint(u32),
     // TODO(port): %p (pointer) omitted — raw pointer in safe Rust is not allowed
-    // outside lua-gc/lua-coro.  Callers that need pointer formatting must handle
+    // outside explicit unsafe-budget crates.  Callers that need pointer formatting must handle
     // it separately and pass the pre-formatted bytes as FmtArg::Str.
 }
 

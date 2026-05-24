@@ -107,7 +107,7 @@ One worker per CPU is typical (--workers 4). Workers don't talk to each other �
                                                        (Stop event)
 
   unsafe budget         PORTING.md says "ceiling 0"→   unsafe-budget.sh hook
-                        outside lua-gc/lua-coro        (Stop event)
+                        outside explicit budgets        (Stop event)
 
   PORT STATUS trailer   PORTING.md §12 mandates  →     trailer-required.sh hook
                                                        (Stop event)

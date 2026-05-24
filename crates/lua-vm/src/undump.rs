@@ -1118,7 +1118,7 @@ pub(crate) fn undump(
 //   confidence:    medium
 //   todos:         15
 //   port_notes:    39
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Logic is faithful to the C.  The main open items for Phase B
 //                  are: (1) import paths for GcRef/LuaProto/LuaClosure/etc.;
 //                  (2) LuaError::syntax byte-string formatting for the chunk

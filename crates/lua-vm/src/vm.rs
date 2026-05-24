@@ -3139,7 +3139,7 @@ fn return1_hook(
 //   confidence:    medium
 //   todos:         6
 //   port_notes:    4
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         All opcode handlers and helpers translated; LuaState methods
 //                  referenced (fast_get, precall, poscall, etc.) are stubs that
 //                  Phase B will land.  The execute() goto flow is modelled with

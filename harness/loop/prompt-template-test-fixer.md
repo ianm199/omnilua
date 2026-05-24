@@ -73,7 +73,7 @@ The Stop hook will auto-commit on green correctness checks.
 - **No benchmark-only fast paths.** If the workload path is unrealistic, fix is fraudulent.
 - **No skipped semantic correctness.** Skip work that's provably
   unnecessary; never skip work that matters.
-- **No new `unsafe`** outside `lua-gc` / `lua-coro`.
+- **No new `unsafe`** outside explicit unsafe-budget crates.
 - **No `String` for Lua data.** Use `&[u8]` / `Vec<u8>` / `LuaString`.
 - **Touch only the declared target files.**
 - **No inline `//` comments**, doc strings only.

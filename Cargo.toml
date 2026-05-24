@@ -19,21 +19,24 @@ version = "0.0.1"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
+description = "Lua 5.4 runtime port in Rust with an AI-assisted C-to-Rust porting harness."
+repository = "https://github.com/ianm199/lua-rs-port"
+homepage = "https://github.com/ianm199/lua-rs-port"
 authors = ["lua-rs-port contributors"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.dependencies]
-lua-types   = { path = "crates/lua-types" }
-lua-lex     = { path = "crates/lua-lex" }
-lua-parse   = { path = "crates/lua-parse" }
-lua-code    = { path = "crates/lua-code" }
-lua-vm      = { path = "crates/lua-vm" }
-lua-stdlib  = { path = "crates/lua-stdlib" }
-lua-gc      = { path = "crates/lua-gc" }
-lua-coro    = { path = "crates/lua-coro" }
-lua-rs-lfs  = { path = "crates/lua-rs-lfs" }
+lua-types   = { path = "crates/lua-types", version = "0.0.1" }
+lua-lex     = { path = "crates/lua-lex", version = "0.0.1" }
+lua-parse   = { path = "crates/lua-parse", version = "0.0.1" }
+lua-code    = { path = "crates/lua-code", version = "0.0.1" }
+lua-vm      = { path = "crates/lua-vm", version = "0.0.1" }
+lua-stdlib  = { path = "crates/lua-stdlib", version = "0.0.1" }
+lua-gc      = { path = "crates/lua-gc", version = "0.0.1" }
+lua-coro    = { path = "crates/lua-coro", version = "0.0.1" }
+lua-rs-lfs  = { path = "crates/lua-rs-lfs", version = "0.0.1" }
 
 [profile.release]
 opt-level = 3

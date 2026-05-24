@@ -1,49 +1,68 @@
 # lua-rs-port
 
-Safe-Rust port of Lua 5.4.7, driven by an AI-agent porting harness.
+Rust port of Lua 5.4.7, built alongside an AI-agent porting harness.
 
-Two artifacts being built in parallel:
+There are two artifacts here:
 
-1. **`lua-rs`** — a behaviorally-equivalent pure-Rust implementation of Lua 5.4 that passes the official test suite in user mode (`_U=true`). Embeddable from Rust applications. WASM-compatible. **No C FFI dependencies.**
-2. **The harness itself** — a reusable kit for AI-agent-driven C→Rust ports. Spec (`PORTING.md`), pre-computed analyses, oracle scripts, enforcement hooks, subagent roles. Published as a methodology, not just a port.
+1. **`lua-rs`**: a Lua 5.4 runtime implemented in Rust.
+2. **The porting harness**: scripts, docs, oracle tests, hooks, and debugging
+   patterns for driving a large C-to-Rust port with agents.
 
-## Read in order
+## Current Status
 
-1. **`PORT_STRATEGY.md`** — what we're building, why, and the phase plan.
-2. **`HARNESS_DESIGN.md`** — how we're driving the work with agents.
-3. **`PORTING.md`** — the translation spec the agents read on every task.
+As of 2026-05-24:
 
-## Quick start
+- the harnessed official Lua test suite passes **44/44**;
+- normal script execution has no C runtime dependency;
+- most crates forbid `unsafe`;
+- the remaining unsafe surface is explicitly budgeted in `lua-gc` and the
+  `lua-cli` dynamic-library backend;
+- this is not a drop-in replacement for C-Lua's C ABI;
+- this is not LuaJIT.
 
-Build the reference C Lua and run the baseline test suite (this is our oracle):
+The best current safety phrasing is: safe public surface over a small audited
+unsafe core. Do not call the project "completely safe Rust."
 
-```bash
-cd reference/lua-5.4.7
-make macosx
-cd ../lua-5.4.7-tests
-../lua-5.4.7/src/lua -e "_U=true" all.lua
-# should end with: final OK !!!
-```
+## Quick Start
 
-Run our Rust impl through the oracle on a specific test file:
-
-```bash
-./harness/oracle/run-test-file.sh constructs.lua
-```
-
-Run a full phase:
+Run a Lua snippet:
 
 ```bash
-./harness/oracle/run-phase.sh B
-cat harness/oracle/test-results.json
+RUSTFLAGS='-Awarnings' cargo run -q --bin lua-rs -- 'print("hello from lua-rs")'
 ```
 
-## Status
+Run the official suite:
 
-Pre-Phase-A setup. Reference C Lua built and verified. Harness scaffolding in place. `PORTING.md` and pre-computed analyses pending.
+```bash
+RUSTFLAGS='-Awarnings' cargo build -q --bin lua-rs
+RUSTFLAGS='-Awarnings' TEST_TIMEOUT_S=90 ./harness/run_official_all.sh
+```
 
-## Non-goals
+Run the unsafe budget gate:
 
-- LuaJIT-level performance. We're matching reference Lua.
-- Drop-in compat with C-Lua extensions (`LuaSocket`, `LFS`, etc.). Out of scope; possibly a future `lua-sys` shim.
-- Drop-in for OpenResty / Neovim / WoW. Those use LuaJIT or 5.1, not 5.4.
+```bash
+.claude/hooks/unsafe-budget.sh
+```
+
+## Read Next
+
+- [docs/PUBLISH_READINESS.md](docs/PUBLISH_READINESS.md): what "ready to
+  publish" means for this repo.
+- [docs/LUA_SYSTEM_DEEP_DIVE.md](docs/LUA_SYSTEM_DEEP_DIVE.md): architecture,
+  GC, unsafe model, and remaining runtime gaps.
+- [docs/PERFORMANCE_PRINCIPLES.md](docs/PERFORMANCE_PRINCIPLES.md):
+  performance philosophy and benchmark process.
+- [docs/OFFICIAL_TEST_INVESTIGATIONS.md](docs/OFFICIAL_TEST_INVESTIGATIONS.md):
+  hard official-test debugging notes.
+- [PORTING.md](PORTING.md): translation rules used by the agent harness.
+- [HARNESS_DESIGN.md](HARNESS_DESIGN.md): harness structure and enforcement
+  model.
+
+## Non-Goals
+
+- LuaJIT-level performance.
+- Compatibility with Lua 5.1-specific systems such as OpenResty, Neovim's
+  LuaJIT embedding, or World of Warcraft addons.
+- Transparent C-Lua ABI compatibility. Dynamic loading exists at the CLI
+  backend boundary, but a stock Lua C module expects the C API/ABI, which this
+  runtime does not currently expose.

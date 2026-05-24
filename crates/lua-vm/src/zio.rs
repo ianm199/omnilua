@@ -369,7 +369,7 @@ impl ZIO {
 //   confidence:    medium
 //   todos:         1
 //   port_notes:    4
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Logic is faithful.  The one open question (TODO) is whether
 //                  concrete reader callbacks will need `&mut LuaState` as a
 //                  parameter when load/dofile lands in Phase B.  If so,

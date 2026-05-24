@@ -53,9 +53,9 @@ for crate_dir in "${scope_crates[@]}"; do
     # are inside a single-line comment (start with optional whitespace + //).
     count=0
     if [ -d "$crate_dir/src" ]; then
-        count=$(grep -rhnE '\bunsafe[[:space:]]+(fn|impl|trait|extern|block|\{)' \
+        count=$(grep -RHnE '\bunsafe[[:space:]]+(fn|impl|trait|extern|block|\{)' \
                     "$crate_dir/src" --include='*.rs' 2>/dev/null \
-                | grep -vE '^\s*//' \
+                | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
                 | wc -l | tr -d ' ')
     fi
 

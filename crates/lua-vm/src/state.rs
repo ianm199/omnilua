@@ -4498,7 +4498,7 @@ pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
 //   confidence:    medium
 //   todos:         44
 //   port_notes:    34
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Logic faithfully follows lstate.c. Key structural changes:
 //                  (1) LX/LG C layout wrappers dropped; GlobalState is Rc<RefCell<>>.
 //                  (2) CallInfo linked list → Vec<CallInfo> with CallInfoIdx indices;

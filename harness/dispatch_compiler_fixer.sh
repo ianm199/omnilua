@@ -41,7 +41,7 @@ START_TS=$(date +%s)
 
 PROMPT="You are a Compiler-fixer agent in a multi-crate Rust workspace. Scope: ONE crate, '$CRATE'.
 
-Repo: $ROOT. Read CLAUDE.md and PORTING.md for conventions (no inline comments, no fallback patterns, no &str/String for Lua data, no unsafe outside lua-gc/lua-coro).
+Repo: $ROOT. Read CLAUDE.md and PORTING.md for conventions (no inline comments, no fallback patterns, no &str/String for Lua data, no unsafe outside explicit unsafe-budget crates).
 
 Your task: reduce 'cargo check -p $CRATE' error count toward 0.
 

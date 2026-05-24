@@ -79,7 +79,7 @@ These are project-wide and the audit will catch violations:
 
 - **No inline `//` comments.** Doc strings only. The CLAUDE.md at `/Users/ianmclaughlin/.claude/CLAUDE.md` enforces this.
 - **No fallback patterns** (`x || y || z`). Single source of truth — if data may be missing, fix the data path.
-- **No new `unsafe`** outside `lua-gc`, `lua-coro` (and lua-cli with a 4-block budget for FFI). `unsafe_code = "forbid"` is the workspace default.
+- **No new `unsafe`** outside `lua-gc` (and `lua-cli` with its FFI budget). `lua-coro` currently has a zero budget; raise it only with a concrete stackful backend. `unsafe_code = "forbid"` is the workspace default.
 - **No `String`/`&str` for Lua data** — use `&[u8]` / `Vec<u8>` / `LuaString`.
 - **No `tokio` / `rayon` / `std::process` / `std::fs` / `std::net`** outside `lua-cli`. The hook pattern (e.g. `PopenHook`, `FileOpenHook`, `OsExecuteHook` in `state.rs`) is how stdlib reaches the OS.
 - **Never edit** `reference/lua-c/testes/`. Tests are the oracle.

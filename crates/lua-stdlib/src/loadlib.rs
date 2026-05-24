@@ -1308,7 +1308,7 @@ pub fn luaopen_package(state: &mut LuaState) -> Result<usize, LuaError> {
 //   confidence:    medium
 //   todos:         8
 //   port_notes:    7
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         lsys_load/lsys_sym/lsys_unloadlib now dispatch through
 //                  dynlib_*_hook on GlobalState (Phase D-3.5); lua-cli
 //                  installs a libloading-backed backend. With no hook

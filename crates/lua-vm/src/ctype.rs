@@ -242,7 +242,7 @@ pub(crate) fn ltolower(c: i32) -> i32 {
 //   confidence:    high
 //   todos:         0
 //   port_notes:    1
-//   unsafe_blocks: 0   (must be 0 outside lua-gc/lua-coro)
+//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
 //   notes:         Straightforward table + inline predicates; LUA_UCID path
 //                  omitted (PORT NOTE in module doc). Phase B: add Cargo
 //                  feature `lua-ucid` that substitutes NONA=0x01 for the

@@ -49,8 +49,8 @@ use std::ptr::NonNull;
 // currently-active heap rather than holding a single slot. `HeapGuard::push`
 // activates a heap; drop pops it.
 //
-// `current_heap()` returns the top of the stack — used by `GcRef::new`
-// (post D-1e) and by legacy `GcRef::new` call sites that don't have
+// `with_current_heap(...)` exposes the top of the stack only for the dynamic
+// extent of a closure — used by `GcRef::new` call sites that don't have
 // `&mut LuaState` in scope.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -92,26 +92,20 @@ impl Drop for HeapGuard {
     }
 }
 
-/// Returns a reference to the currently-active heap, or `None` if no
-/// `HeapGuard` is in scope. Phase D-1c uses this only for diagnostics
-/// (the bridge becomes load-bearing at D-1e when `GcRef::new` switches
-/// to route through it).
+/// Runs `f` with a reference to the currently-active heap, or `None` if no
+/// `HeapGuard` is in scope.
 ///
-/// # Safety
-///
-/// The returned reference is valid only for the lifetime of the active
-/// `HeapGuard`. Don't hold across guard drops.
-pub fn current_heap() -> Option<&'static Heap> {
+/// The heap reference is deliberately scoped to the closure. This avoids the
+/// previous `current_heap() -> Option<&'static Heap>` lifetime lie while still
+/// supporting legacy `GcRef::new` call sites that do not receive `&mut LuaState`.
+pub fn with_current_heap<R>(f: impl for<'a> FnOnce(Option<&'a Heap>) -> R) -> R {
     CURRENT_HEAP_STACK.with(|stack| {
+        let ptr = stack.borrow().last().copied();
         // SAFETY: the top NonNull was produced from a live `&Heap` whose
-        // lifetime is bounded by the `HeapGuard` on the stack. Borrowing
-        // it as &'static is a deliberate API choice — callers should not
-        // hold the reference past their own scope. The 'static lifetime
-        // is a transmute lie for ergonomics.
-        stack
-            .borrow()
-            .last()
-            .map(|ptr| unsafe { &*ptr.as_ptr() })
+        // lifetime is bounded by the corresponding `HeapGuard`. The reference
+        // is only handed to `f`, and cannot escape through the return type.
+        let heap = ptr.map(|ptr| unsafe { &*ptr.as_ptr() });
+        f(heap)
     })
 }
 
@@ -555,13 +549,11 @@ impl Heap {
             header: GcHeader::new_white(size),
             value,
         });
+        boxed.header.next.set(self.head.get());
         let raw: *mut GcBox<T> = Box::into_raw(boxed);
         let ptr: NonNull<GcBox<T>> =
             NonNull::new(raw).expect("Box::into_raw is non-null");
         let dyn_ptr: NonNull<GcBox<dyn Trace>> = ptr;
-        unsafe {
-            (*raw).header.next.set(self.head.get());
-        }
         self.head.set(Some(dyn_ptr));
         self.bytes.set(self.bytes.get() + size);
         Gc {
@@ -1055,29 +1047,36 @@ mod tests {
 
     #[test]
     fn heap_guard_stacks() {
-        assert!(current_heap().is_none(), "no guard initially");
+        assert!(with_current_heap(|heap| heap.is_none()), "no guard initially");
         let h1 = Heap::new();
         h1.unpause();
         {
             let _g1 = HeapGuard::push(&h1);
-            assert!(current_heap().is_some());
+            assert!(with_current_heap(|heap| heap.is_some()));
             let h2 = Heap::new();
             h2.unpause();
             {
                 let _g2 = HeapGuard::push(&h2);
                 // top of stack is h2
-                assert!(std::ptr::addr_eq(
-                    current_heap().unwrap() as *const _,
-                    &h2 as *const _,
-                ));
+                with_current_heap(|heap| {
+                    assert!(std::ptr::addr_eq(
+                        heap.unwrap() as *const _,
+                        &h2 as *const _,
+                    ));
+                });
             }
             // _g2 dropped — top is back to h1
-            assert!(std::ptr::addr_eq(
-                current_heap().unwrap() as *const _,
-                &h1 as *const _,
-            ));
+            with_current_heap(|heap| {
+                assert!(std::ptr::addr_eq(
+                    heap.unwrap() as *const _,
+                    &h1 as *const _,
+                ));
+            });
         }
-        assert!(current_heap().is_none(), "stack empty after all guards drop");
+        assert!(
+            with_current_heap(|heap| heap.is_none()),
+            "stack empty after all guards drop"
+        );
     }
 
     #[test]
@@ -1299,7 +1298,7 @@ mod tests {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/lmem.c (allocator) + src/lgc.c (collector core)
+//   source:        production Rust heap/collector substrate
 //   target_crate:  lua-gc
 //   confidence:    medium
 //   todos:         0

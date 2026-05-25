@@ -65,37 +65,59 @@ LuaJIT. [Live dashboard.](https://ianm199.github.io/lua-rs/harness/bench/history
 
 ## WebAssembly
 
-The interpreter core and stdlib crates build for bare
-`wasm32-unknown-unknown`, and the repo includes runtime smoke tests that
-instantiate the generated `.wasm` with Node's `WebAssembly` API and a headless
-browser:
+`lua-rs` also ships as [`lua-rs-wasm`](https://www.npmjs.com/package/lua-rs-wasm),
+a browser and Node package for running Lua inside WebAssembly without bundling
+the C Lua interpreter.
 
 ```bash
-RUSTFLAGS='-Awarnings' cargo build --target wasm32-unknown-unknown -p lua-wasm --release
-node harness/wasm/runtime-smoke.mjs
-node harness/wasm/browser-smoke.mjs   # requires Chrome/Chromium, or set LUA_RS_BROWSER
+npm install lua-rs-wasm
 ```
 
-This currently verifies JS-provided Lua source execution, pure Lua execution,
-JS-provided host imports for stdout/stdin/env/time/read-only Lua module loading,
-JS-backed `io.open` read/write/seek/setvbuf handles, JS-backed errno
-propagation for file read failures, stateful `lua.exec(...)` calls plus reset,
-Lua-level failures for unsupported temp-file capabilities, and last-error
-reporting back to JS. The native `lua-rs` CLI is not a bare-WASM binary; it
-depends on terminal/filesystem/process functionality. The current Rust
-embedding helper is `lua-rs-runtime::{LuaRuntime, HostHooks}`, and
-`packages/lua-rs-wasm` exposes a browser-compatible
-`loadLuaRs(...).lua.exec(...)` wrapper over the WASM ABI plus a
-`lua-rs-wasm/node` helper for Node consumers. Its `prepack` script builds and
-includes `dist/lua_wasm.wasm` for npm packaging. The package can be
-published with the manual `Publish lua-rs-wasm` GitHub Actions workflow once the
-repository has an `NPM_TOKEN` secret. Adding WASI support is separate future work. See
-[harness/wasm/README.md](harness/wasm/README.md) for the runnable host-callback
-smoke, and [docs/NPM_WASM_PUBLISHING.md](docs/NPM_WASM_PUBLISHING.md) for the
-publish runbook.
-
-Try the browser playground on GitHub Pages:
+Try it in the browser:
 [ianm199.github.io/lua-rs/examples/wasm-browser/](https://ianm199.github.io/lua-rs/examples/wasm-browser/).
+
+Use it from a browser or bundler:
+
+```js
+import { loadLuaRs, luaRsWasmUrl } from "lua-rs-wasm";
+
+const { lua } = await loadLuaRs(luaRsWasmUrl, {
+  onStdout: (chunk) => console.log(chunk),
+});
+
+lua.exec(`
+local function fib(n)
+  if n < 2 then return n end
+  return fib(n - 1) + fib(n - 2)
+end
+
+print("fib(20) = " .. fib(20))
+`);
+```
+
+Use it from Node:
+
+```js
+import { loadLuaRsNode } from "lua-rs-wasm/node";
+
+const { lua } = await loadLuaRsNode({
+  onStdout: (chunk) => process.stdout.write(chunk),
+});
+
+lua.exec('print("hello from lua-rs wasm")');
+```
+
+The WebAssembly package targets `wasm32-unknown-unknown`. That means there is no
+ambient operating system: stdout, stdin, environment variables, time, and file
+access come from JS host hooks. The package provides a small in-memory host for
+common browser/Node use cases, including `print`, `io.open`, `require` from
+provided files, and stateful `lua.exec(...)` calls. The native `lua-rs` CLI is
+still the right choice for terminal use, and WASI support is separate future
+work.
+
+For lower-level embedding details, see
+[harness/wasm/README.md](harness/wasm/README.md). For npm release steps, see
+[docs/NPM_WASM_PUBLISHING.md](docs/NPM_WASM_PUBLISHING.md).
 
 ## LuaRocks
 

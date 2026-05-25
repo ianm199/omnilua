@@ -277,17 +277,6 @@ def render_html(history: dict[str, Any]) -> str:
         <div class="subtle">{html.escape(worst_w)}</div>
       </div>
     """)
-    latest_test = history.get("latest_test")
-    if latest_test and latest_test["total"]:
-        pass_pct = latest_test["pass_count"] / latest_test["total"] * 100.0
-        card_html.append(f"""
-      <div class="metric-card">
-        <div class="eyebrow">Official test suite</div>
-        <div class="metric">{latest_test['pass_count']}/{latest_test['total']}</div>
-        <div class="subtle">{pass_pct:.1f}% pass · {len(history['test_points'])} runs recorded</div>
-      </div>
-    """)
-
     series_defs = {}
     for workload in WORKLOADS:
         color = WORKLOAD_COLORS[workload]
@@ -468,19 +457,6 @@ def render_html(history: dict[str, Any]) -> str:
     </div>
     <div class="chart-wrap"><svg id="rss-chart" role="img" aria-label="RSS ratio per workload over time"></svg></div>
     <div class="legend" id="rss-legend"></div>
-  </section>
-
-  <section class="panel">
-    <h2>Official test suite pass-rate</h2>
-    <p>Percentage of 44 official Lua 5.4 tests passing at each measured commit. Recorded by <code>harness/bench/measure-tests.sh</code>; each point is one full <code>harness/run_official_all.sh</code> run.</p>
-    <div class="control-row">
-      <span class="group-label">y-axis</span>
-      <span class="pill-group" id="tests-ymax-pills"></span>
-      <span class="group-label">window</span>
-      <span class="pill-group" id="tests-window-pills"></span>
-    </div>
-    <div class="chart-wrap"><svg id="tests-chart" role="img" aria-label="Official test suite pass-rate over time"></svg></div>
-    <div class="legend" id="tests-legend"></div>
   </section>
 
   <section class="panel">
@@ -899,9 +875,6 @@ function redrawTests() {{
 
 redrawWall();
 redrawRss();
-if (HISTORY.test_ids && HISTORY.test_points && HISTORY.test_points.length) {{
-  redrawTests();
-}}
 renderLatestTable();
 renderRunsTable();
 

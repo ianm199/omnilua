@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build
+        run: cargo build --workspace --bins
+
+  smoke:
+    name: runtime smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build lua-rs
+        run: cargo build --bin lua-rs
+      - name: run lua-rs smoke programs
+        run: |
+          BIN=target/debug/lua-rs
+          "$BIN" -e 'assert(_VERSION == "Lua 5.4")'
+          "$BIN" -e 'assert(1 + 2 * 3 == 7); assert(2^10 == 1024.0)'
+          "$BIN" -e 'assert(("ab"):rep(3) == "ababab"); assert(string.format("%d-%s", 42, "x") == "42-x")'
+          "$BIN" -e 'local t = {} for i = 1, 100 do t[i] = i end assert(#t == 100)'
+          "$BIN" -e 'local add = function(a) return function(b) return a + b end end assert(add(2)(3) == 5)'
+          "$BIN" -e 'local co = coroutine.wrap(function() coroutine.yield(7) end); assert(co() == 7)'
+          "$BIN" -e 'local ok, err = pcall(function() error("boom") end); assert(not ok); assert(err:find("boom"))'
+          "$BIN" -e 'local mt = setmetatable({}, {__index = function() return 9 end}); assert(mt.anything == 9)'
+          "$BIN" -e 'print("smoke ok")'
+
+  unsafe-budget:
+    name: unsafe budget gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: enforce per-crate unsafe ceilings
+        run: bash .claude/hooks/unsafe-budget.sh

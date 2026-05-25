@@ -82,7 +82,8 @@ Still open:
 
 - The JS wrapper package can build and pack `dist/lua_wasm.wasm`, and the
   tarball install smoke imports it by package name from a temporary project.
-  It is not published to npm yet.
+  The manual `Publish lua-rs-wasm` GitHub Actions workflow can dry-run or publish
+  it to npm once the repository has an `NPM_TOKEN` secret.
 - The filesystem smoke covers representative source loading, read/write/seek,
   buffering, and errno propagation. It is not yet a broad virtual-filesystem
   conformance suite.
@@ -356,7 +357,8 @@ a JS `Map`, `io.read` reading from a JS stdin buffer, and `io.open`
 reading/writing/seeking/configuring buffering on JS-backed files. The Node and
 browser smoke scripts use that wrapper and check state persistence/reset plus
 directory-read errno propagation. This is a real end-to-end host callback path;
-the remaining external packaging step is publishing it to npm.
+the remaining external packaging step is dispatching the guarded npm publish
+workflow with an npm token.
 
 The same harness also uses the module's allocation exports to pass a dynamic Lua
 source string from JS into WASM, then runs it with
@@ -487,7 +489,8 @@ README wording should stay precise:
 - "Bare-WASM runtime support" is true at harness level: the `lua-wasm` artifact
   is instantiated and exercised in Node and a browser.
 - "JS/browser wrapper package" exists locally at `packages/lua-rs-wasm`.
-- "Published npm package" is future work and should not be implied yet.
+- "Published npm package" is true only after the manual publish workflow has
+  uploaded the package to npm; until then claim local package/tarball readiness.
 - "CLI works on wasm32" is false for bare WASM and should not be claimed.
 - WASI should be documented separately if/when supported.
 

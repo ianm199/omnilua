@@ -86,8 +86,9 @@ depends on terminal/filesystem/process functionality. The current Rust
 embedding helper is `lua-rs-runtime::{LuaRuntime, HostHooks}`, and
 `packages/lua-rs-wasm` exposes a browser-compatible
 `loadLuaRs(...).lua.exec(...)` wrapper over the WASM ABI. Its `prepack` script
-builds and includes `dist/lua_wasm.wasm` for npm packaging. Publishing that npm
-package and adding WASI support are separate future work. See
+builds and includes `dist/lua_wasm.wasm` for npm packaging. The package can be
+published with the manual `Publish lua-rs-wasm` GitHub Actions workflow once the
+repository has an `NPM_TOKEN` secret. Adding WASI support is separate future work. See
 [harness/wasm/README.md](harness/wasm/README.md) for the runnable host-callback
 smoke.
 

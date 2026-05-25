@@ -1556,7 +1556,7 @@ impl LuaState {
     /// `ttisinteger` predicate that gates the integer arithmetic fast path in
     /// `lvm.c`'s `op_arith_aux` macro. Avoids the full `LuaValue` clone that
     /// `get_at` performs — the operand is only needed for its `i64` payload.
-    #[inline]
+    #[inline(always)]
     pub fn get_int_at(&self, idx: impl Into<StackIdxConv>) -> Option<i64> {
         let i: StackIdx = idx.into().0;
         match self.stack.get(i.0 as usize) {
@@ -1573,21 +1573,27 @@ impl LuaState {
     /// the common case with a single `if let`.
     ///
     /// the `op_arith_aux` macro.
-    #[inline]
+    #[inline(always)]
     pub fn get_int_pair_at(
         &self,
         rb: impl Into<StackIdxConv>,
         rc: impl Into<StackIdxConv>,
     ) -> Option<(i64, i64)> {
-        let ib = self.get_int_at(rb)?;
-        let ic = self.get_int_at(rc)?;
-        Some((ib, ic))
+        let rb: StackIdx = rb.into().0;
+        let rc: StackIdx = rc.into().0;
+        match (
+            self.stack[rb.0 as usize].val,
+            self.stack[rc.0 as usize].val,
+        ) {
+            (LuaValue::Int(ib), LuaValue::Int(ic)) => Some((ib, ic)),
+            _ => None,
+        }
     }
     /// Hot-path accessor: returns `Some(f)` when the slot holds a `Float(f)`
     /// or coerces an `Int(i)` to `f64`. Returns `None` for any other tag.
     /// No `LuaValue` clone — only the primitive payload travels back.
     ///
-    #[inline]
+    #[inline(always)]
     pub fn get_num_at(&self, idx: impl Into<StackIdxConv>) -> Option<f64> {
         let i: StackIdx = idx.into().0;
         match self.stack.get(i.0 as usize) {
@@ -1603,7 +1609,7 @@ impl LuaState {
     /// `LuaValue::Float(f)`. Does NOT coerce integers; the integer branch is
     /// the caller's responsibility. Used by opcode arms that have already
     /// ruled out the integer fast path.
-    #[inline]
+    #[inline(always)]
     pub fn get_float_at(&self, idx: impl Into<StackIdxConv>) -> Option<f64> {
         let i: StackIdx = idx.into().0;
         match self.stack.get(i.0 as usize) {
@@ -1618,15 +1624,24 @@ impl LuaState {
     /// when both slots coerce to `f64` (Float or Int), `None` if either does
     /// not. Used by the float fast path of the arith opcodes.
     ///
-    #[inline]
+    #[inline(always)]
     pub fn get_num_pair_at(
         &self,
         rb: impl Into<StackIdxConv>,
         rc: impl Into<StackIdxConv>,
     ) -> Option<(f64, f64)> {
-        let nb = self.get_num_at(rb)?;
-        let nc = self.get_num_at(rc)?;
-        Some((nb, nc))
+        let rb: StackIdx = rb.into().0;
+        let rc: StackIdx = rc.into().0;
+        match (
+            self.stack[rb.0 as usize].val,
+            self.stack[rc.0 as usize].val,
+        ) {
+            (LuaValue::Float(nb), LuaValue::Float(nc)) => Some((nb, nc)),
+            (LuaValue::Int(ib), LuaValue::Int(ic)) => Some((ib as f64, ic as f64)),
+            (LuaValue::Int(ib), LuaValue::Float(nc)) => Some((ib as f64, nc)),
+            (LuaValue::Float(nb), LuaValue::Int(ic)) => Some((nb, ic as f64)),
+            _ => None,
+        }
     }
     /// Set `top` to an absolute stack index. Grows the backing stack vector
     /// (filling new slots with `Nil`) when `idx` is past `stack.len()`, but

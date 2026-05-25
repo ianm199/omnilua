@@ -1461,8 +1461,8 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::Move => {
                         let ra = base + i.arg_a();
                         let rb = base + i.arg_b();
-                        let v = state.get_at(rb);
-                        state.set_at(ra, v);
+                        let v = state.stack[rb.0 as usize].val;
+                        state.stack[ra.0 as usize].val = v;
                     }
                     // ── OP_LOADI ─────────────────────────────────────────────
                     OpCode::LoadI => {
@@ -1774,12 +1774,17 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra = base + i.arg_a();
                         let rb = base + i.arg_b();
                         let imm = i.arg_s_c() as i64;
-                        if let Some(iv1) = state.get_int_at(rb) {
-                            pc += 1;
-                            state.set_at(ra, LuaValue::Int(intop_add(iv1, imm)));
-                        } else if let Some(nb) = state.get_float_at(rb) {
-                            pc += 1;
-                            state.set_at(ra, LuaValue::Float(nb + imm as f64));
+                        let rb_v = state.stack[rb.0 as usize].val;
+                        match rb_v {
+                            LuaValue::Int(iv1) => {
+                                pc += 1;
+                                state.stack[ra.0 as usize].val = LuaValue::Int(intop_add(iv1, imm));
+                            }
+                            LuaValue::Float(nb) => {
+                                pc += 1;
+                                state.stack[ra.0 as usize].val = LuaValue::Float(nb + imm as f64);
+                            }
+                            _ => {}
                         }
                     }
                     // ── Arithmetic with K constant operand ─────────────────────

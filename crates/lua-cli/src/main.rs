@@ -14,16 +14,16 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::process::ExitCode;
 
-use lua_stdlib::auxlib::load_buffer;
-use lua_stdlib::init::open_libs;
 use lua_types::closure::LuaLClosure;
 use lua_types::error::LuaError;
 use lua_types::filehandle::LuaFileHandle;
 use lua_types::gc::GcRef;
 use lua_types::upval::UpVal;
 use lua_types::value::LuaValue;
-use lua_vm::api::{pcall_k, to_lua_string};
 use lua_vm::state::{new_state, DynLibId, DynamicSymbol, LuaState};
+
+mod interp;
+mod repl;
 
 fn file_loader_hook(filename: &[u8]) -> Result<Vec<u8>, LuaError> {
     #[cfg(unix)]
@@ -602,31 +602,6 @@ fn register_preloaded_modules(state: &mut LuaState) -> Result<(), LuaError> {
     Ok(())
 }
 
-const MULTRET: i32 = -1;
-
-fn render_lua_error(e: &LuaError) -> String {
-    match e {
-        LuaError::Runtime(v) | LuaError::Syntax(v) => match v {
-            LuaValue::Str(s) => format!("{}: {}", e_tag(e), String::from_utf8_lossy(s.as_bytes())),
-            other => format!("{}: {:?}", e_tag(e), other),
-        },
-        LuaError::Memory | LuaError::Error | LuaError::Yield
-        | LuaError::File | LuaError::Gc => format!("{}", e_tag(e)),
-    }
-}
-
-fn e_tag(e: &LuaError) -> &'static str {
-    match e {
-        LuaError::Runtime(_) => "Runtime",
-        LuaError::Syntax(_)  => "Syntax",
-        LuaError::Memory     => "Memory",
-        LuaError::Error      => "Error",
-        LuaError::Yield      => "Yield",
-        LuaError::File       => "File",
-        LuaError::Gc         => "Gc",
-    }
-}
-
 #[cfg(unix)]
 fn os_str_bytes(s: &std::ffi::OsString) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
@@ -645,7 +620,7 @@ fn os_str_bytes(s: &std::ffi::OsString) -> Vec<u8> {
 /// `dir/?.lua;dir/?/init.lua;;` — the trailing `;;` causes `setpath` to
 /// splice in the compiled-in default at that position, matching C-Lua's
 /// behaviour when `LUA_PATH` is absent.
-fn prepend_lua_path(dir: &std::path::Path) {
+pub(crate) fn prepend_lua_path(dir: &std::path::Path) {
     let prefix = format!(
         "{dir}/?.lua;{dir}/?/init.lua",
         dir = dir.display(),
@@ -659,65 +634,9 @@ fn prepend_lua_path(dir: &std::path::Path) {
 
 fn main() -> ExitCode {
     let args_os: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    if args_os.len() < 2 {
-        let prog = args_os
-            .first()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "lua-rs".to_string());
-        eprintln!("usage: {prog} <script.lua | -e 'source'>");
-        eprintln!("examples:");
-        eprintln!("  {prog} script.lua");
-        eprintln!("  {prog} -e 'print(\"hello\")'");
-        return ExitCode::from(2);
-    }
+    let argv: Vec<Vec<u8>> = args_os.iter().map(os_str_bytes).collect();
 
-    let mut chunks: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    let mut i = 1;
-    while i < args_os.len() {
-        let arg = &args_os[i];
-        if arg == "-e" {
-            i += 1;
-            if i >= args_os.len() {
-                eprintln!("-e requires an argument");
-                return ExitCode::from(2);
-            }
-            chunks.push((os_str_bytes(&args_os[i]), b"=(command line)".to_vec()));
-            i += 1;
-        } else {
-            let path = std::path::Path::new(arg);
-            if path.is_file() {
-                if let Some(script_dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-                    prepend_lua_path(script_dir);
-                }
-                match std::fs::read(path) {
-                    Ok(bytes) => {
-                        let mut name = vec![b'@'];
-                        name.extend_from_slice(&os_str_bytes(arg));
-                        chunks.push((bytes, name));
-                    }
-                    Err(e) => {
-                        eprintln!("cannot read {}: {}", path.display(), e);
-                        return ExitCode::from(2);
-                    }
-                }
-            } else {
-                chunks.push((os_str_bytes(arg), b"=(command line)".to_vec()));
-            }
-            i += 1;
-            break;
-        }
-    }
-    if chunks.is_empty() {
-        eprintln!("usage: {} <script.lua | -e 'source'>",
-            args_os.first().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "lua-rs".to_string()));
-        return ExitCode::from(2);
-    }
-
-    let verbose = std::env::var("LUA_RS_VERBOSE").is_ok();
-    macro_rules! step { ($($t:tt)*) => { if verbose { eprintln!($($t)*); } }; }
-
-    step!("[1/4] Creating LuaState...");
-    let result = catch_unwind(AssertUnwindSafe(|| {
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<i32, String> {
         let mut state = new_state().ok_or("new_state returned None")?;
         state.global_mut().parser_hook = Some(parser_hook);
         state.global_mut().file_loader_hook = Some(file_loader_hook);
@@ -729,34 +648,7 @@ fn main() -> ExitCode {
         state.global_mut().dynlib_symbol_hook = Some(dynlib_symbol);
         state.global_mut().dynlib_unload_hook = Some(dynlib_unload);
 
-        step!("[2/4] Opening standard library...");
-        open_libs(&mut state).map_err(|e| format!("open_libs failed: {}", render_lua_error(&e)))?;
-
-        register_preloaded_modules(&mut state)
-            .map_err(|e| format!("preload registration failed: {}", render_lua_error(&e)))?;
-
-        let mut final_status = None;
-        for (chunk_idx, (source, chunkname)) in chunks.iter().enumerate() {
-            step!("[3/4] Loading chunk {}/{} (parse + compile)...", chunk_idx + 1, chunks.len());
-            let status = load_buffer(&mut state, source, chunkname)
-                .map_err(|e| format!("load_buffer failed: {}", render_lua_error(&e)))?;
-            if status != 0 {
-                let msg = match to_lua_string(&mut state, -1) {
-                    Ok(Some(s)) => String::from_utf8_lossy(s.as_bytes()).into_owned(),
-                    _ => "(no error message on stack)".to_string(),
-                };
-                return Err(format!(
-                    "Syntax: {} (load_string status={})",
-                    msg, status
-                ));
-            }
-
-            step!("[4/4] Executing chunk {}/{}...", chunk_idx + 1, chunks.len());
-            let status = pcall_k(&mut state, 0, MULTRET, 0, 0, None)
-                .map_err(|e| format!("pcall_k failed: {}", render_lua_error(&e)))?;
-            final_status = Some(status);
-        }
-        let final_status = final_status.expect("at least one chunk must be present");
+        let code = interp::run(&mut state, &argv, register_preloaded_modules);
 
         if std::env::var("LUA_RS_GC_DIAG").is_ok() {
             let tracked = state.global().heap.bytes_used();
@@ -776,17 +668,11 @@ fn main() -> ExitCode {
             );
         }
 
-        Ok::<_, String>(final_status)
+        Ok(code)
     }));
 
     match result {
-        Ok(Ok(status)) => {
-            if verbose {
-                eprintln!("[ok] execution completed, status={:?}", status);
-            }
-            let _ = status;
-            ExitCode::SUCCESS
-        }
+        Ok(Ok(code)) => ExitCode::from(code as u8),
         Ok(Err(msg)) => {
             eprintln!("lua: {}", msg);
             ExitCode::from(1)

@@ -13,6 +13,7 @@ There are two artifacts here:
 As of 2026-05-24:
 
 - the harnessed official Lua test suite passes **44/44**;
+- the publishable crate graph is on crates.io at **0.0.1**;
 - normal script execution has no C runtime dependency;
 - most crates forbid `unsafe`;
 - the remaining unsafe surface is explicitly budgeted in `lua-gc` and the
@@ -29,6 +30,13 @@ Run a Lua snippet:
 
 ```bash
 RUSTFLAGS='-Awarnings' cargo run -q --bin lua-rs -- 'print("hello from lua-rs")'
+```
+
+Install the preview CLI from crates.io:
+
+```bash
+cargo install lua-cli
+lua-rs 'print("hello from lua-rs")'
 ```
 
 Run the official suite:

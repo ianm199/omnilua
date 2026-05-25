@@ -2,15 +2,15 @@
 
 Status date: 2026-05-24.
 
-This project is close to a credible public preview, but not yet ready for a
-blind crates.io release. Treat "publish" as three separate lanes:
+This project has an initial crates.io release at `0.0.1`. Treat future release
+work as three separate lanes:
 
 1. public repository / technical preview;
 2. binary release of `lua-rs`;
 3. crates.io release of the crate graph.
 
-The first lane is the nearest target. The third lane needs explicit naming,
-dependency, and API decisions.
+The crate graph lane is complete for the initial `0.0.1` preview. The binary
+release lane still needs a separate release process.
 
 ## Current Claim
 
@@ -50,7 +50,7 @@ graph.
 
 ## Package Audit
 
-Immediate findings:
+Resolved for `0.0.1`:
 
 - Root `LICENSE` is required because manifests declare `license = "MIT"`.
 - Root README must stay current with the actual 44/44 status and the unsafe
@@ -60,14 +60,17 @@ Immediate findings:
 - Internal workspace dependencies now specify both `path` and `version`, which
   is required for crates.io packaging.
 - Manifests now have shared description, repository, and homepage metadata.
-- Full verified packaging of dependent crates requires publishing internal
-  crates in dependency order first, because Cargo verifies packaged crates
-  against registry dependencies, not unpublished local paths.
 - `lua-cli-test-rust-module` is a test fixture and should not be published.
-- The crate names are working names. Before crates.io, decide whether to use
-  these names or a namespaced family such as `lua-rs-*`.
-- Crates.io API returned 404 for the current working crate names on
-  2026-05-24, so the names appeared available at the time of this check.
+
+Crates.io release status:
+
+- Published at `0.0.1`: `lua-gc`, `lua-types`, `lua-vm`, `lua-code`,
+  `lua-lex`, `lua-stdlib`, `lua-coro`, `lua-rs-lfs`, `lua-parse`,
+  and `lua-cli`.
+- Not published: `lua-cli-test-rust-module`, intentionally marked
+  `publish = false`.
+- Dependency-order publishing matters because Cargo verifies packaged crates
+  against registry dependencies, not unpublished local paths.
 
 ## Public Preview Checklist
 
@@ -98,28 +101,31 @@ Required before releasing `lua-rs` binaries:
 
 ## Crates.io Checklist
 
-Required before publishing crates:
+Completed for `0.0.1`:
 
-- Decide crate names and ownership.
-- Add package metadata: description, repository, readme, keywords/categories
-  where appropriate.
-- Add version requirements to all internal dependencies while keeping local
-  `path` entries for workspace development.
-- Mark fixtures/internal-only crates with `publish = false`.
-- Decide whether low-level crates are public API or implementation details.
-- Publish/verify in dependency order:
+- Package metadata exists: description, repository, homepage, license, and
+  README inheritance where applicable.
+- Internal dependencies specify version requirements while keeping local `path`
+  entries for workspace development.
+- Fixtures/internal-only crates are marked with `publish = false`.
+- Published/verified in dependency order:
   `lua-gc`, `lua-types`, `lua-vm`, then leaves such as `lua-code`,
   `lua-lex`, `lua-stdlib`, `lua-coro`, `lua-rs-lfs`, `lua-parse`,
   and finally `lua-cli`.
-- Run `cargo package` without `--no-verify` for each publishable crate.
+- Each publishable crate passed `cargo publish --dry-run` before upload.
+
+Before future non-preview releases:
+
+- Reconfirm crate ownership and long-term naming.
+- Decide which low-level crates are public API versus implementation detail.
 - Review package contents with `cargo package --list`.
+- Run the full release gate, not just package dry-runs.
 
 ## Recommended Next Order
 
-1. Make the repo public-preview honest: README, LICENSE, artifact cleanup,
-   publish-readiness doc.
-2. Commit the unsafe cleanup and publish-readiness cleanup as one coherent
-   checkpoint.
-3. Expand `harness/check_publish_readiness.sh` into a full release gate that
+1. Expand `harness/check_publish_readiness.sh` into a full release gate that
    also runs the official suite, unsafe budget, and a CLI smoke test.
-4. Decide product naming before touching crates.io metadata broadly.
+2. Add a binary release path for `lua-rs`.
+3. Decide whether the current crate names are permanent before a broader
+   announcement.
+4. Clean warning debt before raising the public API stability claim.

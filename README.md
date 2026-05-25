@@ -7,11 +7,11 @@ interpreter. It runs ordinary Lua programs with no C runtime dependency, and it
 passes **44 / 44** of the upstream Lua test suite — the same `.lua` files the C
 implementation is validated against.
 
-[![CI](https://github.com/ianm199/lua-rs-port/actions/workflows/ci.yml/badge.svg)](https://github.com/ianm199/lua-rs-port/actions/workflows/ci.yml)
+[![CI](https://github.com/ianm199/lua-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/ianm199/lua-rs/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/lua-cli.svg?label=crates.io%2Flua-cli)](https://crates.io/crates/lua-cli)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![upstream tests](https://img.shields.io/badge/upstream%20suite-44%2F44-0f8f68.svg)](#conformance)
-[![performance](https://img.shields.io/badge/perf-live%20dashboard-2f6fed.svg)](https://ianm199.github.io/lua-rs-port/harness/bench/history/)
+[![performance](https://img.shields.io/badge/perf-live%20dashboard-2f6fed.svg)](https://ianm199.github.io/lua-rs/harness/bench/history/)
 
 ```bash
 cargo install lua-cli       # crate: lua-cli  →  binary: lua-rs
@@ -40,7 +40,7 @@ lua-rs -e 'print("hello from lua-rs")'
   C rocks aren't supported yet; see [Roadmap](#roadmap).)
 - **Competitive performance, tracked publicly.** Within ~1.3× of reference C on
   a geometric mean of wall time, faster than C on some workloads — and every
-  commit's benchmark is plotted on a [live dashboard](https://ianm199.github.io/lua-rs-port/harness/bench/history/).
+  commit's benchmark is plotted on a [live dashboard](https://ianm199.github.io/lua-rs/harness/bench/history/).
 - **Built by an AI porting harness.** ~28k lines of C became safe Rust under a
   test-oracle-gated, multi-agent harness. That methodology is the deeper story —
   see [How it was built](#how-it-was-built).
@@ -63,8 +63,8 @@ lua-rs -e 'print(("safe rust"):upper())'   # SAFE RUST
 From source:
 
 ```bash
-git clone https://github.com/ianm199/lua-rs-port
-cd lua-rs-port
+git clone https://github.com/ianm199/lua-rs
+cd lua-rs
 cargo build --release --bin lua-rs
 ./target/release/lua-rs -e 'print(_VERSION)'   # Lua 5.4
 ```
@@ -109,7 +109,7 @@ PUC-Rio Lua 5.4.7 via `harness/bench/compare.sh`. This is separate from the
 [44/44 conformance suite](#conformance) above — it measures speed and memory,
 not correctness. Every benchmarked commit is recorded and plotted:
 
-### → [**Live performance dashboard**](https://ianm199.github.io/lua-rs-port/harness/bench/history/) — `ianm199.github.io/lua-rs-port`
+### → [**Live performance dashboard**](https://ianm199.github.io/lua-rs/harness/bench/history/) — `ianm199.github.io/lua-rs`
 
 Each point is the ratio of `lua-rs` to reference lua-c on the same workload.
 **Lower is better; `1.00×` is parity with C.** At the latest benchmarked commit,
@@ -122,7 +122,7 @@ across the eight workloads:
 | Best workload (`table_ops_long`) | **0.38×** | faster than C |
 | Worst workload (`binarytrees`) | **2.07×** | slowest relative workload |
 
-[**See the full per-workload trajectory on the dashboard →**](https://ianm199.github.io/lua-rs-port/harness/bench/history/)
+[**See the full per-workload trajectory on the dashboard →**](https://ianm199.github.io/lua-rs/harness/bench/history/)
 
 The honest summary: this is **not** "faster than C." It is a memory-safe
 reimplementation that is *competitive* with C — within a small constant factor
@@ -192,7 +192,7 @@ mark a test passing — anti-sycophancy by construction.
   Technical plan: [docs/PHASE_G_LUAROCKS_PLAN.md](docs/PHASE_G_LUAROCKS_PLAN.md).
 - **Performance parity with PUC-Rio Lua.** Close the remaining wall-time gap
   (~1.27× geomean today) toward parity with reference C-Lua, tracked commit by
-  commit on the [live dashboard](https://ianm199.github.io/lua-rs-port/harness/bench/history/).
+  commit on the [live dashboard](https://ianm199.github.io/lua-rs/harness/bench/history/).
 - **A testbed for runtime research.** Use the safe-Rust substrate to prototype
   and measure new garbage-collection strategies and other language/runtime
   features against a real conformance suite and benchmark harness — changes are

@@ -30,7 +30,7 @@ The static dashboard at `history/index.html` IS tracked so it can be viewed
 directly from GitHub via [raw.githack.com][dash] or by opening the file
 locally in a browser.
 
-[dash]: https://raw.githack.com/ianm199/lua-rs-port/main/harness/bench/history/index.html
+[dash]: https://raw.githack.com/ianm199/lua-rs/main/harness/bench/history/index.html
 
 Every workload is **deterministic** — same output on every run, same on
 both interpreters. The compare runner asserts checksum equality (any drift

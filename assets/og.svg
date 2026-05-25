@@ -28,5 +28,5 @@
     <text x="692" y="491" fill="#e7ecf6" font-family="monospace" font-size="28">$ cargo install lua-cli</text>
   </g>
 
-  <text x="80" y="575" fill="#6f7e9c" font-size="26" font-weight="600">github.com/ianm199/lua-rs-port</text>
+  <text x="80" y="575" fill="#6f7e9c" font-size="26" font-weight="600">github.com/ianm199/lua-rs</text>
 </svg>

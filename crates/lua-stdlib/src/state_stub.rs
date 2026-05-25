@@ -366,7 +366,7 @@ impl LuaStateStubExt for LuaState {
     fn push_c_function(&mut self, f: lua_CFunction) -> Result<(), LuaError> {
         let idx: LuaCFnPtr = {
             let mut g = self.global_mut();
-            match g.c_functions.iter().position(|&existing| existing == f) {
+            match g.c_functions.iter().position(|&existing| std::ptr::fn_addr_eq(existing, f)) {
                 Some(i) => i,
                 None => {
                     let i = g.c_functions.len();

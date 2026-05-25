@@ -1211,7 +1211,6 @@ pub fn gmatch(state: &mut LuaState) -> Result<usize, LuaError> {
             unreachable!("check_arg_string raises when arg #2 is not a string");
         }
     };
-    drop(s_ref);
     let init_raw = state.opt_arg_integer(3, 1)?;
     let mut init = pos_relat_i(init_raw, ls).saturating_sub(1);
     if init > ls {

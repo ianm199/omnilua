@@ -1924,8 +1924,8 @@ fn codename(ls: &mut LexState, state: &mut LuaState, e: &mut ExprDesc) -> Result
 /// Registers a local variable in the proto's debug-info locvars array.
 /// Returns the index in locvars (= fs->ndebugvars before increment).
 fn register_local_var(
-    ls: &mut LexState,
-    state: &mut LuaState,
+    _ls: &mut LexState,
+    _state: &mut LuaState,
     fs: &mut FuncState,
     varname: GcRef<LuaString>,
 ) -> Result<i32, LuaError> {
@@ -1949,7 +1949,7 @@ fn register_local_var(
 /// Returns the variable's index relative to fs->firstlocal.
 fn new_local_var(
     ls: &mut LexState,
-    state: &mut LuaState,
+    _state: &mut LuaState,
     name: GcRef<LuaString>,
 ) -> Result<i32, LuaError> {
     let fs = ls.fs.as_ref().unwrap();
@@ -2285,7 +2285,7 @@ fn singlevar(ls: &mut LexState, state: &mut LuaState, var: &mut ExprDesc) -> Res
 
 fn adjust_assign(
     ls: &mut LexState,
-    state: &mut LuaState,
+    _state: &mut LuaState,
     nvars: i32,
     nexps: i32,
     e: &mut ExprDesc,
@@ -2526,7 +2526,7 @@ fn jumpscopeerror(ls: &LexState, gt_idx: usize) -> LuaError {
 /// Resolves goto at index `g` to `label`, removing it from pending list.
 fn solvegoto(
     ls: &mut LexState,
-    state: &mut LuaState,
+    _state: &mut LuaState,
     g: usize,
     label_pc: i32,
     label_nactvar: u8,
@@ -2555,7 +2555,7 @@ fn findlabel(ls: &LexState, name: &GcRef<LuaString>) -> Option<usize> {
 /// Adds a new label/goto entry; returns its index.
 fn new_label_entry(
     ls: &mut LexState,
-    state: &mut LuaState,
+    _state: &mut LuaState,
     is_goto: bool,
     name: GcRef<LuaString>,
     line: i32,
@@ -2637,11 +2637,11 @@ fn createlabel(
 fn movegotosout(ls: &mut LexState, bl_firstgoto: usize, bl_nactvar: u8, bl_upval: bool) {
     let fs = ls.fs.as_ref().unwrap();
     let first_goto = bl_firstgoto;
-    let n_gt = ls.dyd.gt.len();
+    let _n_gt = ls.dyd.gt.len();
     drop(fs); // release borrow before iterating
 
     for i in first_goto..ls.dyd.gt.len() {
-        let gt_nactvar = ls.dyd.gt[i].nactvar;
+        let _gt_nactvar = ls.dyd.gt[i].nactvar;
         // TODO(port): compute reg_level properly using ls+fs
         if bl_upval {
             ls.dyd.gt[i].close = true;
@@ -2754,7 +2754,7 @@ fn leave_block(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> 
 
 /// Adds a new prototype slot to the current function's proto list.
 /// Returns a mutable reference to the new prototype.
-fn add_prototype(ls: &mut LexState, state: &mut LuaState) -> Result<Box<LuaProto>, LuaError> {
+fn add_prototype(ls: &mut LexState, _state: &mut LuaState) -> Result<Box<LuaProto>, LuaError> {
     let np = ls.fs.as_ref().unwrap().np as usize;
     // TODO(port): allocate via state.gc().new_proto() in Phase B
     let new_proto = Box::new(LuaProto::placeholder());
@@ -2793,7 +2793,7 @@ fn codeclosure(ls: &mut LexState, _state: &mut LuaState, v: &mut ExprDesc) -> Re
 }
 
 /// Installs `new_fs` as the current FuncState, pushing old one as `prev`.
-fn open_func(ls: &mut LexState, state: &mut LuaState, mut new_fs: FuncState) -> Result<(), LuaError> {
+fn open_func(ls: &mut LexState, _state: &mut LuaState, mut new_fs: FuncState) -> Result<(), LuaError> {
     new_fs.prev = ls.fs.take();
 
     let f = &mut new_fs.f;
@@ -3900,13 +3900,13 @@ fn ifstat(ls: &mut LexState, state: &mut LuaState, line: i32) -> Result<(), LuaE
 
 fn localfunc(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     let mut b = ExprDesc::default();
-    let fvar = ls.fs.as_ref().unwrap().nactvar as i32;
+    let _fvar = ls.fs.as_ref().unwrap().nactvar as i32;
     let name = str_check_name(ls, state)?;
     new_local_var(ls, state, name)?;
     adjust_local_vars(ls, state, 1)?; // enter its scope
     let line = ls.lastline;
     body(ls, state, &mut b, false, line)?;
-    let pc = ls.fs.as_ref().unwrap().pc;
+    let _pc = ls.fs.as_ref().unwrap().pc;
     // TODO(port): local_debug_info(ls, ls.fs.as_mut().unwrap(), fvar).map(|lv| lv.startpc = pc);
     Ok(())
 }
@@ -3931,7 +3931,7 @@ fn getlocalattribute(ls: &mut LexState, state: &mut LuaState) -> Result<VarKind,
     Ok(VarKind::Reg)
 }
 
-fn checktoclose(ls: &mut LexState, state: &mut LuaState, level: i32) -> Result<(), LuaError> {
+fn checktoclose(ls: &mut LexState, _state: &mut LuaState, level: i32) -> Result<(), LuaError> {
     if level != -1 {
         marktobeclosed(ls.fs.as_mut().unwrap());
         let rl = reg_level(ls, ls.fs.as_ref().unwrap(), level);

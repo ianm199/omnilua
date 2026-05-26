@@ -6,11 +6,12 @@
 //! and run chunks.
 
 use std::any::Any;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fmt;
 use std::hash::Hash;
+use std::ops::{Deref, DerefMut};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
@@ -32,7 +33,8 @@ use lua_vm::state::{
 pub use lua_types::{LuaError, LuaFileHandle};
 pub use lua_vm::state::{DynLibId, DynamicSymbol, OsExecuteReason, OsExecuteResult};
 
-pub type Result<T> = std::result::Result<T, LuaError>;
+pub type Error = LuaError;
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Host capabilities exposed to Lua stdlib.
 ///
@@ -223,7 +225,12 @@ impl fmt::Debug for Lua {
 
 impl Lua {
     /// Create a Lua runtime with parser and standard libraries installed.
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Self {
+        Self::try_new().expect("Lua runtime should initialize")
+    }
+
+    /// Fallible variant of [`Lua::new`].
+    pub fn try_new() -> Result<Self> {
         Self::with_hooks(HostHooks::default())
     }
 
@@ -281,18 +288,16 @@ impl Lua {
         }
     }
 
-    fn userdata_cell<T: 'static>(&self, userdata: &AnyUserData) -> Result<Rc<UserDataCell<T>>> {
+    fn userdata_cell<'a, T: 'static>(
+        &self,
+        userdata: &'a AnyUserData,
+    ) -> Result<&'a UserDataCell<T>> {
         if !Rc::ptr_eq(&self.inner, &userdata.root.lua.inner) {
             return Err(LuaError::runtime(format_args!(
                 "Lua userdata belongs to a different state"
             )));
         }
-        let raw = userdata.raw_userdata()?;
-        let cell = raw
-            .host_value()
-            .ok_or_else(|| LuaError::runtime(format_args!("missing Rust userdata payload")))?;
-        cell.downcast::<UserDataCell<T>>()
-            .map_err(|_| LuaError::runtime(format_args!("userdata type mismatch")))
+        userdata.host_cell()
     }
 
     /// Load a Lua source chunk.
@@ -501,8 +506,13 @@ impl Chunk {
             }
             match lua_vm::api::pcall_k(state, 0, T::NRESULTS, 0, 0, None) {
                 Ok(_) => {
-                    let mut values = Vec::with_capacity(T::NRESULTS.max(0) as usize);
-                    for _ in 0..T::NRESULTS.max(0) {
+                    let nresults = if T::NRESULTS < 0 {
+                        state.top_idx().0.saturating_sub(saved_top.0) as i32
+                    } else {
+                        T::NRESULTS
+                    };
+                    let mut values = Vec::with_capacity(nresults as usize);
+                    for _ in 0..nresults {
                         values.push(state.pop());
                     }
                     values.reverse();
@@ -598,9 +608,13 @@ impl Value {
             RawLuaValue::Function(v) => Value::Function(Function {
                 root: lua.root_raw_in_state(state, RawLuaValue::Function(v)),
             }),
-            RawLuaValue::UserData(v) => Value::UserData(AnyUserData {
-                root: lua.root_raw_in_state(state, RawLuaValue::UserData(v)),
-            }),
+            RawLuaValue::UserData(v) => {
+                let host_value = v.host_value();
+                Value::UserData(AnyUserData {
+                    root: lua.root_raw_in_state(state, RawLuaValue::UserData(v)),
+                    host_value,
+                })
+            }
             RawLuaValue::LightUserData(v) => Value::LightUserData(v),
             RawLuaValue::Thread(v) => Value::Thread(Thread {
                 root: lua.root_raw_in_state(state, RawLuaValue::Thread(v)),
@@ -700,8 +714,13 @@ impl Function {
             }
             match lua_vm::api::pcall_k(state, arg_raws.len() as i32, R::NRESULTS, 0, 0, None) {
                 Ok(_) => {
-                    let mut results = Vec::with_capacity(R::NRESULTS.max(0) as usize);
-                    for _ in 0..R::NRESULTS.max(0) {
+                    let nresults = if R::NRESULTS < 0 {
+                        state.top_idx().0.saturating_sub(saved_top.0) as i32
+                    } else {
+                        R::NRESULTS
+                    };
+                    let mut results = Vec::with_capacity(nresults as usize);
+                    for _ in 0..nresults {
                         results.push(state.pop());
                     }
                     results.reverse();
@@ -746,28 +765,56 @@ impl LuaString {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AnyUserData {
     root: RootedValue,
+    host_value: Option<Rc<dyn Any>>,
+}
+
+impl fmt::Debug for AnyUserData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnyUserData")
+            .field("root", &self.root)
+            .field("has_host_value", &self.host_value.is_some())
+            .finish()
+    }
 }
 
 impl AnyUserData {
-    fn raw_userdata(&self) -> Result<GcRef<RawLuaUserData>> {
-        match self.root.raw()? {
-            RawLuaValue::UserData(userdata) => Ok(userdata),
-            other => Err(type_error_raw(&other, "userdata")),
-        }
+    fn host_cell<T: 'static>(&self) -> Result<&UserDataCell<T>> {
+        let host = self
+            .host_value
+            .as_deref()
+            .ok_or_else(|| LuaError::runtime(format_args!("missing Rust userdata payload")))?;
+        host.downcast_ref::<UserDataCell<T>>()
+            .ok_or_else(|| LuaError::runtime(format_args!("userdata type mismatch")))
+    }
+
+    pub fn borrow<T>(&self) -> Result<Ref<'_, T>>
+    where
+        T: 'static,
+    {
+        self.host_cell::<T>()?
+            .value
+            .try_borrow()
+            .map_err(|_| LuaError::runtime(format_args!("userdata is already mutably borrowed")))
+    }
+
+    pub fn borrow_mut<T>(&self) -> Result<RefMut<'_, T>>
+    where
+        T: 'static,
+    {
+        self.host_cell::<T>()?
+            .value
+            .try_borrow_mut()
+            .map_err(|_| LuaError::runtime(format_args!("userdata is already borrowed")))
     }
 
     pub fn with_borrow<T, R>(&self, f: impl FnOnce(&T) -> R) -> Result<R>
     where
         T: 'static,
     {
-        let cell = self.root.lua.userdata_cell::<T>(self)?;
-        let value = cell
-            .value
-            .try_borrow()
-            .map_err(|_| LuaError::runtime(format_args!("userdata is already mutably borrowed")))?;
+        let value = self.borrow::<T>()?;
         Ok(f(&value))
     }
 
@@ -775,11 +822,7 @@ impl AnyUserData {
     where
         T: 'static,
     {
-        let cell = self.root.lua.userdata_cell::<T>(self)?;
-        let mut value = cell
-            .value
-            .try_borrow_mut()
-            .map_err(|_| LuaError::runtime(format_args!("userdata is already borrowed")))?;
+        let mut value = self.borrow_mut::<T>()?;
         Ok(f(&mut value))
     }
 }
@@ -787,6 +830,69 @@ impl AnyUserData {
 #[derive(Debug, Clone)]
 pub struct Thread {
     root: RootedValue,
+}
+
+/// Variable argument or return list converted element-by-element.
+///
+/// This mirrors mlua's `Variadic<T>` enough for dynamic callback bridges:
+/// `create_function(|_, args: Variadic<Value>| ...)` receives all Lua
+/// arguments, and returning `Variadic<T>` pushes all contained values.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Variadic<T>(Vec<T>);
+
+impl<T> Variadic<T> {
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.0
+    }
+}
+
+impl<T> Deref for Variadic<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Variadic<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> From<Vec<T>> for Variadic<T> {
+    fn from(value: Vec<T>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> From<Variadic<T>> for Vec<T> {
+    fn from(value: Variadic<T>) -> Self {
+        value.0
+    }
+}
+
+impl<T> FromIterator<T> for Variadic<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self(Vec::from_iter(iter))
+    }
+}
+
+impl<T> IntoIterator for Variadic<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
 }
 
 pub trait UserData: 'static {
@@ -926,6 +1032,7 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
         let cell: Rc<dyn Any> = Rc::new(UserDataCell {
             value: RefCell::new(data),
         });
+        let host_value = cell.clone();
         let root = self.lua.with_state(|state| {
             let userdata = GcRef::new(RawLuaUserData {
                 data: Box::new([]),
@@ -945,7 +1052,10 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
                 key,
             })
         })?;
-        Ok(AnyUserData { root })
+        Ok(AnyUserData {
+            root,
+            host_value: Some(host_value),
+        })
     }
 }
 
@@ -1251,6 +1361,15 @@ impl FromLua for AnyUserData {
     }
 }
 
+impl<T> IntoLua for T
+where
+    T: UserData,
+{
+    fn into_lua(self, lua: &Lua) -> Result<Value> {
+        Ok(Value::UserData(lua.create_userdata(self)?))
+    }
+}
+
 impl<T> IntoLua for Option<T>
 where
     T: IntoLua,
@@ -1345,6 +1464,29 @@ where
     }
 }
 
+impl<T> IntoLuaMulti for Variadic<T>
+where
+    T: IntoLua,
+{
+    fn into_lua_multi(self, lua: &Lua) -> Result<Vec<Value>> {
+        self.into_iter().map(|value| value.into_lua(lua)).collect()
+    }
+}
+
+impl<T> FromLuaMulti for Variadic<T>
+where
+    T: FromLua,
+{
+    const NRESULTS: i32 = -1;
+
+    fn from_lua_multi(values: Vec<Value>, lua: &Lua) -> Result<Self> {
+        values
+            .into_iter()
+            .map(|value| T::from_lua(value, lua))
+            .collect()
+    }
+}
+
 impl IntoLuaMulti for () {
     fn into_lua_multi(self, _lua: &Lua) -> Result<Vec<Value>> {
         Ok(Vec::new())
@@ -1370,6 +1512,18 @@ where
     }
 }
 
+impl<A, T> IntoLuaMulti for (A, Variadic<T>)
+where
+    A: IntoLua,
+    T: IntoLua,
+{
+    fn into_lua_multi(self, lua: &Lua) -> Result<Vec<Value>> {
+        let mut values = vec![self.0.into_lua(lua)?];
+        values.extend(self.1.into_lua_multi(lua)?);
+        Ok(values)
+    }
+}
+
 impl<A, B, C> IntoLuaMulti for (A, B, C)
 where
     A: IntoLua,
@@ -1382,6 +1536,19 @@ where
             self.1.into_lua(lua)?,
             self.2.into_lua(lua)?,
         ])
+    }
+}
+
+impl<A, B, T> IntoLuaMulti for (A, B, Variadic<T>)
+where
+    A: IntoLua,
+    B: IntoLua,
+    T: IntoLua,
+{
+    fn into_lua_multi(self, lua: &Lua) -> Result<Vec<Value>> {
+        let mut values = vec![self.0.into_lua(lua)?, self.1.into_lua(lua)?];
+        values.extend(self.2.into_lua_multi(lua)?);
+        Ok(values)
     }
 }
 
@@ -1431,6 +1598,26 @@ where
     }
 }
 
+impl<A, T> FromLuaMulti for (A, Variadic<T>)
+where
+    A: FromLua,
+    T: FromLua,
+{
+    const NRESULTS: i32 = -1;
+
+    fn from_lua_multi(mut values: Vec<Value>, lua: &Lua) -> Result<Self> {
+        let first = if values.is_empty() {
+            Value::Nil
+        } else {
+            values.remove(0)
+        };
+        Ok((
+            A::from_lua(first, lua)?,
+            Variadic::from_lua_multi(values, lua)?,
+        ))
+    }
+}
+
 impl<A, B, C> FromLuaMulti for (A, B, C)
 where
     A: FromLua,
@@ -1459,6 +1646,33 @@ where
             A::from_lua(first, lua)?,
             B::from_lua(second, lua)?,
             C::from_lua(third, lua)?,
+        ))
+    }
+}
+
+impl<A, B, T> FromLuaMulti for (A, B, Variadic<T>)
+where
+    A: FromLua,
+    B: FromLua,
+    T: FromLua,
+{
+    const NRESULTS: i32 = -1;
+
+    fn from_lua_multi(mut values: Vec<Value>, lua: &Lua) -> Result<Self> {
+        let first = if values.is_empty() {
+            Value::Nil
+        } else {
+            values.remove(0)
+        };
+        let second = if values.is_empty() {
+            Value::Nil
+        } else {
+            values.remove(0)
+        };
+        Ok((
+            A::from_lua(first, lua)?,
+            B::from_lua(second, lua)?,
+            Variadic::from_lua_multi(values, lua)?,
         ))
     }
 }
@@ -1658,7 +1872,7 @@ mod tests {
 
     #[test]
     fn rooted_table_clone_and_drop_manage_root_slots() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         assert_eq!(external_root_count(&lua), 0);
 
         let table = lua.create_table().expect("table should allocate");
@@ -1683,7 +1897,7 @@ mod tests {
 
     #[test]
     fn table_values_survive_forced_collection_between_operations() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let table = lua.create_table().expect("table should allocate");
 
         lua.gc_collect();
@@ -1698,7 +1912,7 @@ mod tests {
 
     #[test]
     fn chunk_exec_eval_and_function_call_use_rooted_handles() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         lua.load("function add(a, b) return a + b end")
             .set_name("test")
             .exec()
@@ -1718,7 +1932,7 @@ mod tests {
 
     #[test]
     fn rust_callback_captures_state_and_reenters_lua() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         lua.load("function twice(v) return v * 2 end")
             .exec()
             .expect("chunk should execute");
@@ -1749,7 +1963,7 @@ mod tests {
 
     #[test]
     fn rust_callback_accepts_and_returns_collectable_values() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
         let callback = lua
             .create_function(|lua, name: String| {
@@ -1771,7 +1985,7 @@ mod tests {
 
     #[test]
     fn rust_callback_mut_tracks_state() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
         let mut next = 0_i64;
         let callback = lua
@@ -1793,7 +2007,7 @@ mod tests {
 
     #[test]
     fn userdata_methods_dispatch_and_track_borrows() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
         let counter = lua
             .create_userdata(Counter { value: 1 })
@@ -1813,11 +2027,32 @@ mod tests {
                 .expect("borrow should work"),
             6
         );
+
+        {
+            let borrowed = counter
+                .borrow::<Counter>()
+                .expect("borrow guard should work");
+            assert_eq!(borrowed.value, 6);
+        }
+
+        {
+            let mut borrowed = counter
+                .borrow_mut::<Counter>()
+                .expect("mutable borrow guard should work");
+            borrowed.value = 9;
+        }
+
+        assert_eq!(
+            lua.load("return counter:get()")
+                .eval::<i64>()
+                .expect("method should see guard mutation"),
+            9
+        );
     }
 
     #[test]
     fn userdata_payload_survives_gc_while_lua_holds_userdata() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
         let counter = lua
             .create_userdata(Counter { value: 10 })
@@ -1836,7 +2071,7 @@ mod tests {
 
     #[test]
     fn userdata_runtime_borrow_conflict_returns_lua_error() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
         let counter = lua
             .create_userdata(Counter { value: 1 })
@@ -1862,7 +2097,7 @@ mod tests {
 
     #[test]
     fn userdata_index_and_newindex_metamethods_dispatch() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
         let bag = lua
             .create_userdata(PropertyBag { value: 7 })
@@ -1882,8 +2117,55 @@ mod tests {
     }
 
     #[test]
+    fn userdata_values_convert_directly_with_into_lua() {
+        let lua = Lua::new();
+        let globals = lua.globals();
+        globals
+            .set("counter", Counter { value: 3 })
+            .expect("userdata should convert through IntoLua");
+
+        let result: i64 = lua
+            .load("counter:inc(4); return counter:get()")
+            .eval()
+            .expect("converted userdata should dispatch methods");
+        assert_eq!(result, 7);
+    }
+
+    #[test]
+    fn variadic_args_and_returns_convert_all_values() {
+        let lua = Lua::new();
+        let globals = lua.globals();
+
+        let sum = lua
+            .create_function(|_lua, values: Variadic<i64>| Ok(values.iter().sum::<i64>()))
+            .expect("variadic callback should create");
+        globals.set("sum", sum).expect("callback should register");
+        let result: i64 = lua
+            .load("return sum(3, 2, 5)")
+            .eval()
+            .expect("variadic callback should run");
+        assert_eq!(result, 10);
+
+        let echo = lua
+            .create_function(|_lua, values: Variadic<Value>| Ok(values))
+            .expect("variadic return callback should create");
+        globals.set("echo", echo).expect("callback should register");
+        let result: (i64, i64, i64) = lua
+            .load("return echo(1, 2, 3)")
+            .eval()
+            .expect("variadic returns should stay separate");
+        assert_eq!(result, (1, 2, 3));
+
+        let values: Variadic<i64> = lua
+            .load("return 4, 5, 6")
+            .eval()
+            .expect("variadic eval should collect all returns");
+        assert_eq!(values.into_vec(), vec![4, 5, 6]);
+    }
+
+    #[test]
     fn vectors_maps_and_triple_returns_convert_through_tables() {
-        let lua = Lua::new().expect("lua should initialize");
+        let lua = Lua::new();
         let globals = lua.globals();
 
         globals

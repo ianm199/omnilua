@@ -31,6 +31,7 @@ use lua_types::{
 };
 
 pub use lua_vm::state::LuaState;
+use lua_vm::state::LuaCallable;
 
 /// Bare function callable from Lua. C: `lua_CFunction`.
 #[allow(non_camel_case_types)]
@@ -366,11 +367,15 @@ impl LuaStateStubExt for LuaState {
     fn push_c_function(&mut self, f: lua_CFunction) -> Result<(), LuaError> {
         let idx: LuaCFnPtr = {
             let mut g = self.global_mut();
-            match g.c_functions.iter().position(|&existing| std::ptr::fn_addr_eq(existing, f)) {
+            match g.c_functions.iter().position(|existing| {
+                existing
+                    .as_bare()
+                    .is_some_and(|existing| std::ptr::fn_addr_eq(existing, f))
+            }) {
                 Some(i) => i,
                 None => {
                     let i = g.c_functions.len();
-                    g.c_functions.push(f);
+                    g.c_functions.push(LuaCallable::bare(f));
                     i
                 }
             }

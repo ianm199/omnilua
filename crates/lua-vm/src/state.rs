@@ -69,6 +69,47 @@ pub use lua_types::gc::GcRef;
 /// kept here as the lua-vm-facing type alias.
 pub type LuaCFunction = fn(&mut LuaState) -> Result<usize, LuaError>;
 
+pub type LuaRustFunction = Rc<dyn Fn(&mut LuaState) -> Result<usize, LuaError>>;
+
+#[derive(Clone)]
+pub enum LuaCallable {
+    Bare(LuaCFunction),
+    Rust(LuaRustFunction),
+}
+
+impl std::fmt::Debug for LuaCallable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LuaCallable::Bare(_) => f.write_str("LuaCallable::Bare(..)"),
+            LuaCallable::Rust(_) => f.write_str("LuaCallable::Rust(..)"),
+        }
+    }
+}
+
+impl LuaCallable {
+    pub fn bare(f: LuaCFunction) -> Self {
+        LuaCallable::Bare(f)
+    }
+
+    pub fn rust(f: LuaRustFunction) -> Self {
+        LuaCallable::Rust(f)
+    }
+
+    pub fn as_bare(&self) -> Option<LuaCFunction> {
+        match self {
+            LuaCallable::Bare(f) => Some(*f),
+            LuaCallable::Rust(_) => None,
+        }
+    }
+
+    pub fn call(&self, state: &mut LuaState) -> Result<usize, LuaError> {
+        match self {
+            LuaCallable::Bare(f) => f(state),
+            LuaCallable::Rust(f) => f(state),
+        }
+    }
+}
+
 // ─── Constants (from macros.tsv) ──────────────────────────────────────────────
 
 // macros.tsv: EXTRA_STACK → const EXTRA_STACK: u32 = 5
@@ -1191,7 +1232,7 @@ pub struct GlobalState {
     /// `LuaState`, so `LuaClosure::LightC` carries a `usize` index into this
     /// vector instead of the real function pointer. `push_c_function`
     /// registers the function and stores the resulting index in the closure.
-    pub c_functions: Vec<LuaCFunction>,
+    pub c_functions: Vec<LuaCallable>,
 
     /// Phase-D heap. Owns the allgc intrusive list and runs collections.
     /// During Phase A-C this is `paused=true`, so allocations don't auto-

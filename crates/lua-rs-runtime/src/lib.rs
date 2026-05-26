@@ -5,9 +5,10 @@
 //! create a state, install the parser hook, install host hooks, open stdlib,
 //! and run chunks.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use lua_stdlib::auxlib::load_buffer;
@@ -20,7 +21,8 @@ use lua_types::value::{LuaTable as RawLuaTable, LuaValue as RawLuaValue};
 use lua_vm::state::{
     new_state, DynLibLoadHook, DynLibSymbolHook, DynLibUnloadHook, EntropyHook, EnvHook,
     ExternalRootKey, FileLoaderHook, FileOpenHook, FileRemoveHook, FileRenameHook, InputHook,
-    LuaState, OsExecuteHook, OutputHook, PopenHook, TempNameHook, UnixTimeHook,
+    LuaCallable, LuaRustFunction, LuaState, OsExecuteHook, OutputHook, PopenHook, TempNameHook,
+    UnixTimeHook,
 };
 
 pub use lua_types::{LuaError, LuaFileHandle};
@@ -174,6 +176,28 @@ pub struct Lua {
 
 struct LuaInner {
     state: RefCell<LuaState>,
+    active_state: Cell<*mut LuaState>,
+}
+
+struct ActiveStateGuard<'a> {
+    inner: &'a LuaInner,
+    previous: *mut LuaState,
+}
+
+impl Drop for ActiveStateGuard<'_> {
+    fn drop(&mut self) {
+        self.inner.active_state.set(self.previous);
+    }
+}
+
+impl LuaInner {
+    fn enter_active(&self, state: *mut LuaState) -> ActiveStateGuard<'_> {
+        let previous = self.active_state.replace(state);
+        ActiveStateGuard {
+            inner: self,
+            previous,
+        }
+    }
 }
 
 impl fmt::Debug for Lua {
@@ -201,17 +225,41 @@ impl Lua {
         Lua {
             inner: Rc::new(LuaInner {
                 state: RefCell::new(state),
+                active_state: Cell::new(std::ptr::null_mut()),
             }),
         }
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut LuaState) -> R) -> R {
-        let mut state = self.inner.state.borrow_mut();
-        f(&mut state)
+        if let Ok(mut state) = self.inner.state.try_borrow_mut() {
+            let _active = self.inner.enter_active(&mut *state);
+            return f(&mut state);
+        }
+
+        let state = self.inner.active_state.get();
+        assert!(
+            !state.is_null(),
+            "re-entrant Lua access without an active state"
+        );
+
+        // SAFETY: `active_state` is set only while this `Lua` owns the outer
+        // `RefCell` borrow and is executing VM code. Re-entrant access can only
+        // happen when that VM frame has synchronously transferred control to a
+        // Rust callback and is suspended. The callback path does not touch the
+        // suspended `&mut LuaState` while user code re-enters through `Lua`.
+        unsafe { f(&mut *state) }
     }
 
     fn root_raw(&self, value: RawLuaValue) -> RootedValue {
         let key = self.with_state(|state| state.external_root_value(value));
+        RootedValue {
+            lua: self.clone(),
+            key,
+        }
+    }
+
+    fn root_raw_in_state(&self, state: &mut LuaState, value: RawLuaValue) -> RootedValue {
+        let key = state.external_root_value(value);
         RootedValue {
             lua: self.clone(),
             key,
@@ -266,6 +314,61 @@ impl Lua {
         Ok(LuaString { root })
     }
 
+    pub fn create_function<A, R, F>(&self, func: F) -> Result<Function>
+    where
+        A: FromLuaMulti + 'static,
+        R: IntoLuaMulti + 'static,
+        F: Fn(&Lua, A) -> Result<R> + 'static,
+    {
+        let lua = self.clone();
+        let callable: LuaRustFunction = Rc::new(move |state| {
+            match catch_unwind(AssertUnwindSafe(|| {
+                let args = callback_args(state, &lua)?;
+                let args = A::from_lua_multi(args, &lua)?;
+                let returns = func(&lua, args)?;
+                let returns = returns.into_lua_multi(&lua)?;
+                push_callback_returns(state, &lua, returns)
+            })) {
+                Ok(result) => result,
+                Err(_) => Err(LuaError::runtime(format_args!("Rust callback panicked"))),
+            }
+        });
+        self.create_registered_function(callable)
+    }
+
+    pub fn create_function_mut<A, R, F>(&self, func: F) -> Result<Function>
+    where
+        A: FromLuaMulti + 'static,
+        R: IntoLuaMulti + 'static,
+        F: FnMut(&Lua, A) -> Result<R> + 'static,
+    {
+        let func = RefCell::new(func);
+        self.create_function(move |lua, args| {
+            let mut func = func.try_borrow_mut().map_err(|_| {
+                LuaError::runtime(format_args!("mutable Rust callback is already borrowed"))
+            })?;
+            func(lua, args)
+        })
+    }
+
+    fn create_registered_function(&self, callable: LuaRustFunction) -> Result<Function> {
+        let root = self.with_state(|state| {
+            let idx = {
+                let mut global = state.global_mut();
+                let idx = global.c_functions.len();
+                global.c_functions.push(LuaCallable::rust(callable));
+                idx
+            };
+            let raw = RawLuaValue::Function(lua_types::closure::LuaClosure::LightC(idx));
+            let key = state.external_root_value(raw);
+            RootedValue {
+                lua: self.clone(),
+                key,
+            }
+        });
+        Ok(Function { root })
+    }
+
     /// Run a full garbage-collection cycle.
     pub fn gc_collect(&self) {
         self.with_state(|state| state.gc().full_collect());
@@ -289,8 +392,8 @@ impl Chunk {
             .with_state(|state| exec_state(state, &self.source, &self.name))
     }
 
-    pub fn eval<T: FromLua>(self) -> Result<T> {
-        let raw = self.lua.with_state(|state| {
+    pub fn eval<T: FromLuaMulti>(self) -> Result<T> {
+        let raws = self.lua.with_state(|state| {
             let saved_top = state.top_idx();
             let status = load_buffer(state, &self.source, &self.name)?;
             if status != 0 {
@@ -298,11 +401,15 @@ impl Chunk {
                 state.set_top_idx(saved_top);
                 return Err(LuaError::from_value(err));
             }
-            match lua_vm::api::pcall_k(state, 0, 1, 0, 0, None) {
+            match lua_vm::api::pcall_k(state, 0, T::NRESULTS, 0, 0, None) {
                 Ok(_) => {
-                    let value = state.pop();
+                    let mut values = Vec::with_capacity(T::NRESULTS.max(0) as usize);
+                    for _ in 0..T::NRESULTS.max(0) {
+                        values.push(state.pop());
+                    }
+                    values.reverse();
                     state.set_top_idx(saved_top);
-                    Ok(value)
+                    Ok(values)
                 }
                 Err(err) => {
                     state.set_top_idx(saved_top);
@@ -310,8 +417,11 @@ impl Chunk {
                 }
             }
         })?;
-        let value = Value::from_raw(&self.lua, raw)?;
-        T::from_lua(value, &self.lua)
+        let values = raws
+            .into_iter()
+            .map(|raw| Value::from_raw(&self.lua, raw))
+            .collect::<Result<Vec<_>>>()?;
+        T::from_lua_multi(values, &self.lua)
     }
 }
 
@@ -325,6 +435,17 @@ impl RootedValue {
     fn raw(&self) -> Result<RawLuaValue> {
         self.lua
             .with_state(|state| state.external_rooted_value(self.key))
+            .ok_or_else(stale_handle_error)
+    }
+
+    fn raw_for_lua(&self, lua: &Lua, state: &LuaState) -> Result<RawLuaValue> {
+        if !Rc::ptr_eq(&self.lua.inner, &lua.inner) {
+            return Err(LuaError::runtime(format_args!(
+                "Lua handle belongs to a different state"
+            )));
+        }
+        state
+            .external_rooted_value(self.key)
             .ok_or_else(stale_handle_error)
     }
 }
@@ -361,42 +482,46 @@ pub enum Value {
 
 impl Value {
     fn from_raw(lua: &Lua, raw: RawLuaValue) -> Result<Self> {
+        lua.with_state(|state| Self::from_raw_in_state(lua, state, raw))
+    }
+
+    fn from_raw_in_state(lua: &Lua, state: &mut LuaState, raw: RawLuaValue) -> Result<Self> {
         Ok(match raw {
             RawLuaValue::Nil => Value::Nil,
             RawLuaValue::Bool(v) => Value::Boolean(v),
             RawLuaValue::Int(v) => Value::Integer(v),
             RawLuaValue::Float(v) => Value::Number(v),
             RawLuaValue::Str(v) => Value::String(LuaString {
-                root: lua.root_raw(RawLuaValue::Str(v)),
+                root: lua.root_raw_in_state(state, RawLuaValue::Str(v)),
             }),
             RawLuaValue::Table(v) => Value::Table(Table {
-                root: lua.root_raw(RawLuaValue::Table(v)),
+                root: lua.root_raw_in_state(state, RawLuaValue::Table(v)),
             }),
             RawLuaValue::Function(v) => Value::Function(Function {
-                root: lua.root_raw(RawLuaValue::Function(v)),
+                root: lua.root_raw_in_state(state, RawLuaValue::Function(v)),
             }),
             RawLuaValue::UserData(v) => Value::UserData(AnyUserData {
-                root: lua.root_raw(RawLuaValue::UserData(v)),
+                root: lua.root_raw_in_state(state, RawLuaValue::UserData(v)),
             }),
             RawLuaValue::LightUserData(v) => Value::LightUserData(v),
             RawLuaValue::Thread(v) => Value::Thread(Thread {
-                root: lua.root_raw(RawLuaValue::Thread(v)),
+                root: lua.root_raw_in_state(state, RawLuaValue::Thread(v)),
             }),
         })
     }
 
-    fn to_raw(&self) -> Result<RawLuaValue> {
+    fn to_raw_for_lua(&self, lua: &Lua, state: &LuaState) -> Result<RawLuaValue> {
         match self {
             Value::Nil => Ok(RawLuaValue::Nil),
             Value::Boolean(v) => Ok(RawLuaValue::Bool(*v)),
             Value::Integer(v) => Ok(RawLuaValue::Int(*v)),
             Value::Number(v) => Ok(RawLuaValue::Float(*v)),
-            Value::String(v) => v.root.raw(),
-            Value::Table(v) => v.root.raw(),
-            Value::Function(v) => v.root.raw(),
-            Value::UserData(v) => v.root.raw(),
+            Value::String(v) => v.root.raw_for_lua(lua, state),
+            Value::Table(v) => v.root.raw_for_lua(lua, state),
+            Value::Function(v) => v.root.raw_for_lua(lua, state),
+            Value::UserData(v) => v.root.raw_for_lua(lua, state),
             Value::LightUserData(v) => Ok(RawLuaValue::LightUserData(*v)),
-            Value::Thread(v) => v.root.raw(),
+            Value::Thread(v) => v.root.raw_for_lua(lua, state),
         }
     }
 }
@@ -407,10 +532,6 @@ pub struct Table {
 }
 
 impl Table {
-    fn raw_value(&self) -> Result<RawLuaValue> {
-        self.root.raw()
-    }
-
     fn raw_table(&self) -> Result<GcRef<RawLuaTable>> {
         match self.root.raw()? {
             RawLuaValue::Table(table) => Ok(table),
@@ -425,9 +546,11 @@ impl Table {
     {
         let lua = self.root.lua.clone();
         let key = key.into_lua(&lua)?;
-        let key_raw = key.to_raw()?;
-        let table_raw = self.raw_value()?;
-        let value_raw = lua.with_state(|state| state.table_get_with_tm(&table_raw, &key_raw))?;
+        let value_raw = lua.with_state(|state| {
+            let key_raw = key.to_raw_for_lua(&lua, state)?;
+            let table_raw = self.root.raw_for_lua(&lua, state)?;
+            state.table_get_with_tm(&table_raw, &key_raw)
+        })?;
         let value = Value::from_raw(&lua, value_raw)?;
         V::from_lua(value, &lua)
     }
@@ -440,10 +563,12 @@ impl Table {
         let lua = self.root.lua.clone();
         let key = key.into_lua(&lua)?;
         let value = value.into_lua(&lua)?;
-        let key_raw = key.to_raw()?;
-        let value_raw = value.to_raw()?;
-        let table_raw = self.raw_value()?;
-        lua.with_state(|state| state.table_set_with_tm(&table_raw, key_raw, value_raw))
+        lua.with_state(|state| {
+            let key_raw = key.to_raw_for_lua(&lua, state)?;
+            let value_raw = value.to_raw_for_lua(&lua, state)?;
+            let table_raw = self.root.raw_for_lua(&lua, state)?;
+            state.table_set_with_tm(&table_raw, key_raw, value_raw)
+        })
     }
 
     pub fn len(&self) -> Result<u64> {
@@ -464,9 +589,12 @@ impl Function {
     {
         let lua = self.root.lua.clone();
         let args = args.into_lua_multi(&lua)?;
-        let arg_raws = args.iter().map(Value::to_raw).collect::<Result<Vec<_>>>()?;
-        let function_raw = self.root.raw()?;
         let result_raws = lua.with_state(|state| {
+            let arg_raws = args
+                .iter()
+                .map(|value| value.to_raw_for_lua(&lua, state))
+                .collect::<Result<Vec<_>>>()?;
+            let function_raw = self.root.raw_for_lua(&lua, state)?;
             let saved_top = state.top_idx();
             state.push(function_raw);
             for arg in &arg_raws {
@@ -803,6 +931,49 @@ where
     }
 }
 
+impl<A, B> FromLuaMulti for (A, B)
+where
+    A: FromLua,
+    B: FromLua,
+{
+    const NRESULTS: i32 = 2;
+
+    fn from_lua_multi(mut values: Vec<Value>, lua: &Lua) -> Result<Self> {
+        let first = if values.is_empty() {
+            Value::Nil
+        } else {
+            values.remove(0)
+        };
+        let second = if values.is_empty() {
+            Value::Nil
+        } else {
+            values.remove(0)
+        };
+        Ok((A::from_lua(first, lua)?, B::from_lua(second, lua)?))
+    }
+}
+
+fn callback_args(state: &mut LuaState, lua: &Lua) -> Result<Vec<Value>> {
+    let func_idx = state.current_call_info().func;
+    let nargs = state.top_idx().0.saturating_sub(func_idx.0 + 1);
+    let mut args = Vec::with_capacity(nargs as usize);
+    for i in 0..nargs {
+        let raw = state.get_at(func_idx + 1 + i as i32);
+        args.push(Value::from_raw_in_state(lua, state, raw)?);
+    }
+    Ok(args)
+}
+
+fn push_callback_returns(state: &mut LuaState, lua: &Lua, returns: Vec<Value>) -> Result<usize> {
+    let mut count = 0usize;
+    for value in returns {
+        let raw = value.to_raw_for_lua(lua, state)?;
+        state.push(raw);
+        count += 1;
+    }
+    Ok(count)
+}
+
 fn stale_handle_error() -> LuaError {
     LuaError::runtime(format_args!("stale Lua handle"))
 }
@@ -918,6 +1089,7 @@ fn parser_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     fn external_root_count(lua: &Lua) -> usize {
         lua.with_state(|state| state.global().external_roots.len())
@@ -981,5 +1153,80 @@ mod tests {
             .eval()
             .expect("eval should work");
         assert_eq!(eval_result, 3);
+    }
+
+    #[test]
+    fn rust_callback_captures_state_and_reenters_lua() {
+        let lua = Lua::new().expect("lua should initialize");
+        lua.load("function twice(v) return v * 2 end")
+            .exec()
+            .expect("chunk should execute");
+
+        let globals = lua.globals();
+        let twice: Function = globals.get("twice").expect("function should exist");
+        let calls = Rc::new(Cell::new(0));
+        let calls_for_callback = calls.clone();
+
+        let callback = lua
+            .create_function(move |_lua, value: i64| {
+                calls_for_callback.set(calls_for_callback.get() + 1);
+                let doubled: i64 = twice.call(value)?;
+                Ok(doubled + 1)
+            })
+            .expect("callback should create");
+        globals
+            .set("from_rust", callback)
+            .expect("callback should register");
+
+        let result: i64 = lua
+            .load("return from_rust(20)")
+            .eval()
+            .expect("callback should run");
+        assert_eq!(result, 41);
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn rust_callback_accepts_and_returns_collectable_values() {
+        let lua = Lua::new().expect("lua should initialize");
+        let globals = lua.globals();
+        let callback = lua
+            .create_function(|lua, name: String| {
+                let table = lua.create_table()?;
+                table.set("name", name)?;
+                Ok(table)
+            })
+            .expect("callback should create");
+        globals
+            .set("make_record", callback)
+            .expect("callback should register");
+
+        let result: String = lua
+            .load("return make_record('lua-rs').name")
+            .eval()
+            .expect("callback should return table");
+        assert_eq!(result, "lua-rs");
+    }
+
+    #[test]
+    fn rust_callback_mut_tracks_state() {
+        let lua = Lua::new().expect("lua should initialize");
+        let globals = lua.globals();
+        let mut next = 0_i64;
+        let callback = lua
+            .create_function_mut(move |_lua, delta: i64| {
+                next += delta;
+                Ok(next)
+            })
+            .expect("callback should create");
+        globals
+            .set("next", callback)
+            .expect("callback should register");
+
+        let result: (i64, i64) = lua
+            .load("return next(2), next(5)")
+            .eval()
+            .expect("callback should run");
+        assert_eq!(result, (2, 7));
     }
 }

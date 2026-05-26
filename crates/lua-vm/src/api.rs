@@ -10,7 +10,7 @@
 use std::convert::Infallible;
 #[allow(unused_imports)] use crate::prelude::*;
 
-use crate::state::{LuaState, LuaCFunction, GlobalState, CallInfo, CallInfoIdx, StackIdx,
+use crate::state::{LuaState, LuaCFunction, LuaCallable, GlobalState, CallInfo, CallInfoIdx, StackIdx,
     LuaValueExt, LuaTypeExt, StackIdxExt,
     LuaTableRefExt, LuaUserDataRefExt, LuaStringRefExt,
     LuaLClosureRefExt, LuaClosureExt, LuaProtoExt};
@@ -1103,17 +1103,21 @@ pub fn push_cclosure(
     let idx: lua_types::closure::LuaCFnPtr = {
         let mut g = state.global_mut();
         if n == 0 {
-            match g.c_functions.iter().position(|&existing| existing == f) {
+            match g.c_functions.iter().position(|existing| {
+                existing
+                    .as_bare()
+                    .is_some_and(|existing| std::ptr::fn_addr_eq(existing, f))
+            }) {
                 Some(i) => i,
                 None => {
                     let i = g.c_functions.len();
-                    g.c_functions.push(f);
+                    g.c_functions.push(LuaCallable::bare(f));
                     i
                 }
             }
         } else {
             let i = g.c_functions.len();
-            g.c_functions.push(f);
+            g.c_functions.push(LuaCallable::bare(f));
             i
         }
     };

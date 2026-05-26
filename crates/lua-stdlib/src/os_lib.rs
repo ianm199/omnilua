@@ -685,12 +685,39 @@ pub(crate) fn os_getenv(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 /// Returns an approximation of the CPU time (in seconds) used by the program.
 pub(crate) fn os_clock(state: &mut LuaState) -> Result<usize, LuaError> {
-    // TODO(port): C's `clock()` returns process CPU time, not wall-clock time.
-    // `std::time::Instant` provides wall time only.  On POSIX targets, use
-    // `libc::clock()` / `libc::CLOCKS_PER_SEC` via the `libc` crate.
-    // Phase A stub returns 0.0.
-    state.push(LuaValue::Float(0.0));
+    let seconds = cpu_seconds(state)?;
+    state.push(LuaValue::Float(seconds));
     Ok(1)
+}
+
+/// Returns program CPU time in seconds, as consumed by `os.clock`.
+///
+/// C's `clock()` reads `CLOCK_PROCESS_CPUTIME_ID`, which has no portable `std`
+/// equivalent. We route through `cpu_clock_hook` when the host installs one;
+/// otherwise native builds report monotonic wall time elapsed since the first
+/// call (the substitution wasi-libc and Emscripten make for `clock()`), and bare
+/// WASM reports the clock as unavailable rather than touching a stubbed source.
+fn cpu_seconds(state: &LuaState) -> Result<f64, LuaError> {
+    if let Some(clock_fn) = state.global().cpu_clock_hook {
+        return Ok(clock_fn());
+    }
+
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        let _ = state;
+        Err(LuaError::runtime(format_args!(
+            "CPU clock not available in this host"
+        )))
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        let _ = state;
+        use std::sync::OnceLock;
+        use std::time::Instant;
+        static START: OnceLock<Instant> = OnceLock::new();
+        Ok(START.get_or_init(Instant::now).elapsed().as_secs_f64())
+    }
 }
 
 ///
@@ -939,8 +966,10 @@ pub fn open_os(state: &mut LuaState) -> Result<usize, LuaError> {
 //   notes:         Logic structure faithful. File/process/env/temp/time
 //                  operations route through host hooks where they need OS
 //                  capabilities for sandboxed and bare-WASM hosts.
-//                  Time formatting (os.date, os.time, os.clock) needs libc or
-//                  chrono in Phase B.  os.exit needs a LuaError::Exit(i32)
+//                  Time formatting (os.date, os.time) needs libc or chrono in
+//                  Phase B.  os.clock routes through cpu_clock_hook with a
+//                  monotonic-wall fallback (no std CPU-time source).
+//                  os.exit needs a LuaError::Exit(i32)
 //                  variant.  check_strftime_option logic is fully translated.
 //                  os_getenv uses OsStr::from_bytes on Unix (no from_utf8).
 // ──────────────────────────────────────────────────────────────────────────

@@ -679,7 +679,7 @@ fn precall_c(
     state: &mut LuaState,
     func_idx: StackIdx,
     nresults: i32,
-    f: crate::state::LuaCFunction,
+    f: crate::state::LuaCallable,
 ) -> Result<i32, LuaError> {
     state.check_stack(LUA_MINSTACK as i32)?;
     if state.gc_check_needed {
@@ -696,7 +696,7 @@ fn precall_c(
         hook(state, LUA_HOOKCALL, -1, 1, narg)?;
     }
 
-    let n = f(state)? as i32;
+    let n = f.call(state)? as i32;
 
     // api_checknelems → debug_assert!(n < (top - ci_func), "not enough elements") (macros.tsv)
     debug_assert!(
@@ -723,11 +723,11 @@ pub(crate) fn pretailcall(
         let func_val = state.get_at(func_idx).clone();
         match func_val {
             LuaValue::Function(LuaClosure::C(ref cl)) => {
-                let cfunc = state.global().c_functions[cl.func];
+                let cfunc = state.global().c_functions[cl.func].clone();
                 return precall_c(state, func_idx, LUA_MULTRET, cfunc);
             }
             LuaValue::Function(LuaClosure::LightC(f)) => {
-                let cfunc = state.global().c_functions[f];
+                let cfunc = state.global().c_functions[f].clone();
                 return precall_c(state, func_idx, LUA_MULTRET, cfunc);
             }
             LuaValue::Function(LuaClosure::Lua(ref cl)) => {
@@ -850,7 +850,7 @@ fn precall_slow(
         let func_val = state.get_at(func_idx).clone();
         match func_val {
             LuaValue::Function(LuaClosure::C(ref cl)) => {
-                let cfunc = state.global().c_functions[cl.func];
+                let cfunc = state.global().c_functions[cl.func].clone();
                 precall_c(state, func_idx, nresults, cfunc)?;
                 return Ok(None);
             }
@@ -869,8 +869,8 @@ fn precall_slow(
                     hook(state, LUA_HOOKCALL, -1, 1, narg)?;
                 }
 
-                let cfunc = state.global().c_functions[f];
-                let n = cfunc(state)? as i32;
+                let cfunc = state.global().c_functions[f].clone();
+                let n = cfunc.call(state)? as i32;
                 debug_assert!(
                     n <= state.top_idx().0 as i32,
                     "C function returned more values than available"

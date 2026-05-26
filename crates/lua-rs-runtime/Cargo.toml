@@ -9,8 +9,8 @@ repository.workspace = true
 homepage.workspace = true
 publish = false
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "allow"
 
 [dependencies]
 lua-types.workspace = true

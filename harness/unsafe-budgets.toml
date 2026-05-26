@@ -10,6 +10,9 @@
 "lua-code"   = 0
 "lua-vm"     = 0
 "lua-stdlib" = 0
+"lua-rs-runtime" = 1 # Re-entrant embedding boundary. The single block
+                     # dereferences the active LuaState pointer while the
+                     # outer VM call frame is suspended inside a Rust callback.
 "lua-gc"     = 13   # production heap/collector substrate. Historical
                     # reference-only partial ports were removed from src/ so
                     # this ceiling tracks only active heap.rs unsafe. Each

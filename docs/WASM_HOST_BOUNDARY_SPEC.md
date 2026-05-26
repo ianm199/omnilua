@@ -40,16 +40,22 @@ Implemented:
 - `LuaState::write_output` uses `stdout_hook` when installed.
 - `io.stdin`, `io.stdout`, and `io.stderr` standard stream handles use host
   hooks when installed.
-- `GlobalState` now has host hooks for env lookup, Unix time, entropy, and temp
-  names.
+- `GlobalState` now has host hooks for env lookup, Unix time, CPU clock,
+  entropy, and temp names.
 - `os.getenv`, `os.time()` / `os.date()` without explicit timestamps,
-  package path initialization, `os.tmpname`, `io.tmpfile`, default
+  `os.clock`, package path initialization, `os.tmpname`, `io.tmpfile`, default
   `math.randomseed`, and table sort pivot randomization now route through those
   hooks or deterministic/unsupported bare-WASM fallbacks.
+- `os.clock` has no portable `std` source for process CPU time (no
+  `CLOCK_PROCESS_CPUTIME_ID` equivalent). Without a `cpu_clock_hook` it reports
+  monotonic wall time elapsed since the first call — the same substitution
+  wasi-libc and Emscripten make for C's `clock()`. The native CLI installs a
+  hook with a process-start baseline so values match C's "since program start"
+  semantics; a host wanting true CPU time can install one backed by `cpu-time`.
 - `debug.debug()` reports a Lua error on bare WASM instead of attempting an
   interactive terminal read.
-- `lua-cli` installs native stdout/stderr, env, time, entropy, and temp-name
-  hooks alongside the existing file and process hooks.
+- `lua-cli` installs native stdout/stderr, env, time, CPU clock, entropy, and
+  temp-name hooks alongside the existing file and process hooks.
 - `lua-rs-runtime` provides a small embedding helper that creates a state,
   installs the parser hook, installs selected `HostHooks`, opens the standard
   libraries, and runs chunks.
@@ -117,6 +123,7 @@ OS-facing operations are optional hooks installed by the embedder:
 - `stderr_hook`
 - `env_hook`
 - `unix_time_hook`
+- `cpu_clock_hook`
 - `entropy_hook`
 - `temp_name_hook`
 - `popen_hook`

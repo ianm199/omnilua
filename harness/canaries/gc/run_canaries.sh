@@ -34,15 +34,21 @@ for f in "$DIR"/canary_*.lua; do
             mode_setup='collectgarbage("generational")
 '
         fi
-        src="${PREAMBLE}${mode_setup}$(cat "$f")"
         outfile="$DIR/${base}.${mode}.out"
-        "$BIN" "$src" > "$outfile" 2>&1 &
+        src_file=$(mktemp "${TMPDIR:-/tmp}/lua-rs-gc-canary.XXXXXX.lua")
+        {
+            printf '%s' "$PREAMBLE"
+            printf '%s' "$mode_setup"
+            cat "$f"
+        } > "$src_file"
+        "$BIN" "$src_file" > "$outfile" 2>&1 &
         _pid=$!
         ( sleep 30 && kill -KILL "$_pid" 2>/dev/null ) &
         _watcher=$!
         wait "$_pid"
         rc=$?
         kill "$_watcher" 2>/dev/null; wait "$_watcher" 2>/dev/null || true
+        rm -f "$src_file"
         if [ "$rc" = "0" ] && grep -q "^PASS " "$outfile"; then
             printf '%s\t%s\tPASS\t-\n' "$base" "$mode" >> "$TSV"
             printf "  %-30s %-15s PASS\n" "$base" "$mode"

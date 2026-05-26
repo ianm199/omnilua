@@ -25,9 +25,41 @@ bms → nano9 path: substrate first, conversion sugar last.
 - **Registry:** `GlobalState.l_registry: LuaValue` with `LUA_RIDX_MAINTHREAD=1`,
   `LUA_RIDX_GLOBALS=2`. There is **no `luaL_ref`/`luaL_unref`** yet. The registry
   is already traced as a root — it is the anchor for the external root set.
+- **External roots:** a dedicated `ExternalRootSet` now lives on `GlobalState`
+  and is traced from `GlobalState::trace`. It uses generational keys so stale
+  keys cannot observe reused slots. `LuaState` exposes root/get/replace/unroot
+  helpers. This is the Phase-1 substrate; public owned handles are not built yet.
+- **GC canaries:** `harness/canaries/gc/run_canaries.sh` writes a temporary Lua
+  file before invoking `lua-rs`. Passing source as argv[1] is wrong because the
+  CLI treats argv[1] as a filename.
 
 The two limitations to remove: bare-fn (no capture) and `&mut self` (no
 re-entrancy). Everything below follows.
+
+## What is already landed
+
+- `crates/lua-vm/src/state.rs`
+  - `ExternalRootKey`
+  - `ExternalRootSet`
+  - `GlobalState.external_roots`
+  - `LuaState::{external_root_value, external_rooted_value,
+    external_replace_root, external_unroot_value}`
+  - focused root-set tests for stale keys, slot reuse, and full-collection
+    liveness
+- `crates/lua-vm/src/trace_impls.rs`
+  - `GlobalState::trace` marks all live external-root values
+- `harness/canaries/gc/run_canaries.sh`
+  - fixed to run generated temp files instead of treating inline Lua source as a
+    filename
+
+Verification for this landing:
+
+- `cargo test -p lua-vm --lib external_root`
+- `cargo build -p lua-cli --bin lua-rs`
+- `./harness/canaries/gc/run_canaries.sh` => 10/10 PASS
+- manual official `gc.lua` and `gengc.lua` runs to `/tmp` => both `OK`
+- `cargo check -p lua-rs-runtime`
+- `git diff --check`
 
 ## Phases and acceptance criteria
 
@@ -41,22 +73,29 @@ Replace the `&mut self` access model with a shared handle that supports
 re-entrancy, **without** putting a borrow/cell in the per-instruction dispatch
 loop.
 
-- Introduce `Lua` (or evolve `LuaRuntime`) as a cheap-clone, `!Send` handle whose
-  state lives behind interior mutability. The VM borrows the state **once at a
-  call boundary** and runs `execute()` with direct access; only the re-entrant
-  callback boundary pays the cell cost.
+- Introduce `Lua` (or evolve `LuaRuntime`) as a cheap-clone, `!Send` handle.
+- Do not hold a `RefCell` mutable borrow of the whole VM across callback entry.
+  A Rust callback must be able to call back into Lua without colliding with an
+  outer borrow.
+- The VM still runs with direct `&mut LuaState` access while executing bytecode.
+  Any cell/borrow/dynamic-dispatch cost belongs at the Rust<->Lua boundary, not
+  in the per-instruction loop.
 - A callback receives a context (`&Lua` / a `Context`) it can re-enter through.
+  If this needs a small audited unsafe bridge to expose an mlua-shaped safe
+  public API over the current `&mut LuaState` engine, keep that bridge tiny and
+  documented.
 
 Acceptance: a registered function can call back into the VM during a `pcall`
-without aliasing; `cargo bench` geomean unchanged vs baseline; 44/44.
+without aliasing; `bash harness/bench/compare.sh` geomean unchanged vs baseline;
+44/44.
 
 ### Phase 1 — GC external root set + owned handles
 
-- Add an **external root set** anchored in `l_registry` (a `luaL_ref`-style
-  integer-keyed ref array, or a dedicated root slab on `GlobalState`). Trace it
-  from `GlobalState::trace` so rooted values are marked.
-- Implement ref/unref: rooting returns a key; unref frees it. Ref-count or
-  unique-key per handle.
+- Done: add a dedicated external root slab on `GlobalState` and trace it from
+  `GlobalState::trace` so rooted values are marked.
+- Remaining: decide clone semantics for public handles. Either clone re-roots
+  with a unique key, or `ExternalRootSet` grows refcounted entries. Prefer the
+  simpler unique-key model unless profiling or API behavior proves it wasteful.
 - Owned handle types, each holding a root key + a back-reference to `Lua`:
   `Value`, `Table`, `Function`, `LuaString` (add `Thread`, `AnyUserData` later).
   `Clone` re-roots (or bumps refcount); `Drop` unroots exactly once.
@@ -211,3 +250,113 @@ Keeping these aligned is what turns bms's `reference.rs` and the `FromLua`/
   high-stakes; lean on Miri + the torture test.
 - It grows the audited `unsafe` surface — a deliberate tension with "get to full
   safety." Make that call explicitly and document each block with `// SAFETY:`.
+
+Additional explicit calls:
+
+- **Owned handles over lifetime handles:** owned handles are more work because
+  every live handle must be rooted and dropped correctly. They are still the
+  right API for bms/mlua compatibility. Do not switch to rlua-style `'lua`
+  handles to make the implementation easier.
+- **Direct root slab over `luaL_ref`:** the direct slab is cheaper and stack
+  independent, and `Drop` can unroot without going through Lua stack protocol.
+  The tradeoff is that lua-rs owns the correctness story rather than inheriting
+  C-Lua registry behavior. Tests must cover stale keys, clone/drop, GC survival,
+  and slot reuse.
+- **Re-entrancy over simplicity:** banning callbacks from re-entering Lua would
+  simplify borrowing, but it would make the embedding API incomplete for real
+  bms use. Support re-entry and keep the aliasing boundary explicit.
+- **Safe public API over a tiny audited core:** the public surface must remain
+  safe Rust. If a small unsafe bridge is required to connect `&Lua` callbacks to
+  the current `&mut LuaState` VM, keep it local, documented, and covered by Miri
+  tests. Do not spread unsafe through table/function/userdata code.
+- **Boundary allocation over hot-loop regression:** handle operations may
+  allocate or root/unroot. That is acceptable at embedding boundaries. A design
+  that adds dynamic dispatch, `RefCell`, or root lookup to opcode dispatch is a
+  rejection condition.
+
+## Performance guardrails
+
+Embedding work is allowed to add overhead only at Rust<->Lua boundaries.
+Pure-Lua programs should not slow down meaningfully.
+
+- Before starting a phase, record the current commit and current benchmark
+  comparison artifact from `harness/bench/results`, or run:
+  - `make macosx -C reference/lua-5.4.7`
+  - `cargo build --release -p lua-cli`
+  - `bash harness/bench/compare.sh`
+- For a smoke check during development, run
+  `bash harness/bench/compare.sh --runs 2 --workloads fibonacci,mandelbrot`.
+- After each phase, compare geomean against the pre-phase baseline. Treat a
+  repeatable regression greater than 2% as a blocker unless the phase explicitly
+  changed a boundary-heavy benchmark.
+- If a regression appears, profile before refactoring. Suspect accidental
+  hot-loop borrow/cell work first, then excess `LuaValue` clones, then boundary
+  conversion churn.
+- Never commit generated `harness/impl/official/*.out` files as evidence.
+  Use TSV/evidence artifacts and final command output summaries.
+- Keep GC canaries in both incremental and generational modes in the verification
+  loop. The root slab must stay compatible with generational collection.
+
+## Rollback and commit discipline
+
+- Commit each completed substrate phase separately so the next morning rollback
+  is one `git revert <commit>` away.
+- Do not include unrelated `.claude/worktrees/*` dirt or generated official
+  `.out` files in these commits.
+- Commit messages should name the invariant being added, for example
+  `vm: trace external embedding roots` or `runtime: add rooted embedding handles`.
+- Every commit that changes GC/rooting/re-entry should list the exact
+  verification commands in the commit body or PR notes.
+
+## Next agent goal
+
+Objective:
+
+> Build Phase 1 public owned handles on top of the landed `ExternalRootSet`,
+> without changing the VM hot loop. Introduce an mlua-shaped `Lua` handle in
+> `lua-rs-runtime` and implement rooted `Value`, `Table`, `Function`, and
+> `LuaString` handles with correct clone/drop/root behavior.
+
+Scope:
+
+- Keep existing `LuaRuntime` source compatibility where practical, but add the
+  new `Lua` API as the future embedding surface.
+- Implement handle rooting through
+  `LuaState::{external_root_value, external_rooted_value, external_unroot_value}`.
+- `Drop` must unroot exactly once.
+- `Clone` must either re-root or use a deliberately implemented refcount; choose
+  the simpler unique-root model unless there is a concrete reason not to.
+- Implement enough operations to prove handles are usable:
+  - `Lua::new` / `Lua::with_hooks`
+  - `Lua::load(...).exec()` or an equivalent compatibility wrapper
+  - `Lua::create_table`
+  - `Lua::create_string`
+  - `Lua::globals`
+  - `Table::get` / `Table::set` for primitive keys/values and `Value`
+  - `Function::call` for `Value` or simple primitive arguments/returns
+- Do not implement captured Rust closures or userdata in this goal unless they
+  are strictly necessary for the handle substrate tests.
+
+Completion criteria:
+
+- Focused unit tests prove:
+  - a Rust-held table survives full collection;
+  - dropping the last handle frees its root slot;
+  - cloned handles remain independently valid after the original drops;
+  - stale keys cannot read or replace reused slots;
+  - forced full collection between handle operations does not break live
+    handles.
+- Verification passes:
+  - `cargo test -p lua-vm --lib external_root`
+  - focused `lua-rs-runtime` handle tests
+  - `cargo check -p lua-rs-runtime`
+  - `cargo build -p lua-cli --bin lua-rs`
+  - `./harness/canaries/gc/run_canaries.sh`
+  - official `gc.lua` and `gengc.lua` into temporary output, both reaching `OK`
+  - `git diff --check`
+- Performance check recorded:
+  - either run the benchmark compare command documented in `harness/bench`, or
+    explicitly state why it was not run and record the pre/post commits needed
+    for a follow-up compare.
+- The final diff excludes generated official `.out` files and unrelated
+  worktree dirt.

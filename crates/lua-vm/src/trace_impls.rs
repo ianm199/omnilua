@@ -101,6 +101,13 @@ impl Trace for GlobalState {
 
         self.l_registry.trace(m);
 
+        // Values held by Rust-side embedding handles are rooted outside the
+        // Lua registry table so handle Drop can unroot without touching the
+        // Lua stack/API. They are still ordinary GC roots during marking.
+        for value in self.external_roots.iter_values() {
+            value.trace(m);
+        }
+
         // PORT NOTE (phase-b-reconcile): The lua-types LuaTable placeholder is
         // storage-less, so `globals` and `loaded` cannot live inside the registry
         // table (see `init_registry`). They are kept as direct GlobalState fields

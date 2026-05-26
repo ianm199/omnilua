@@ -810,6 +810,108 @@ pub struct ThreadRegistryEntry {
     pub value: GcRef<lua_types::value::LuaThread>,
 }
 
+/// Stable key for a value pinned in [`ExternalRootSet`].
+///
+/// The generation is part of the key so a handle that has already unrooted its
+/// slot cannot accidentally observe a later handle's value after slot reuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExternalRootKey {
+    index: usize,
+    generation: u64,
+}
+
+#[derive(Debug)]
+struct ExternalRootSlot {
+    value: Option<LuaValue>,
+    generation: u64,
+}
+
+/// Values held alive by external Rust handles.
+///
+/// This is the embedding API's GC anchor. It intentionally lives directly on
+/// `GlobalState` instead of inside the Lua registry table: handle drop/unroot
+/// must be cheap, infallible, and independent of the Lua stack protocol.
+#[derive(Debug, Default)]
+pub struct ExternalRootSet {
+    slots: Vec<ExternalRootSlot>,
+    free: Vec<usize>,
+    live: usize,
+}
+
+impl ExternalRootSet {
+    pub fn insert(&mut self, value: LuaValue) -> ExternalRootKey {
+        if let Some(index) = self.free.pop() {
+            let slot = &mut self.slots[index];
+            debug_assert!(
+                slot.value.is_none(),
+                "free external-root slot is occupied"
+            );
+            slot.generation = slot.generation.wrapping_add(1).max(1);
+            slot.value = Some(value);
+            self.live += 1;
+            ExternalRootKey {
+                index,
+                generation: slot.generation,
+            }
+        } else {
+            let index = self.slots.len();
+            self.slots.push(ExternalRootSlot {
+                value: Some(value),
+                generation: 1,
+            });
+            self.live += 1;
+            ExternalRootKey {
+                index,
+                generation: 1,
+            }
+        }
+    }
+
+    pub fn get(&self, key: ExternalRootKey) -> Option<&LuaValue> {
+        let slot = self.slots.get(key.index)?;
+        if slot.generation == key.generation {
+            slot.value.as_ref()
+        } else {
+            None
+        }
+    }
+
+    pub fn replace(&mut self, key: ExternalRootKey, value: LuaValue) -> Option<LuaValue> {
+        let slot = self.slots.get_mut(key.index)?;
+        if slot.generation != key.generation || slot.value.is_none() {
+            return None;
+        }
+        slot.value.replace(value)
+    }
+
+    pub fn remove(&mut self, key: ExternalRootKey) -> Option<LuaValue> {
+        let slot = self.slots.get_mut(key.index)?;
+        if slot.generation != key.generation {
+            return None;
+        }
+        let old = slot.value.take()?;
+        self.free.push(key.index);
+        self.live -= 1;
+        Some(old)
+    }
+
+    pub fn iter_values(&self) -> impl Iterator<Item = &LuaValue> {
+        self.slots.iter().filter_map(|slot| slot.value.as_ref())
+    }
+
+    pub fn len(&self) -> usize {
+        self.live
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.live == 0
+    }
+
+    pub fn vacant_len(&self) -> usize {
+        self.free.len()
+    }
+}
+
 /// Process-wide state shared by all Lua threads.
 ///
 /// types.tsv: `global_State → GlobalState`
@@ -912,6 +1014,10 @@ pub struct GlobalState {
 
     // types.tsv: global_State.l_registry → LuaValue
     pub l_registry: LuaValue,
+
+    /// External Rust handles root their referents here while they are live.
+    /// Traced from `GlobalState::trace`.
+    pub external_roots: ExternalRootSet,
 
     // PORT NOTE (phase-b-reconcile): The lua-types LuaTable placeholder has
     // no storage, so we cannot persist `registry[LUA_RIDX_GLOBALS] = globals`
@@ -1513,6 +1619,30 @@ impl LuaState {
     /// no-ops. Phase D replaces this with real GC logic in `lua-gc`.
     pub fn gc(&mut self) -> GcHandle<'_> {
         GcHandle { _state: self }
+    }
+
+    /// Pin a Lua value in the external root set and return its stable key.
+    pub fn external_root_value(&mut self, value: LuaValue) -> ExternalRootKey {
+        self.global_mut().external_roots.insert(value)
+    }
+
+    /// Read a value currently pinned by an external root key.
+    pub fn external_rooted_value(&self, key: ExternalRootKey) -> Option<LuaValue> {
+        self.global().external_roots.get(key).cloned()
+    }
+
+    /// Replace the value pinned by an external root key.
+    pub fn external_replace_root(
+        &mut self,
+        key: ExternalRootKey,
+        value: LuaValue,
+    ) -> Option<LuaValue> {
+        self.global_mut().external_roots.replace(key, value)
+    }
+
+    /// Remove an external root. Returns `None` for stale or already-removed keys.
+    pub fn external_unroot_value(&mut self, key: ExternalRootKey) -> Option<LuaValue> {
+        self.global_mut().external_roots.remove(key)
     }
 
     /// Create a new empty table and register it with the GC.
@@ -4123,6 +4253,7 @@ pub fn new_state() -> Option<LuaState> {
         lastatomic: 0,
         strt: StringPool::default(),
         l_registry: LuaValue::Nil,
+        external_roots: ExternalRootSet::default(),
         globals: LuaValue::Nil,
         loaded: LuaValue::Nil,
         nilvalue: LuaValue::Int(0),
@@ -4311,6 +4442,57 @@ pub(crate) fn warn_error(state: &mut LuaState, where_: &[u8]) {
     warning(state, b" (", true);
     warning(state, &msg, true);
     warning(state, b")", false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_root_keys_reject_stale_slot_after_reuse() {
+        let mut roots = ExternalRootSet::default();
+
+        let first = roots.insert(LuaValue::Int(1));
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots.get(first), Some(&LuaValue::Int(1)));
+
+        assert_eq!(roots.remove(first), Some(LuaValue::Int(1)));
+        assert!(roots.get(first).is_none());
+        assert!(roots.remove(first).is_none());
+        assert_eq!(roots.len(), 0);
+        assert_eq!(roots.vacant_len(), 1);
+        assert!(roots.replace(first, LuaValue::Int(9)).is_none());
+        assert!(roots.is_empty());
+
+        let second = roots.insert(LuaValue::Int(2));
+        assert_eq!(first.index, second.index);
+        assert_ne!(first, second);
+        assert!(roots.get(first).is_none());
+        assert_eq!(roots.get(second), Some(&LuaValue::Int(2)));
+        assert!(roots.replace(first, LuaValue::Int(3)).is_none());
+    }
+
+    #[test]
+    fn external_roots_keep_heap_value_alive_until_unrooted() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let table = state.new_table();
+        assert_eq!(state.global().heap.allgc_count(), 1);
+
+        let key = state.external_root_value(LuaValue::Table(table));
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.allgc_count(), 1);
+        assert_eq!(state.global().external_roots.len(), 1);
+
+        assert!(state.external_unroot_value(key).is_some());
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.allgc_count(), 0);
+        assert!(state.global().external_roots.is_empty());
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

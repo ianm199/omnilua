@@ -701,6 +701,15 @@ pub type EnvHook = fn(name: &[u8]) -> Option<Vec<u8>>;
 /// Function-pointer signature for retrieving the current Unix time in seconds.
 pub type UnixTimeHook = fn() -> i64;
 
+/// Function-pointer signature for retrieving program CPU time in seconds.
+///
+/// Backs `os.clock`. C's `clock()` reads `CLOCK_PROCESS_CPUTIME_ID`, which has no
+/// `std` equivalent and is unavailable on bare WASM; the stdlib falls back to a
+/// monotonic wall-clock baseline (matching wasi-libc/Emscripten's emulation) when
+/// this hook is unset. A host wanting true CPU time can install one (e.g. via the
+/// `cpu-time` crate) without changing the sandboxed crates.
+pub type CpuClockHook = fn() -> f64;
+
 /// Function-pointer signature for host entropy used by default PRNG seeds and
 /// table-sort pivot randomisation. Hosts without entropy may leave it unset; the
 /// stdlib then uses deterministic fallback values instead of touching OS stubs.
@@ -996,6 +1005,10 @@ pub struct GlobalState {
     /// Hook for host wall-clock time. Required for `os.time()` and `os.date()`
     /// without an explicit timestamp under bare WASM.
     pub unix_time_hook: Option<UnixTimeHook>,
+
+    /// Hook for host program CPU time. Backs `os.clock`. When unset, native builds
+    /// use a monotonic wall-clock baseline and bare WASM reports it unavailable.
+    pub cpu_clock_hook: Option<CpuClockHook>,
 
     /// Hook for host entropy. Used by default `math.randomseed` and table sort
     /// pivot randomisation; absent hooks fall back to deterministic seeds.
@@ -4279,6 +4292,7 @@ pub fn new_state() -> Option<LuaState> {
         stdin_hook: None,
         env_hook: None,
         unix_time_hook: None,
+        cpu_clock_hook: None,
         entropy_hook: None,
         temp_name_hook: None,
         popen_hook: None,

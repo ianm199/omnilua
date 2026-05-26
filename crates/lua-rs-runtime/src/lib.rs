@@ -19,10 +19,10 @@ use lua_types::string::LuaString as RawLuaString;
 use lua_types::upval::UpVal;
 use lua_types::value::{LuaTable as RawLuaTable, LuaValue as RawLuaValue};
 use lua_vm::state::{
-    new_state, DynLibLoadHook, DynLibSymbolHook, DynLibUnloadHook, EntropyHook, EnvHook,
-    ExternalRootKey, FileLoaderHook, FileOpenHook, FileRemoveHook, FileRenameHook, InputHook,
-    LuaCallable, LuaRustFunction, LuaState, OsExecuteHook, OutputHook, PopenHook, TempNameHook,
-    UnixTimeHook,
+    new_state, CpuClockHook, DynLibLoadHook, DynLibSymbolHook, DynLibUnloadHook, EntropyHook,
+    EnvHook, ExternalRootKey, FileLoaderHook, FileOpenHook, FileRemoveHook, FileRenameHook,
+    InputHook, LuaCallable, LuaRustFunction, LuaState, OsExecuteHook, OutputHook, PopenHook,
+    TempNameHook, UnixTimeHook,
 };
 
 pub use lua_types::{LuaError, LuaFileHandle};
@@ -46,6 +46,7 @@ pub struct HostHooks {
     pub stderr_hook: Option<OutputHook>,
     pub env_hook: Option<EnvHook>,
     pub unix_time_hook: Option<UnixTimeHook>,
+    pub cpu_clock_hook: Option<CpuClockHook>,
     pub entropy_hook: Option<EntropyHook>,
     pub temp_name_hook: Option<TempNameHook>,
     pub popen_hook: Option<PopenHook>,
@@ -94,6 +95,11 @@ impl HostHooks {
 
     pub fn unix_time(mut self, hook: UnixTimeHook) -> Self {
         self.unix_time_hook = Some(hook);
+        self
+    }
+
+    pub fn cpu_clock(mut self, hook: CpuClockHook) -> Self {
+        self.cpu_clock_hook = Some(hook);
         self
     }
 
@@ -151,6 +157,7 @@ impl HostHooks {
         global.stderr_hook = self.stderr_hook;
         global.env_hook = self.env_hook;
         global.unix_time_hook = self.unix_time_hook;
+        global.cpu_clock_hook = self.cpu_clock_hook;
         global.entropy_hook = self.entropy_hook;
         global.temp_name_hook = self.temp_name_hook;
         global.popen_hook = self.popen_hook;

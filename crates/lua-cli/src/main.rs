@@ -360,6 +360,21 @@ fn unix_time_hook() -> i64 {
         .unwrap_or(0)
 }
 
+/// Monotonic baseline for `os.clock`, captured at process start by `main`.
+static CLI_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Program CPU time for `os.clock`, reported as monotonic wall time elapsed since
+/// process start. `std` exposes no `CLOCK_PROCESS_CPUTIME_ID` equivalent, so this
+/// matches the emulation wasi-libc and Emscripten use for C's `clock()`: faithful
+/// for elapsed-time benchmarking, but it counts idle wall time (e.g. at an
+/// interactive prompt) that true CPU time would not.
+fn cpu_clock_hook() -> f64 {
+    CLI_START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+}
+
 fn entropy_hook() -> u64 {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -777,6 +792,8 @@ pub(crate) fn prepend_lua_path(dir: &std::path::Path) {
 }
 
 fn main() -> ExitCode {
+    CLI_START.get_or_init(std::time::Instant::now);
+
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if info.payload().downcast_ref::<LuaExit>().is_none() {
@@ -797,6 +814,7 @@ fn main() -> ExitCode {
         state.global_mut().stdin_hook = Some(stdin_hook);
         state.global_mut().env_hook = Some(env_hook);
         state.global_mut().unix_time_hook = Some(unix_time_hook);
+        state.global_mut().cpu_clock_hook = Some(cpu_clock_hook);
         state.global_mut().entropy_hook = Some(entropy_hook);
         state.global_mut().temp_name_hook = Some(temp_name_hook);
         state.global_mut().popen_hook = Some(popen_hook);

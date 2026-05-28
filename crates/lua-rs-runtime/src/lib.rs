@@ -1,9 +1,66 @@
 //! Embedding helper for lua-rs.
 //!
-//! This crate sits above `lua-vm`, `lua-stdlib`, and `lua-parse`, so it can
-//! provide the common setup sequence without creating dependency cycles:
-//! create a state, install the parser hook, install host hooks, open stdlib,
-//! and run chunks.
+//! This crate sits above `lua-vm`, `lua-stdlib`, and `lua-parse` and exposes a
+//! handle-based embedding API: a [`Lua`] state, typed [`Value`] / [`Table`] /
+//! [`Function`] handles that root themselves via RAII, [`UserData`] for binding
+//! Rust types, and a typed [`LuaError`]. It also provides the common setup
+//! sequence (state, parser hook, host hooks, stdlib).
+//!
+//! # Userdata model
+//!
+//! Userdata behavior in lua-rs runs through real Lua metatables, exactly as in
+//! reference Lua 5.4. The runtime builds the metatable for a type once, on the
+//! first [`Lua::create_userdata`] for that `TypeId`, permanently roots it on
+//! the state, and shares it across every later value of the type. This keeps
+//! `getmetatable`, `setmetatable`, `rawget`, `debug.setmetatable`, and every
+//! other reflective Lua operation behaving as in C Lua, which is what lets
+//! lua-rs pass the upstream 5.4 test suite and stand in for C Lua in real
+//! embedders.
+//!
+//! Fields and methods both live on that single metatable. Register fields with
+//! [`UserDataMethods::add_field_method_get`] / `add_field_method_set` and
+//! methods with [`UserDataMethods::add_method`] / `add_method_mut`. The runtime
+//! composes a single `__index` whose lookup order is field, then method, then
+//! a raw `add_meta_method(MetaMethod::Index, ...)` if you registered one as an
+//! escape hatch, with the symmetric composition on `__newindex`.
+//!
+//! # Derive
+//!
+//! Enable the `derive` feature for `#[derive(LuaUserData)]`, `#[lua_methods]`,
+//! and `#[lua_impl(Display, PartialEq, PartialOrd)]`. The derive targets the
+//! field API above; `#[lua_methods]` exposes each `pub fn(&self / &mut self,
+//! ...)` as `obj:method(args)`; `#[lua_impl(...)]` wires `__tostring`, `__eq`,
+//! `__lt`, and `__le` from the type's Rust trait impls.
+//!
+//! ```ignore
+//! use lua_rs_runtime::{lua_methods, Lua, LuaUserData};
+//!
+//! #[derive(LuaUserData, PartialEq, PartialOrd)]
+//! #[lua(methods)]
+//! #[lua_impl(Display, PartialEq, PartialOrd)]
+//! struct Vec2 { pub x: f64, pub y: f64 }
+//!
+//! #[lua_methods]
+//! impl Vec2 {
+//!     pub fn length(&self) -> f64 { (self.x * self.x + self.y * self.y).sqrt() }
+//!     pub fn scale(&mut self, k: f64) { self.x *= k; self.y *= k; }
+//! }
+//! ```
+//!
+//! # Known limitations and planned work
+//!
+//! - The userdata method and field callbacks capture a strong [`Lua`] handle,
+//!   which forms a `LuaInner -> state -> heap -> closure -> Rc<LuaInner>`
+//!   reference cycle. A state that keeps any userdata-with-callbacks reachable
+//!   for its lifetime therefore does not free on drop. This is invisible for
+//!   long-lived embeddings (the target), but the right fix is to capture
+//!   `Weak<LuaInner>` and upgrade on call across the callback constructors.
+//! - `#[lua_methods]` does not yet special-case methods that return
+//!   `Result<T, E>`, associated functions and constructors (`Type::new`), or
+//!   `Option<T>` parameters and returns.
+//! - The derive does not yet handle enums (a `register_enum::<T>()` path) or
+//!   the iteration, `__close`, and arithmetic metamethods. The runtime already
+//!   supports adding these as ordinary `add_meta_method` registrations today.
 
 use std::any::{Any, TypeId};
 use std::cell::{Cell, Ref, RefCell, RefMut};

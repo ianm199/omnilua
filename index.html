@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>lua-rs — Lua 5.4.7, reimplemented in safe Rust</title>
+  <title>lua-rs: Lua 5.4.7, reimplemented in safe Rust</title>
   <meta name="description" content="lua-rs is a from-scratch Rust port of PUC-Rio Lua 5.4.7. Safe Rust, no C runtime, passes 44/44 of the upstream Lua test suite, and runs in browser WebAssembly.">
-  <meta property="og:title" content="lua-rs — Lua 5.4.7, reimplemented in safe Rust">
+  <meta property="og:title" content="lua-rs: Lua 5.4.7, reimplemented in safe Rust">
   <meta property="og:description" content="A safe-Rust Lua 5.4.7 runtime that passes 44/44 of the upstream PUC-Rio test suite. Built by an AI porting harness.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://ianm199.github.io/lua-rs/">
   <meta property="og:image" content="https://ianm199.github.io/lua-rs/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="lua-rs — Lua 5.4.7, reimplemented in safe Rust">
+  <meta name="twitter:title" content="lua-rs: Lua 5.4.7, reimplemented in safe Rust">
   <meta name="twitter:description" content="A safe-Rust Lua 5.4.7 runtime that passes 44/44 of the upstream PUC-Rio test suite.">
   <meta name="twitter:image" content="https://ianm199.github.io/lua-rs/assets/og.png">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
@@ -114,7 +114,7 @@
     <div class="wrap">
       <p class="eyebrow">A safe-Rust Lua runtime</p>
       <h1>lua<span class="rs">-rs</span></h1>
-      <p class="tag"><strong>Lua 5.4.7, reimplemented in safe Rust.</strong> A from-scratch port of the reference PUC-Rio interpreter that passes <strong>44/44</strong> of the upstream Lua test suite — with no C runtime.</p>
+      <p class="tag"><strong>Lua 5.4.7, reimplemented in safe Rust.</strong> A from-scratch port of the reference PUC-Rio interpreter that passes <strong>44/44</strong> of the upstream Lua test suite, with no C runtime. Embeds in Rust programs and in the browser.</p>
 
       <div class="install">
         <code><span class="prompt">$ </span><span id="install-cmd">cargo install lua-cli</span></code>
@@ -125,6 +125,7 @@
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/ianm199/lua-rs">GitHub</a>
         <a class="btn btn-ghost" href="https://crates.io/crates/lua-cli">crates.io</a>
+        <a class="btn btn-ghost" href="https://docs.rs/lua-rs-runtime">Embedding docs →</a>
         <a class="btn btn-ghost" href="./examples/wasm-browser/">Browser playground →</a>
         <a class="btn btn-ghost" href="./harness/bench/history/index.html">Performance dashboard →</a>
       </div>
@@ -143,7 +144,7 @@
   <div class="wrap">
     <section>
       <h2>What it is</h2>
-      <p class="lead">lua-rs is a complete reimplementation of <a href="https://www.lua.org/">PUC-Rio Lua 5.4.7</a> in Rust — lexer, parser, bytecode compiler, register VM, garbage collector, coroutines, and standard library. It runs ordinary <code>.lua</code> programs as a standalone Rust binary, validated against the exact test files the C implementation uses.</p>
+      <p class="lead">lua-rs is a complete reimplementation of <a href="https://www.lua.org/">PUC-Rio Lua 5.4.7</a> in Rust: lexer, parser, bytecode compiler, register VM, garbage collector, coroutines, and standard library. It runs ordinary <code>.lua</code> programs as a standalone Rust binary, validated against the exact test files the C implementation uses. It also embeds into Rust programs as a library, and into the browser as WebAssembly.</p>
     </section>
 
     <section>
@@ -161,6 +162,30 @@ $ lua-rs                           <span class="c"># start the interactive REPL<
     </section>
 
     <section>
+      <h2>Embed it in Rust</h2>
+      <p class="lead"><code>lua-rs-runtime</code> is a Rust-native embedding API shaped after <code>mlua</code>: owned handles, Rust closure callbacks, conversion traits, and <code>UserData</code> for binding Rust types with methods and metamethods. Because the whole runtime is Rust, it embeds where a C binding can't: <code>wasm32-unknown-unknown</code>, no C toolchain, no <code>liblua</code> to link. You give up LuaJIT speed and years of maturity in exchange.</p>
+      <pre class="block"><span class="c">// Call Rust from Lua</span>
+let lua = Lua::new();
+let f = lua.create_function(|_, name: String| Ok(format!(<span class="o">"hello, {name}"</span>)))?;
+lua.globals().set(<span class="o">"greet"</span>, f)?;
+lua.load(<span class="o">r#"print(greet("lua-rs"))"#</span>).exec()?;
+
+<span class="c">// Lend Lua a &mut borrow for one call, e.g. a game engine's World.</span>
+<span class="c">// A handle that escapes the scope errors cleanly instead of dangling.</span>
+lua.scope(|s| {
+    let world = s.create_userdata_ref_mut(&lua, &mut my_world)?;
+    lua.globals().set(<span class="o">"world"</span>, &world)?;
+    lua.load(<span class="o">"world:spawn('player')"</span>).exec()
+})?;</pre>
+      <div class="callout">
+        Worked Bevy 0.18 integration, scripts driving a real ECS, native and in the browser:
+        <a href="https://github.com/ianm199/bevy-lua-rs-starter">bevy-lua-rs-starter</a>
+        (<a href="https://ianm199.github.io/bevy-lua-rs-starter/">live demo</a>).
+        Full API reference on <a href="https://docs.rs/lua-rs-runtime">docs.rs</a>.
+      </div>
+    </section>
+
+    <section>
       <h2>Browser WebAssembly</h2>
       <p class="lead">The same interpreter core is published as <code>lua-rs-wasm</code> for browser and Node embeddings. The package ships a prebuilt <code>wasm32-unknown-unknown</code> artifact plus JS host hooks for stdout, stdin, environment values, time, and controlled file access.</p>
       <pre class="block"><span class="c"># from npm</span>
@@ -175,7 +200,7 @@ $ npm install lua-rs-wasm
 
     <section>
       <h2>Conformance</h2>
-      <p class="lead">The strongest claim this project makes. The unmodified upstream Lua 5.4.7 test suite runs against the <code>lua-rs</code> binary through a behavioral oracle — same input, diffed against reference C — and passes <strong>44/44</strong>.</p>
+      <p class="lead">The strongest claim this project makes. The unmodified upstream Lua 5.4.7 test suite runs against the <code>lua-rs</code> binary (same input, diffed against reference C) and passes <strong>44/44</strong>.</p>
       <pre class="block">$ TEST_TIMEOUT_S=90 ./harness/run_official_all.sh
 <span class="o">→ 44/44 PASS</span></pre>
       <p class="muted" style="margin-top:14px;">This is strong evidence for Lua source/runtime compatibility. It does not imply C API or ABI compatibility.</p>
@@ -183,7 +208,7 @@ $ npm install lua-rs-wasm
 
     <section>
       <h2>Performance</h2>
-      <p class="lead">Every benchmarked commit is recorded and plotted on a live, auto-built dashboard. Each point is the ratio of lua-rs wall time to reference PUC-Rio Lua on the same workload — <strong>lower is better, <code>1.00×</code> is parity with C.</strong></p>
+      <p class="lead">Every benchmarked commit is recorded and plotted on a live, auto-built dashboard. Each point is the ratio of lua-rs wall time to reference PUC-Rio Lua on the same workload. <strong>Lower is better; <code>1.00×</code> is parity with C.</strong></p>
       <table class="perf">
         <tr><th>Metric</th><th>Value</th><th>Reading</th></tr>
         <tr><td>Wall-time geomean</td><td class="v">1.27×</td><td>~27% slower than C on average</td></tr>
@@ -192,7 +217,7 @@ $ npm install lua-rs-wasm
         <tr><td>Worst workload</td><td class="v">2.07×</td><td>slowest relative workload</td></tr>
       </table>
       <div class="callout">
-        This is not "faster than C." It is a memory-safe reimplementation that is <strong>competitive</strong> with C — within a small constant factor on average, ahead on some workloads — with the full per-workload trajectory published rather than reduced to one number.
+        Not "faster than C." A memory-safe reimplementation that stays <strong>competitive</strong> with C: within a small constant factor on average, ahead on some workloads, with the full per-workload trajectory published rather than reduced to one number.
         <br><a href="./harness/bench/history/index.html">Open the live performance dashboard →</a>
       </div>
     </section>
@@ -200,7 +225,7 @@ $ npm install lua-rs-wasm
     <section>
       <h2>Safety model</h2>
       <p class="lead">A safe public surface over a small, audited unsafe core. Most crates compile under <code>#![forbid(unsafe_code)]</code>. The remaining <code>unsafe</code> is budgeted with per-crate ceilings enforced by a gate, and lives only in the garbage collector (<code>lua-gc</code>) and the optional dynamic-library loader (<code>lua-cli</code>).</p>
-      <p class="muted" style="margin-top:10px;">This is not "completely safe Rust," and it is not claimed to be — it is a safe surface over a contained, documented unsafe core.</p>
+      <p class="muted" style="margin-top:10px;">Not "100% safe Rust," and not claimed to be: a safe surface over a contained, documented unsafe core.</p>
     </section>
 
     <section>
@@ -213,7 +238,7 @@ $ npm install lua-rs-wasm
         </div>
         <div class="card">
           <h3>Mechanical guardrails</h3>
-          <p>Unsafe-budget ceilings, forbidden-pattern bans, required status trailers, and a verify-gate are enforced as hooks. The read-only verifier physically cannot mark a test passing — anti-sycophancy by construction.</p>
+          <p>Unsafe-budget ceilings, forbidden-pattern bans, required status trailers, and a verify-gate run as enforced hooks, so the rules hold regardless of which agent is doing the work.</p>
         </div>
       </div>
     </section>
@@ -233,6 +258,8 @@ $ npm install lua-rs-wasm
       <div class="flinks">
         <a href="https://github.com/ianm199/lua-rs">GitHub</a>
         <a href="https://crates.io/crates/lua-cli">crates.io</a>
+        <a href="https://docs.rs/lua-rs-runtime">Embedding docs</a>
+        <a href="https://github.com/ianm199/bevy-lua-rs-starter">Bevy starter</a>
         <a href="./examples/wasm-browser/">Browser playground</a>
         <a href="./harness/bench/history/index.html">Performance dashboard</a>
         <a href="https://www.lua.org/">Lua</a>

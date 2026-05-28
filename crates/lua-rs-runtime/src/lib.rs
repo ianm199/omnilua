@@ -47,6 +47,43 @@
 //! }
 //! ```
 //!
+//! # Scope: lending non-`'static` borrows to Lua
+//!
+//! [`Lua::create_userdata`] takes its value by ownership, so the type must be
+//! `'static`. When you instead want to lend Lua a value that lives on the Rust
+//! stack for the duration of one call (the classic case is a game engine's
+//! `&mut World`), use [`Lua::scope`]. A scope hands Lua a borrow that is
+//! invalidated the moment the scope closure returns: any Lua reference that
+//! escaped the scope fails with a clean runtime error on next use instead of
+//! touching freed memory.
+//!
+//! ```
+//! use lua_rs_runtime::{Lua, UserData, UserDataMethods};
+//!
+//! struct Counter { value: i64 }
+//! impl UserData for Counter {
+//!     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+//!         m.add_method_mut("inc", |_, this, by: i64| { this.value += by; Ok(this.value) });
+//!     }
+//! }
+//!
+//! let lua = Lua::new();
+//! let mut counter = Counter { value: 0 };
+//! lua.scope(|s| {
+//!     let ud = s.create_userdata_ref_mut(&lua, &mut counter)?;
+//!     lua.globals().set("c", &ud)?;
+//!     lua.load("c:inc(5); c:inc(7)").exec()
+//! }).unwrap();
+//! assert_eq!(counter.value, 12);
+//! ```
+//!
+//! [`Scope::create_function`] / [`Scope::create_function_mut`] do the same for
+//! closures that capture non-`'static` borrows. And
+//! [`AnyUserData::delegate`] builds a *sub-userdata* that re-borrows a field of
+//! its parent on every call (`world:entity(id)` returning a live `&mut Entity`),
+//! so an `App -> World -> Component` chain stays a chain of short borrows rather
+//! than one long-held `&mut`. See [`Lua::scope`] for the full contract.
+//!
 //! # Known limitations and planned work
 //!
 //! - `#[lua_methods]` does not yet special-case methods that return

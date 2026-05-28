@@ -18,8 +18,9 @@ lua-rs -e 'print("hello")'
 
 - Passes the full upstream Lua 5.4.7 test suite (44/44).
 - A standalone binary: no `liblua`, no C interpreter, no C toolchain to build it.
-- Rust-native embedding API with owned handles, captured Rust callbacks, and
-  userdata/metamethod support in `lua-rs-runtime`.
+- Rust-native embedding API (`lua-rs-runtime`): owned handles, Rust callbacks,
+  `UserData`, and `scope` for lending non-`'static` borrows like `&mut World`.
+  Embeds in WebAssembly and anywhere a C binding can't.
 - Mostly safe Rust, with unsafe isolated to audited GC, dynamic-loading, and
   WASM pointer-ABI boundaries.
 - Competitive with reference C (~1.3× geomean wall time), benchmarked per commit.
@@ -37,26 +38,28 @@ lua-rs -v                       # version
 `lua-rs` follows the standard `lua` CLI. Build from source with
 `cargo build --release --bin lua-rs`.
 
-## Rust Embedding API
+## Rust embedding API
 
-`lua-rs-runtime` exposes a preview Rust-native embedding API shaped after
-`mlua` at the handle, callback, conversion, and userdata layers. It supports
-owned GC-rooted handles (`Value`, `Table`, `Function`, `LuaString`,
-`AnyUserData`), closure-based `create_function` / `create_function_mut`,
-re-entrant callbacks, userdata methods and metamethods, and conversion traits
-(`IntoLua`, `FromLua`, `IntoLuaMulti`, `FromLuaMulti`).
+`lua-rs-runtime` is a Rust-native embedding API shaped after `mlua`, for
+running Lua scripts inside a Rust program. Because the whole runtime is Rust,
+it embeds where `mlua` can't: `wasm32-unknown-unknown`, no C toolchain, no
+`liblua` to link. That is the reason to reach for it over a C binding (you do
+not get LuaJIT, and the project is younger).
+
+It supports owned GC-rooted handles (`Value`, `Table`, `Function`,
+`LuaString`, `AnyUserData`), closure callbacks (`create_function` /
+`create_function_mut`), re-entrant callbacks, conversion traits (`IntoLua`,
+`FromLua`, `IntoLuaMulti`, `FromLuaMulti`), and `UserData` for binding Rust
+types with methods, fields, and metamethods (a `#[derive(LuaUserData)]` macro
+generates the boilerplate).
 
 ```rust
 use lua_rs_runtime::{Lua, Result};
 
 fn main() -> Result<()> {
     let lua = Lua::new();
-    let globals = lua.globals();
-
-    let f = lua.create_function(|_, name: String| {
-        Ok(format!("hello, {name}"))
-    })?;
-    globals.set("greet", f)?;
+    let f = lua.create_function(|_, name: String| Ok(format!("hello, {name}")))?;
+    lua.globals().set("greet", f)?;
 
     let out: String = lua.load(r#"return greet("lua-rs")"#).eval()?;
     assert_eq!(out, "hello, lua-rs");
@@ -64,12 +67,34 @@ fn main() -> Result<()> {
 }
 ```
 
-The implementation status, soundness model, verification evidence, and future
-work are documented in
-[docs/EMBEDDING_API_IMPLEMENTATION.md](docs/EMBEDDING_API_IMPLEMENTATION.md).
-The original design rationale and build spec live in
-[docs/design/EMBEDDING_API.md](docs/design/EMBEDDING_API.md) and
-[docs/design/EMBEDDING_API_SPEC.md](docs/design/EMBEDDING_API_SPEC.md).
+### Scope: lending non-`'static` borrows
+
+`Lua::scope` lends Lua a value that lives on the Rust stack for one call (the
+classic case is a game engine's `&mut World`). The borrow is invalidated when
+the scope returns, so a script that stashes a handle and uses it later gets a
+clean Lua error instead of touching freed memory.
+
+```rust
+lua.scope(|s| {
+    let world = s.create_userdata_ref_mut(&lua, &mut my_world)?;
+    lua.globals().set("world", &world)?;
+    lua.load("world:spawn('player')").exec()
+})?;
+```
+
+`Scope::create_function` does the same for closures that capture non-`'static`
+borrows, and `AnyUserData::delegate` returns a sub-userdata that re-borrows a
+field of its parent per call, so an `App -> World -> Component` chain stays a
+chain of short borrows. Runnable example:
+[`cargo run -p lua-rs-runtime --example scope_world`](crates/lua-rs-runtime/examples/scope_world.rs).
+
+For a worked Bevy 0.18 integration (scripts driving a real ECS, native and in
+the browser), see [bevy-lua-rs-starter](https://github.com/ianm199/bevy-lua-rs-starter)
+([live demo](https://ianm199.github.io/bevy-lua-rs-starter/)).
+
+Implementation status, soundness model, and verification evidence are in
+[docs/EMBEDDING_API_IMPLEMENTATION.md](docs/EMBEDDING_API_IMPLEMENTATION.md);
+design rationale in [docs/design/EMBEDDING_API.md](docs/design/EMBEDDING_API.md).
 
 ## Conformance
 
@@ -181,9 +206,9 @@ LUA_PATH="/tmp/rocks/share/lua/5.4/?.lua;;" lua-rs -e 'print(require("inspect")(
 - Get to full safety: drive the remaining `unsafe` (in the garbage collector and
   the dynamic-library loader) to zero, so the whole runtime is safe Rust.
 - Reach performance parity with reference Lua 5.4.
-- Stabilize and broaden the Rust embedding API: richer mlua parity, scoped
-  handles, better examples, Miri/fuzz coverage, sandbox presets, and future
-  async/fuel hooks. See [docs/FUTURE_GOALS.md](docs/FUTURE_GOALS.md) and
+- Broaden the Rust embedding API: richer mlua parity, by-value non-`'static`
+  userdata, more Miri/fuzz coverage, sandbox presets, and future async/fuel
+  hooks. See [docs/FUTURE_GOALS.md](docs/FUTURE_GOALS.md) and
   [docs/EMBEDDING_API_IMPLEMENTATION.md](docs/EMBEDDING_API_IMPLEMENTATION.md).
 
 ## Project layout

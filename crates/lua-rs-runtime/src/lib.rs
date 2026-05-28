@@ -2641,6 +2641,155 @@ mod tests {
         );
     }
 
+    /// The composed `__index` allocates two or three temporary external roots
+    /// per call (for the per-call `Table`/`Function` views) and relies on
+    /// `pending_external_unroots` being flushed by the next `with_state`. If
+    /// that plumbing ever breaks, every field read silently leaks a root. Hammer
+    /// it in a loop and assert `external_roots.len()` returns to baseline.
+    #[test]
+    fn composed_dispatch_does_not_accumulate_external_roots() {
+        struct Probe {
+            x: i64,
+        }
+        impl UserData for Probe {
+            fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+                m.add_field_method_get("x", |_, this| Ok(this.x));
+            }
+        }
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("v", lua.create_userdata(Probe { x: 1 }).unwrap())
+            .unwrap();
+        let baseline = external_root_count(&lua);
+
+        for _ in 0..1000 {
+            let _: i64 = lua.load("return v.x").eval().unwrap();
+        }
+        // The last iteration's temp roots queue for unroot on exit of its
+        // outer with_state; force one more so the flush definitely runs.
+        let after = external_root_count(&lua);
+
+        assert!(
+            after <= baseline + 2,
+            "external roots grew under composed __index churn: baseline={baseline} after={after}"
+        );
+    }
+
+    /// A Rust userdata method takes a Lua `Function` and calls it. Exercises
+    /// the Weak<LuaInner> upgrade plus the `active_state` reentrancy pointer
+    /// together. The bms-lua-rs reflection bridge hits this shape on every
+    /// component access; an existing test covers `create_function` reentry but
+    /// not the userdata-method path.
+    #[test]
+    fn userdata_method_can_reenter_lua_from_callback() {
+        struct Calc;
+        impl UserData for Calc {
+            fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+                m.add_method("apply", |_lua, _this, f: Function| {
+                    let r: i64 = f.call(7_i64)?;
+                    Ok(r + 1)
+                });
+            }
+        }
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("c", lua.create_userdata(Calc).unwrap())
+            .unwrap();
+        let r: i64 = lua
+            .load("return c:apply(function(n) return n * 2 end)")
+            .eval()
+            .unwrap();
+        assert_eq!(r, 15);
+    }
+
+    /// Two `Lua::new()` instances must each build their own metatable for the
+    /// same Rust type. Counts calls to `add_methods` across both states and
+    /// asserts each state builds independently while still de-duplicating
+    /// within its own scope.
+    #[test]
+    fn metatable_cache_is_per_lua_state() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+        struct Marker {
+            v: i64,
+        }
+        impl UserData for Marker {
+            fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+                BUILDS.fetch_add(1, Ordering::SeqCst);
+                m.add_method("v", |_, this, ()| Ok(this.v));
+            }
+        }
+
+        let start = BUILDS.load(Ordering::SeqCst);
+
+        let lua_a = Lua::new();
+        let _a1 = lua_a.create_userdata(Marker { v: 1 }).unwrap();
+        assert_eq!(BUILDS.load(Ordering::SeqCst) - start, 1, "state A first build");
+        let _a2 = lua_a.create_userdata(Marker { v: 2 }).unwrap();
+        assert_eq!(BUILDS.load(Ordering::SeqCst) - start, 1, "state A reuses cache");
+
+        let lua_b = Lua::new();
+        let _b1 = lua_b.create_userdata(Marker { v: 3 }).unwrap();
+        assert_eq!(BUILDS.load(Ordering::SeqCst) - start, 2, "state B is independent");
+
+        let _a3 = lua_a.create_userdata(Marker { v: 4 }).unwrap();
+        assert_eq!(BUILDS.load(Ordering::SeqCst) - start, 2, "state A still cached");
+    }
+
+    /// Field beats method when names collide. The composed `__index` looks up
+    /// field getters before the method table; pin that order so a future
+    /// refactor of the dispatch closure does not silently swap precedence.
+    #[test]
+    fn field_shadows_method_of_same_name() {
+        struct Shadow {
+            x: i64,
+        }
+        impl UserData for Shadow {
+            fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+                m.add_field_method_get("x", |_, this| Ok(this.x));
+                m.add_method("x", |_, _this, ()| Ok(999_i64));
+            }
+        }
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("v", lua.create_userdata(Shadow { x: 42 }).unwrap())
+            .unwrap();
+
+        let r: i64 = lua.load("return v.x").eval().unwrap();
+        assert_eq!(r, 42, "the field getter should beat the method of the same name");
+    }
+
+    /// Direct Lua-side proof the cache is real: two userdata of the same type
+    /// share the same metatable object as observed by `getmetatable`. If the
+    /// cache regressed to per-value metatables this returns false.
+    #[test]
+    fn cached_metatable_is_shared_across_values_in_lua() {
+        struct Twin;
+        impl UserData for Twin {
+            fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+                m.add_method("ping", |_, _this, ()| Ok(1_i64));
+            }
+        }
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("a", lua.create_userdata(Twin).unwrap())
+            .unwrap();
+        lua.globals()
+            .set("b", lua.create_userdata(Twin).unwrap())
+            .unwrap();
+
+        let same: bool = lua
+            .load("return getmetatable(a) == getmetatable(b)")
+            .eval()
+            .unwrap();
+        assert!(same, "cached metatable must be shared across values of the same type");
+    }
+
     #[test]
     fn fields_and_methods_coexist() {
         struct Vec2 {

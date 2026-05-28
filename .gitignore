@@ -36,3 +36,4 @@ harness/bench/profiles/
 
 # Harness loop state (process state, not artifacts)
 harness/loop/state/
+.claude/worktrees/

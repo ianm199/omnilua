@@ -64,6 +64,7 @@ use std::fmt;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::ptr::NonNull;
 use std::rc::Rc;
 
 use lua_stdlib::auxlib::load_buffer;
@@ -250,11 +251,308 @@ struct LuaInner {
     /// rooted in the state's external-root set, so it survives even when no
     /// instance currently exists, and frees with the state.
     userdata_metatables: RefCell<HashMap<TypeId, GcRef<RawLuaTable>>>,
+    /// Same shape as `userdata_metatables` but for the `Scope::create_userdata`
+    /// path: the method closures here downcast `host_value` to
+    /// `Rc<ScopedCell<T>>` and check the cell's validity flag before
+    /// dereferencing the pointer it holds.
+    userdata_scoped_metatables: RefCell<HashMap<TypeId, GcRef<RawLuaTable>>>,
 }
 
 struct UserDataCell<T> {
     value: RefCell<T>,
 }
+
+// ---------------------------------------------------------------------------
+// Scope: pass non-`'static` borrows into Lua safely.
+//
+// `Scope::create_userdata::<T>(&mut data)` stores a raw pointer to `data` in a
+// `ScopedCell<T>` and registers the cell with the scope. While the scope is
+// alive the cell's pointer is dereferenced (validity-checked) on every method
+// call from Lua. When the scope drops, every registered cell's pointer is set
+// to `None`, so any leaked userdata calls return a clean Lua error instead of
+// using-after-the-borrow-ended.
+//
+// Safety model:
+// - The raw pointer's borrow originates from `&mut data`, whose lifetime is
+//   tied to the scope's lifetime via `&'scope mut T`. The borrow checker holds
+//   the borrow alive for the full scope body.
+// - Re-entrant access (a Lua callback that fires another callback on the same
+//   userdata) is rejected at runtime via `ScopedCell::borrow`'s shared/exclusive
+//   counter, mirroring `RefCell`.
+// - On scope drop, callbacks have already returned (they run synchronously
+//   inside the scope body), so `invalidate` only nulls the pointer; no
+//   concurrent dereference can be in progress.
+
+/// Holder for a borrowed Rust value passed into Lua via [`Scope::create_userdata`].
+///
+/// Generic over `T: 'static` so it satisfies the existing `UserData: 'static`
+/// requirement and `Any`-based downcast lookup; the actual borrow lifetime is
+/// erased into a raw pointer and re-checked on every access.
+struct ScopedCell<T: 'static> {
+    ptr: Cell<Option<NonNull<T>>>,
+    /// Same encoding as `RefCell`: positive = shared borrows, negative = one
+    /// exclusive borrow, zero = unborrowed.
+    borrow: Cell<isize>,
+}
+
+impl<T: 'static> ScopedCell<T> {
+    fn new(data: &mut T) -> Self {
+        Self {
+            ptr: Cell::new(Some(NonNull::from(data))),
+            borrow: Cell::new(0),
+        }
+    }
+
+    fn try_borrow(&self) -> Result<ScopedRef<'_, T>> {
+        let b = self.borrow.get();
+        if b < 0 {
+            return Err(LuaError::runtime(format_args!(
+                "scoped userdata is already mutably borrowed"
+            )));
+        }
+        let ptr = self.ptr.get().ok_or_else(|| {
+            LuaError::runtime(format_args!(
+                "scoped userdata is no longer valid (its scope has ended)"
+            ))
+        })?;
+        self.borrow.set(b + 1);
+        Ok(ScopedRef { cell: self, ptr })
+    }
+
+    fn try_borrow_mut(&self) -> Result<ScopedRefMut<'_, T>> {
+        let b = self.borrow.get();
+        if b != 0 {
+            return Err(LuaError::runtime(format_args!(
+                "scoped userdata is already borrowed"
+            )));
+        }
+        let ptr = self.ptr.get().ok_or_else(|| {
+            LuaError::runtime(format_args!(
+                "scoped userdata is no longer valid (its scope has ended)"
+            ))
+        })?;
+        self.borrow.set(-1);
+        Ok(ScopedRefMut { cell: self, ptr })
+    }
+}
+
+/// Trait-object handle a `Scope` uses to invalidate any cell type on drop
+/// without knowing its `T`.
+trait ScopeInvalidate {
+    fn invalidate(&self);
+}
+
+impl<T: 'static> ScopeInvalidate for ScopedCell<T> {
+    fn invalidate(&self) {
+        // Safe only because callbacks have all returned by the time `Scope`
+        // drops: they run synchronously inside the closure body. If a callback
+        // is somehow mid-execution, its `ScopedRef`/`ScopedRefMut` guard still
+        // has the raw pointer copied locally and dereferences it; the next
+        // `try_borrow*` after invalidate sees `ptr = None` and errors cleanly.
+        self.ptr.set(None);
+    }
+}
+
+struct ScopedRef<'a, T: 'static> {
+    cell: &'a ScopedCell<T>,
+    ptr: NonNull<T>,
+}
+
+impl<'a, T: 'static> Drop for ScopedRef<'a, T> {
+    fn drop(&mut self) {
+        self.cell.borrow.set(self.cell.borrow.get() - 1);
+    }
+}
+
+impl<'a, T: 'static> Deref for ScopedRef<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: pointer was obtained from a live `&mut T` (or `&mut T`-derived)
+        // value whose lifetime spans the scope. Re-entrant borrow conflicts are
+        // rejected by `borrow` above. The pointer is set to `None` only when
+        // `invalidate` runs, which can only happen after `Scope` drops; by then
+        // no `ScopedRef` can exist because callbacks have returned.
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+struct ScopedRefMut<'a, T: 'static> {
+    cell: &'a ScopedCell<T>,
+    ptr: NonNull<T>,
+}
+
+impl<'a, T: 'static> Drop for ScopedRefMut<'a, T> {
+    fn drop(&mut self) {
+        self.cell.borrow.set(0);
+    }
+}
+
+impl<'a, T: 'static> Deref for ScopedRefMut<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: same as `ScopedRef::deref`.
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl<'a, T: 'static> DerefMut for ScopedRefMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: same as `ScopedRef::deref`, plus the cell's `borrow == -1`
+        // ensures no other shared or exclusive borrow is currently outstanding.
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+/// Handle passed to the closure body of [`Lua::scope`].
+///
+/// `Scope::create_userdata` produces an [`AnyUserData`] whose backing storage
+/// is a borrow you provide; when the scope drops every cell it created is
+/// invalidated. Any later Lua call that reaches one of those userdatas fails
+/// with a clean error rather than touching freed memory.
+pub struct Scope<'scope> {
+    invalidators: RefCell<Vec<Rc<dyn ScopeInvalidate>>>,
+    _phantom: std::marker::PhantomData<&'scope mut ()>,
+}
+
+impl<'scope> Scope<'scope> {
+    fn new() -> Self {
+        Self {
+            invalidators: RefCell::new(Vec::new()),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Wrap a `&mut T` borrow as a Lua userdata that lives for the duration of
+    /// this scope. Any call from Lua to the returned userdata after the scope
+    /// ends fails with a clean Lua runtime error instead of touching the
+    /// freed borrow.
+    ///
+    /// Naming mirrors mlua's `Scope::create_userdata_ref_mut`. The bare
+    /// `create_userdata` name on `Scope` is intentionally reserved for the
+    /// future by-value, non-`'static` constructor (mlua's
+    /// `Scope::create_userdata<T: UserData + 'env>(T)`), tracked as a
+    /// follow-up to lua-rs#27.
+    pub fn create_userdata_ref_mut<T>(&self, lua: &Lua, data: &'scope mut T) -> Result<AnyUserData>
+    where
+        T: UserData,
+    {
+        let cell = Rc::new(ScopedCell::<T>::new(data));
+        self.invalidators
+            .borrow_mut()
+            .push(cell.clone() as Rc<dyn ScopeInvalidate>);
+        lua.create_scoped_userdata::<T>(cell)
+    }
+
+    /// Build a Lua [`Function`] from a non-`'static` Rust closure. The closure
+    /// is owned by a [`ScopedFnCell`] that the scope holds; once the scope
+    /// drops, the cell drops the closure and any later Lua call that reaches
+    /// the returned function fails cleanly with "no longer valid" instead of
+    /// touching the released captures.
+    ///
+    /// This is the function counterpart to [`Self::create_userdata`] — pair
+    /// them when you want to hand Lua a `&mut World` plus a few closures that
+    /// also borrow from the same stack frame.
+    pub fn create_function<A, R, F>(&self, lua: &Lua, func: F) -> Result<Function>
+    where
+        A: FromLuaMulti + 'static,
+        R: IntoLuaMulti + 'static,
+        F: Fn(&Lua, A) -> Result<R> + 'scope,
+    {
+        let adapter: Box<dyn Fn(&Lua, Vec<Value>) -> Result<Vec<Value>> + 'scope> =
+            Box::new(move |lua, args| {
+                let args = A::from_lua_multi(args, lua)?;
+                let returns = func(lua, args)?;
+                returns.into_lua_multi(lua)
+            });
+        self.install_function(lua, adapter)
+    }
+
+    /// Like [`Self::create_function`] but accepts an `FnMut`. Mirrors
+    /// [`Lua::create_function_mut`]: re-entrant calls into the same closure
+    /// are rejected with an "already borrowed" runtime error rather than
+    /// producing aliasing `&mut` captures.
+    pub fn create_function_mut<A, R, F>(&self, lua: &Lua, func: F) -> Result<Function>
+    where
+        A: FromLuaMulti + 'static,
+        R: IntoLuaMulti + 'static,
+        F: FnMut(&Lua, A) -> Result<R> + 'scope,
+    {
+        let func = RefCell::new(func);
+        self.create_function(lua, move |lua, args| {
+            let mut func = func.try_borrow_mut().map_err(|_| {
+                LuaError::runtime(format_args!("mutable Rust callback is already borrowed"))
+            })?;
+            func(lua, args)
+        })
+    }
+
+    /// Internal: launder the closure's `'scope` lifetime bound to `'static`
+    /// so the resulting cell can be held by a `'static` Lua callback, park
+    /// the box inside a [`ScopedFnCell`], and register that cell with the
+    /// scope so its closure is dropped on scope end.
+    fn install_function(
+        &self,
+        lua: &Lua,
+        adapter: Box<dyn Fn(&Lua, Vec<Value>) -> Result<Vec<Value>> + 'scope>,
+    ) -> Result<Function> {
+        // SAFETY: extending the trait-object lifetime bound from `'scope` to
+        // `'static` is sound here because the closure is owned by the
+        // [`ScopedFnCell`] we are about to build, that cell is registered in
+        // `self.invalidators`, and `Scope::drop` invokes `invalidate()` on
+        // every registered cell. `invalidate()` calls `take()` on the box,
+        // which drops the closure (and therefore its `'scope` captures)
+        // while `'scope` is still alive (we are mid-drop of `Scope`). After
+        // `invalidate()` the cell holds `None`, so any subsequent call sees
+        // "no longer valid" before it can reach a dangling capture.
+        let adapter_static: Box<dyn Fn(&Lua, Vec<Value>) -> Result<Vec<Value>>> =
+            unsafe { std::mem::transmute(adapter) };
+        let cell = Rc::new(ScopedFnCell {
+            boxed: RefCell::new(Some(adapter_static)),
+        });
+        self.invalidators
+            .borrow_mut()
+            .push(cell.clone() as Rc<dyn ScopeInvalidate>);
+        lua.create_scoped_function(cell)
+    }
+}
+
+impl<'scope> Drop for Scope<'scope> {
+    fn drop(&mut self) {
+        for inv in self.invalidators.borrow().iter() {
+            inv.invalidate();
+        }
+    }
+}
+
+/// Owns a scoped Rust closure on behalf of [`Scope`]. The closure is stored
+/// as `Box<dyn Fn(...)>` (lifetime laundered to `'static`); on scope drop the
+/// option is taken and the closure (with its `'scope` captures) is dropped.
+/// All later calls see `None` and return a clean Lua runtime error.
+struct ScopedFnCell {
+    boxed: RefCell<Option<Box<dyn Fn(&Lua, Vec<Value>) -> Result<Vec<Value>>>>>,
+}
+
+impl ScopedFnCell {
+    /// Dispatch the wrapped closure, or surface a clean error if the scope
+    /// already ended.
+    fn try_call(&self, lua: &Lua, args: Vec<Value>) -> Result<Vec<Value>> {
+        let guard = self.boxed.borrow();
+        let func = guard.as_deref().ok_or_else(|| {
+            LuaError::runtime(format_args!(
+                "scoped function is no longer valid (its scope has ended)"
+            ))
+        })?;
+        func(lua, args)
+    }
+}
+
+impl ScopeInvalidate for ScopedFnCell {
+    fn invalidate(&self) {
+        *self.boxed.borrow_mut() = None;
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 struct RustCallbackCell {
     function: LuaRustFunction,
@@ -334,6 +632,7 @@ impl Lua {
                 active_state: Cell::new(std::ptr::null_mut()),
                 pending_external_unroots: RefCell::new(Vec::new()),
                 userdata_metatables: RefCell::new(HashMap::new()),
+                userdata_scoped_metatables: RefCell::new(HashMap::new()),
             }),
         }
     }
@@ -694,6 +993,242 @@ impl Lua {
         })
     }
 
+    /// Run `f` with a fresh [`Scope`]; any [`AnyUserData`] created via the
+    /// scope is invalidated when `f` returns, so leaked references fail
+    /// cleanly instead of using-after-the-borrow-ended.
+    ///
+    /// ```
+    /// use lua_rs_runtime::{Lua, UserData, UserDataMethods};
+    ///
+    /// struct Counter { value: i64 }
+    ///
+    /// impl UserData for Counter {
+    ///     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+    ///         methods.add_method_mut("inc", |_lua, this, delta: i64| {
+    ///             this.value += delta;
+    ///             Ok(this.value)
+    ///         });
+    ///     }
+    /// }
+    ///
+    /// let lua = Lua::new();
+    /// let mut counter = Counter { value: 0 };
+    ///
+    /// lua.scope(|scope| {
+    ///     let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+    ///     lua.globals().set("c", &ud)?;
+    ///     lua.load("c:inc(5); c:inc(7)").exec()
+    /// }).unwrap();
+    ///
+    /// assert_eq!(counter.value, 12);
+    ///
+    /// // The script can stash the userdata on a global and try to use it
+    /// // later, but the call cleanly errors instead of touching the
+    /// // dropped `&mut counter`:
+    /// lua.scope(|scope| {
+    ///     let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+    ///     lua.globals().set("leaked", &ud)
+    /// }).unwrap();
+    /// assert!(lua.load("leaked:inc(1)").exec().is_err());
+    /// ```
+    pub fn scope<F, R>(&self, f: F) -> Result<R>
+    where
+        F: for<'scope> FnOnce(&Scope<'scope>) -> Result<R>,
+    {
+        let scope = Scope::new();
+        let result = f(&scope);
+        // `scope` drops here, invalidating every cell it created. After this
+        // point any Lua call that reaches a scoped userdata sees `ptr = None`
+        // and errors.
+        drop(scope);
+        result
+    }
+
+    /// Build (or reuse) the per-`TypeId` *scoped* metatable for `T` and attach
+    /// it to a fresh userdata whose `host_value` is the given `ScopedCell`.
+    fn create_scoped_userdata<T>(&self, cell: Rc<ScopedCell<T>>) -> Result<AnyUserData>
+    where
+        T: UserData,
+    {
+        let type_id = TypeId::of::<T>();
+        let cached = self
+            .inner
+            .userdata_scoped_metatables
+            .borrow()
+            .get(&type_id)
+            .cloned();
+        let metatable = match cached {
+            Some(mt) => mt,
+            None => {
+                let mut methods = UserDataMethodRegistry::<T>::new_scoped(self);
+                T::add_methods(&mut methods);
+                T::add_meta_methods(&mut methods);
+                let mt = methods.build_metatable()?;
+                self.inner
+                    .userdata_scoped_metatables
+                    .borrow_mut()
+                    .insert(type_id, mt.clone());
+                mt
+            }
+        };
+        self.attach_scoped_userdata::<T>(cell, metatable)
+    }
+
+    /// Same shape as [`Self::attach_userdata`] but the `host_value` is the
+    /// `ScopedCell` rather than a fresh `UserDataCell`.
+    fn attach_scoped_userdata<T>(
+        &self,
+        cell: Rc<ScopedCell<T>>,
+        metatable: GcRef<RawLuaTable>,
+    ) -> Result<AnyUserData>
+    where
+        T: UserData,
+    {
+        let host_value: Rc<dyn Any> = cell;
+        let root = self.with_state(|state| {
+            let userdata = with_heap_guard(state, || {
+                GcRef::new(RawLuaUserData {
+                    data: Box::new([]),
+                    uv: Vec::new(),
+                    metatable: RefCell::new(None),
+                    host_value: RefCell::new(None),
+                })
+            });
+            userdata.set_metatable(Some(metatable));
+            userdata.set_host_value(Some(host_value.clone()));
+            let key = state.external_root_value(RawLuaValue::UserData(userdata));
+            RootedValue {
+                lua: self.clone(),
+                key,
+            }
+        });
+        Ok(AnyUserData {
+            root,
+            host_value: Some(host_value),
+        })
+    }
+
+    fn scoped_userdata_cell<T: 'static>(
+        &self,
+        userdata: &AnyUserData,
+    ) -> Result<Rc<ScopedCell<T>>> {
+        if !Rc::ptr_eq(&self.inner, &userdata.root.lua.inner) {
+            return Err(LuaError::runtime(format_args!(
+                "Lua userdata belongs to a different state"
+            )));
+        }
+        let host = userdata.host_value.as_ref().ok_or_else(|| {
+            LuaError::runtime(format_args!("missing Rust userdata payload"))
+        })?;
+        Rc::clone(host)
+            .downcast::<ScopedCell<T>>()
+            .map_err(|_| LuaError::runtime(format_args!("scoped userdata type mismatch")))
+    }
+
+    /// Scoped variants of the four `create_userdata_method*` constructors. Each
+    /// downcasts `host_value` to `Rc<ScopedCell<T>>`, borrows the cell, and
+    /// calls the user closure with the dereferenced pointer. The `Weak<LuaInner>`
+    /// capture pattern from v0.0.9 is preserved.
+    fn create_scoped_userdata_method<T, A, R, F>(&self, method: F) -> Result<Function>
+    where
+        T: UserData,
+        A: FromLuaMulti + 'static,
+        R: IntoLuaMulti + 'static,
+        F: Fn(&Lua, &T, A) -> Result<R> + 'static,
+    {
+        let lua_weak = Rc::downgrade(&self.inner);
+        let callable: LuaRustFunction = Rc::new(move |state| {
+            let lua = match lua_weak.upgrade() {
+                Some(inner) => Lua { inner },
+                None => {
+                    return Err(LuaError::runtime(format_args!(
+                        "Lua callback fired after the state was dropped"
+                    )))
+                }
+            };
+            match catch_unwind(AssertUnwindSafe(|| {
+                let (userdata, args) = callback_userdata_args(state, &lua)?;
+                let args = A::from_lua_multi(args, &lua)?;
+                let cell = lua.scoped_userdata_cell::<T>(&userdata)?;
+                let borrow = cell.try_borrow()?;
+                let returns = method(&lua, &*borrow, args)?;
+                let returns = returns.into_lua_multi(&lua)?;
+                push_callback_returns(state, &lua, returns)
+            })) {
+                Ok(result) => result,
+                Err(_) => Err(LuaError::runtime(format_args!(
+                    "Rust userdata method panicked"
+                ))),
+            }
+        });
+        self.create_registered_function(callable)
+    }
+
+    fn create_scoped_userdata_method_mut<T, A, R, F>(&self, method: F) -> Result<Function>
+    where
+        T: UserData,
+        A: FromLuaMulti + 'static,
+        R: IntoLuaMulti + 'static,
+        F: Fn(&Lua, &mut T, A) -> Result<R> + 'static,
+    {
+        let lua_weak = Rc::downgrade(&self.inner);
+        let callable: LuaRustFunction = Rc::new(move |state| {
+            let lua = match lua_weak.upgrade() {
+                Some(inner) => Lua { inner },
+                None => {
+                    return Err(LuaError::runtime(format_args!(
+                        "Lua callback fired after the state was dropped"
+                    )))
+                }
+            };
+            match catch_unwind(AssertUnwindSafe(|| {
+                let (userdata, args) = callback_userdata_args(state, &lua)?;
+                let args = A::from_lua_multi(args, &lua)?;
+                let cell = lua.scoped_userdata_cell::<T>(&userdata)?;
+                let mut borrow = cell.try_borrow_mut()?;
+                let returns = method(&lua, &mut *borrow, args)?;
+                let returns = returns.into_lua_multi(&lua)?;
+                push_callback_returns(state, &lua, returns)
+            })) {
+                Ok(result) => result,
+                Err(_) => Err(LuaError::runtime(format_args!(
+                    "Rust userdata method panicked"
+                ))),
+            }
+        });
+        self.create_registered_function(callable)
+    }
+
+    /// Materialize a [`Function`] whose body dispatches through a
+    /// [`ScopedFnCell`]. The cell is closed over by the `LuaRustFunction`
+    /// trampoline; reads of `cell.ptr` are guarded inside `try_call`, so once
+    /// the originating [`Scope`] drops, every subsequent invocation surfaces
+    /// "no longer valid" instead of touching the released closure.
+    fn create_scoped_function(&self, cell: Rc<ScopedFnCell>) -> Result<Function> {
+        let lua_weak = Rc::downgrade(&self.inner);
+        let callable: LuaRustFunction = Rc::new(move |state| {
+            let lua = match lua_weak.upgrade() {
+                Some(inner) => Lua { inner },
+                None => {
+                    return Err(LuaError::runtime(format_args!(
+                        "Lua callback fired after the state was dropped"
+                    )))
+                }
+            };
+            match catch_unwind(AssertUnwindSafe(|| {
+                let args = callback_args(state, &lua)?;
+                let returns = cell.try_call(&lua, args)?;
+                push_callback_returns(state, &lua, returns)
+            })) {
+                Ok(result) => result,
+                Err(_) => Err(LuaError::runtime(format_args!(
+                    "scoped Rust callback panicked"
+                ))),
+            }
+        });
+        self.create_registered_function(callable)
+    }
+
     /// Run a full garbage-collection cycle.
     pub fn gc_collect(&self) {
         self.with_state(|state| state.gc().full_collect());
@@ -1045,6 +1580,41 @@ impl AnyUserData {
         let mut value = self.borrow_mut::<T>()?;
         Ok(f(&mut value))
     }
+
+    /// Downcast `host_value` to a [`ScopedCell<T>`] reference. Mirrors
+    /// [`Self::host_cell`] but for userdata created via [`Scope::create_userdata`].
+    fn host_scoped_cell<T: 'static>(&self) -> Result<&ScopedCell<T>> {
+        let host = self
+            .host_value
+            .as_deref()
+            .ok_or_else(|| LuaError::runtime(format_args!("missing Rust userdata payload")))?;
+        host.downcast_ref::<ScopedCell<T>>()
+            .ok_or_else(|| LuaError::runtime(format_args!("scoped userdata type mismatch")))
+    }
+
+    /// Rust-side shared borrow of a [`Scope::create_userdata`] payload. Routes
+    /// through the scoped cell, so calls after the scope has dropped fail with
+    /// the same "no longer valid" error a Lua method call would see, instead
+    /// of returning a stale reference.
+    pub fn scoped_borrow<T, R>(&self, f: impl FnOnce(&T) -> R) -> Result<R>
+    where
+        T: 'static,
+    {
+        let cell = self.host_scoped_cell::<T>()?;
+        let guard = cell.try_borrow()?;
+        Ok(f(&*guard))
+    }
+
+    /// Rust-side exclusive borrow of a [`Scope::create_userdata`] payload. Same
+    /// invalidation guarantees as [`Self::scoped_borrow`].
+    pub fn scoped_borrow_mut<T, R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R>
+    where
+        T: 'static,
+    {
+        let cell = self.host_scoped_cell::<T>()?;
+        let mut guard = cell.try_borrow_mut()?;
+        Ok(f(&mut *guard))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1229,8 +1799,19 @@ fn root_for_state_lifetime(state: &mut LuaState, value: RawLuaValue) {
     let _ = state.external_root_value(value);
 }
 
+/// Whether the registry wires methods through `create_userdata_method*` (owned
+/// `T` in a `RefCell`) or through `create_scoped_userdata_method*`
+/// (`Rc<ScopedCell<T>>` with a validity-checked pointer). The build_metatable
+/// step is identical for both.
+#[derive(Clone, Copy)]
+enum RegistryMode {
+    Owned,
+    Scoped,
+}
+
 struct UserDataMethodRegistry<'lua, T: UserData> {
     lua: &'lua Lua,
+    mode: RegistryMode,
     methods: Vec<(String, Function)>,
     meta_methods: Vec<(MetaMethod, Function)>,
     fields_get: Vec<(String, Function)>,
@@ -1241,8 +1822,17 @@ struct UserDataMethodRegistry<'lua, T: UserData> {
 
 impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
     fn new(lua: &'lua Lua) -> Self {
+        Self::with_mode(lua, RegistryMode::Owned)
+    }
+
+    fn new_scoped(lua: &'lua Lua) -> Self {
+        Self::with_mode(lua, RegistryMode::Scoped)
+    }
+
+    fn with_mode(lua: &'lua Lua, mode: RegistryMode) -> Self {
         Self {
             lua,
+            mode,
             methods: Vec::new(),
             meta_methods: Vec::new(),
             fields_get: Vec::new(),
@@ -1436,7 +2026,10 @@ impl<T: UserData> UserDataMethods<T> for UserDataMethodRegistry<'_, T> {
         F: Fn(&Lua, &T, A) -> Result<R> + 'static,
     {
         let name = name.to_string();
-        let result = self.lua.create_userdata_method(method);
+        let result = match self.mode {
+            RegistryMode::Owned => self.lua.create_userdata_method(method),
+            RegistryMode::Scoped => self.lua.create_scoped_userdata_method(method),
+        };
         self.record(result, move |this, function| {
             this.methods.push((name, function));
         });
@@ -1449,7 +2042,10 @@ impl<T: UserData> UserDataMethods<T> for UserDataMethodRegistry<'_, T> {
         F: Fn(&Lua, &mut T, A) -> Result<R> + 'static,
     {
         let name = name.to_string();
-        let result = self.lua.create_userdata_method_mut(method);
+        let result = match self.mode {
+            RegistryMode::Owned => self.lua.create_userdata_method_mut(method),
+            RegistryMode::Scoped => self.lua.create_scoped_userdata_method_mut(method),
+        };
         self.record(result, move |this, function| {
             this.methods.push((name, function));
         });
@@ -1461,7 +2057,10 @@ impl<T: UserData> UserDataMethods<T> for UserDataMethodRegistry<'_, T> {
         R: IntoLuaMulti + 'static,
         F: Fn(&Lua, &T, A) -> Result<R> + 'static,
     {
-        let result = self.lua.create_userdata_method(method);
+        let result = match self.mode {
+            RegistryMode::Owned => self.lua.create_userdata_method(method),
+            RegistryMode::Scoped => self.lua.create_scoped_userdata_method(method),
+        };
         self.record(result, move |this, function| {
             this.meta_methods.push((metamethod, function));
         });
@@ -1473,7 +2072,10 @@ impl<T: UserData> UserDataMethods<T> for UserDataMethodRegistry<'_, T> {
         R: IntoLuaMulti + 'static,
         F: Fn(&Lua, &mut T, A) -> Result<R> + 'static,
     {
-        let result = self.lua.create_userdata_method_mut(method);
+        let result = match self.mode {
+            RegistryMode::Owned => self.lua.create_userdata_method_mut(method),
+            RegistryMode::Scoped => self.lua.create_scoped_userdata_method_mut(method),
+        };
         self.record(result, move |this, function| {
             this.meta_methods.push((metamethod, function));
         });
@@ -1485,9 +2087,11 @@ impl<T: UserData> UserDataMethods<T> for UserDataMethodRegistry<'_, T> {
         F: Fn(&Lua, &T) -> Result<R> + 'static,
     {
         let name = name.to_string();
-        let result = self
-            .lua
-            .create_userdata_method(move |lua, this, ()| getter(lua, this));
+        let wrapped = move |lua: &Lua, this: &T, ()| getter(lua, this);
+        let result = match self.mode {
+            RegistryMode::Owned => self.lua.create_userdata_method(wrapped),
+            RegistryMode::Scoped => self.lua.create_scoped_userdata_method(wrapped),
+        };
         self.record(result, move |this, function| {
             this.fields_get.push((name, function));
         });
@@ -1499,9 +2103,11 @@ impl<T: UserData> UserDataMethods<T> for UserDataMethodRegistry<'_, T> {
         F: Fn(&Lua, &mut T, A) -> Result<()> + 'static,
     {
         let name = name.to_string();
-        let result = self
-            .lua
-            .create_userdata_method_mut(move |lua, this, arg: A| setter(lua, this, arg));
+        let wrapped = move |lua: &Lua, this: &mut T, arg: A| setter(lua, this, arg);
+        let result = match self.mode {
+            RegistryMode::Owned => self.lua.create_userdata_method_mut(wrapped),
+            RegistryMode::Scoped => self.lua.create_scoped_userdata_method_mut(wrapped),
+        };
         self.record(result, move |this, function| {
             this.fields_set.push((name, function));
         });
@@ -3042,5 +3648,932 @@ mod tests {
             .eval()
             .expect("triple returns should convert");
         assert_eq!(triple, (1, 2, 3));
+    }
+
+    /// Pull the human-readable message out of a `LuaError::Runtime(LuaValue::Str)`.
+    /// The default `Display` for `LuaError` just defers to `Debug`, which prints
+    /// `Runtime(Str(GcRef(Gc(0x…))))` for runtime errors that were raised through
+    /// Lua. The actual string lives behind the GcRef; this helper digs it out so
+    /// assertions can check the message text directly.
+    fn runtime_error_message(err: &LuaError) -> String {
+        match err {
+            LuaError::Runtime(v) | LuaError::Syntax(v) => match v {
+                RawLuaValue::Str(s) => String::from_utf8_lossy(s.as_bytes()).into_owned(),
+                other => format!("{other:?}"),
+            },
+            other => format!("{other:?}"),
+        }
+    }
+
+    /// Helper userdata for scope tests: carries a single mutable field so a
+    /// `&mut Counter` borrow handed to Lua can be observed from Rust after the
+    /// scope ends. Distinct from the module-level `Counter` only to keep the
+    /// owned-vs-scoped paths from sharing fixtures.
+    struct ScopedCounter {
+        value: i64,
+        calls: Cell<u32>,
+    }
+
+    impl UserData for ScopedCounter {
+        fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+            methods.add_method("get", |_lua, this, ()| {
+                this.calls.set(this.calls.get() + 1);
+                Ok(this.value)
+            });
+            methods.add_method_mut("inc", |_lua, this, delta: i64| {
+                this.value += delta;
+                Ok(this.value)
+            });
+            methods.add_method("calls", |_lua, this, ()| Ok(this.calls.get() as i64));
+            methods.add_method("call_get_via_global", |lua, _this, ()| {
+                lua.load("return c:get()").eval::<i64>()
+            });
+            methods.add_method_mut("inc_via_global", |lua, this, ()| {
+                this.value += 1;
+                lua.load("return c:get()").eval::<i64>()
+            });
+        }
+    }
+
+    struct ScopedBag {
+        value: i64,
+    }
+
+    impl UserData for ScopedBag {
+        fn add_meta_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+            methods.add_meta_method(MetaMethod::Index, |_lua, this, key: String| {
+                if key == "value" {
+                    Ok(Value::Integer(this.value))
+                } else {
+                    Ok(Value::Nil)
+                }
+            });
+            methods.add_meta_method_mut(
+                MetaMethod::NewIndex,
+                |_lua, this, (key, value): (String, i64)| {
+                    if key != "value" {
+                        return Err(LuaError::runtime(format_args!("unknown property")));
+                    }
+                    this.value = value;
+                    Ok(())
+                },
+            );
+        }
+    }
+
+    struct ScopedFielded {
+        n: i64,
+    }
+
+    impl UserData for ScopedFielded {
+        fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+            methods.add_field_method_get("n", |_lua, this| Ok(this.n));
+            methods.add_field_method_set("n", |_lua, this, new: i64| {
+                this.n = new;
+                Ok(())
+            });
+        }
+    }
+
+    /// Smoke test for [`Lua::scope`]: a `&mut ScopedCounter` borrow lives on
+    /// the Rust stack, gets handed to Lua as a userdata for the duration of a
+    /// scope body, and the original is mutated through it.
+    #[test]
+    fn scope_userdata_dispatches_method_calls_against_borrow() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 10,
+            calls: Cell::new(0),
+        };
+
+        let observed: i64 = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                lua.globals().set("c", &ud)?;
+                lua.load("return c:get()").eval::<i64>()
+            })
+            .expect("scope body should succeed");
+        assert_eq!(observed, 10);
+        assert_eq!(counter.value, 10);
+        assert_eq!(counter.calls.get(), 1);
+    }
+
+    /// Mutations through a scoped `&mut T` method must be visible to the Rust
+    /// owner after the scope returns. This is the central reason for the API:
+    /// `&mut World` etc. need to round-trip cleanly.
+    #[test]
+    fn scope_userdata_mut_method_propagates_to_external_borrow() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 0,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+            lua.globals().set("c", &ud)?;
+            lua.load("c:inc(5); c:inc(7)").exec()
+        })
+        .expect("scope body should succeed");
+        assert_eq!(counter.value, 12);
+    }
+
+    /// Headline safety property: any AnyUserData that leaks past its scope
+    /// must fail cleanly (Lua runtime error), not touch the freed `&mut` slot.
+    /// We persist the leaked userdata on `globals` precisely to model the
+    /// adversarial case from the issue: a script squirrels away a `&mut World`
+    /// and tries to use it later.
+    #[test]
+    fn scope_userdata_invalidated_after_scope_returns_runtime_error() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 99,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+            lua.globals().set("leaked", &ud)?;
+            Ok(())
+        })
+        .expect("scope body should succeed");
+
+        let err = lua
+            .load("return leaked:get()")
+            .eval::<i64>()
+            .expect_err("scoped userdata must be unusable after scope ends");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("no longer valid") || msg.contains("scope has ended"),
+            "expected invalidation error, got: {msg}"
+        );
+    }
+
+    /// Even a `pcall`-wrapped post-scope invocation must surface a Lua-level
+    /// error rather than crashing. Models the case where the script tries to
+    /// recover from the failure.
+    #[test]
+    fn scope_userdata_invalidated_is_recoverable_via_pcall() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 5,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+            lua.globals().set("leaked", &ud)?;
+            Ok(())
+        })
+        .expect("scope body should succeed");
+
+        let (ok, _err_msg): (bool, String) = lua
+            .load("local ok, e = pcall(function() return leaked:get() end); return ok, tostring(e)")
+            .eval()
+            .expect("pcall harness should produce two values");
+        assert!(!ok, "post-scope call must fail");
+    }
+
+    /// Re-entry from inside a `&mut` method body into Lua that calls another
+    /// method on the *same* scoped userdata must be rejected at the second
+    /// borrow attempt, not produce aliasing `&mut`s. This is the aliasing
+    /// concern called out in the design.
+    #[test]
+    fn scope_userdata_reentrant_borrow_during_mut_method_returns_error() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 0,
+            calls: Cell::new(0),
+        };
+
+        let err = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                lua.globals().set("c", &ud)?;
+                lua.load("return c:inc_via_global()").eval::<i64>()
+            })
+            .expect_err("re-entry while mut-borrowed must fail");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("already") && msg.contains("borrowed"),
+            "expected borrow-conflict error, got: {msg}"
+        );
+        assert_eq!(counter.value, 1, "outer mutation persists despite inner failure");
+    }
+
+    /// Two shared borrows of the same scoped cell must be compatible: a
+    /// `:get()` re-entering Lua to call `:get()` again should succeed.
+    #[test]
+    fn scope_userdata_reentrant_shared_borrows_are_compatible() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 17,
+            calls: Cell::new(0),
+        };
+
+        let observed: i64 = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                lua.globals().set("c", &ud)?;
+                lua.load("return c:call_get_via_global()").eval::<i64>()
+            })
+            .expect("nested shared borrows should succeed");
+        assert_eq!(observed, 17);
+        assert_eq!(counter.calls.get(), 1);
+    }
+
+    /// Field methods route through `create_scoped_userdata_method`/`_mut` via
+    /// the registry's `RegistryMode::Scoped` branch. Verifies that path is
+    /// wired correctly for both get and set.
+    #[test]
+    fn scope_userdata_field_methods_get_and_set() {
+        let lua = Lua::new();
+        let mut bag = ScopedFielded { n: 3 };
+
+        let read_back: i64 = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut bag)?;
+                lua.globals().set("f", &ud)?;
+                lua.load("f.n = f.n + 39; return f.n").eval::<i64>()
+            })
+            .expect("field methods should dispatch");
+        assert_eq!(read_back, 42);
+        assert_eq!(bag.n, 42);
+    }
+
+    /// Meta-methods (`__index`/`__newindex` written by hand on a type) must
+    /// also route through the scoped path.
+    #[test]
+    fn scope_userdata_meta_methods_dispatch() {
+        let lua = Lua::new();
+        let mut bag = ScopedBag { value: 100 };
+
+        let read: i64 = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut bag)?;
+                lua.globals().set("b", &ud)?;
+                lua.load("b.value = 200; return b.value").eval::<i64>()
+            })
+            .expect("scoped meta-methods should dispatch");
+        assert_eq!(read, 200);
+        assert_eq!(bag.value, 200);
+    }
+
+    /// Multiple scoped userdatas of the *same* type in one scope are
+    /// independent: each call routes to the correct cell.
+    #[test]
+    fn scope_userdata_multiple_borrows_same_type_in_one_scope() {
+        let lua = Lua::new();
+        let mut a = ScopedCounter {
+            value: 1,
+            calls: Cell::new(0),
+        };
+        let mut b = ScopedCounter {
+            value: 100,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let ua = scope.create_userdata_ref_mut(&lua, &mut a)?;
+            let ub = scope.create_userdata_ref_mut(&lua, &mut b)?;
+            lua.globals().set("a", &ua)?;
+            lua.globals().set("b", &ub)?;
+            lua.load("a:inc(10); b:inc(1)").exec()
+        })
+        .expect("scope body should succeed");
+        assert_eq!(a.value, 11);
+        assert_eq!(b.value, 101);
+    }
+
+    /// Different types in one scope share the scope's invalidation but live
+    /// in independent metatables; both must work.
+    #[test]
+    fn scope_userdata_different_types_coexist_in_one_scope() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 0,
+            calls: Cell::new(0),
+        };
+        let mut bag = ScopedBag { value: 0 };
+
+        lua.scope(|scope| {
+            let uc = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+            let ub = scope.create_userdata_ref_mut(&lua, &mut bag)?;
+            lua.globals().set("c", &uc)?;
+            lua.globals().set("b", &ub)?;
+            lua.load("c:inc(7); b.value = 13").exec()
+        })
+        .expect("scope body should succeed");
+        assert_eq!(counter.value, 7);
+        assert_eq!(bag.value, 13);
+    }
+
+    /// `Lua::scope` threads its closure's return value out — used for
+    /// extracting Lua results without leaking them through globals.
+    #[test]
+    fn scope_userdata_scope_returns_closure_value() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 4,
+            calls: Cell::new(0),
+        };
+
+        let doubled: i64 = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                lua.globals().set("c", &ud)?;
+                lua.load("return c:inc(c:get())").eval::<i64>()
+            })
+            .expect("scope body should succeed");
+        assert_eq!(doubled, 8);
+        assert_eq!(counter.value, 8);
+    }
+
+    /// A scoped userdata invalidated by its scope still keeps the
+    /// `host_value` Rc alive on the userdata; calling it from a *different*
+    /// `Lua` instance (which doesn't own this cell) is independently rejected
+    /// by `scoped_userdata_cell`'s state check. We cannot fully test the
+    /// cross-state case because `globals().set` requires the same Lua, but we
+    /// can verify the cached scoped metatable is per-state: building a fresh
+    /// `Lua` doesn't see the prior state's metatable cache.
+    #[test]
+    fn scope_userdata_metatable_cache_is_per_state() {
+        let lua_a = Lua::new();
+        let lua_b = Lua::new();
+        let mut a = ScopedCounter {
+            value: 1,
+            calls: Cell::new(0),
+        };
+        let mut b = ScopedCounter {
+            value: 2,
+            calls: Cell::new(0),
+        };
+
+        lua_a
+            .scope(|scope| {
+                let _ud = scope.create_userdata_ref_mut(&lua_a, &mut a)?;
+                Ok(())
+            })
+            .expect("scope on A should succeed");
+        lua_b
+            .scope(|scope| {
+                let _ud = scope.create_userdata_ref_mut(&lua_b, &mut b)?;
+                Ok(())
+            })
+            .expect("scope on B should succeed");
+
+        let cache_a_len = lua_a.inner.userdata_scoped_metatables.borrow().len();
+        let cache_b_len = lua_b.inner.userdata_scoped_metatables.borrow().len();
+        assert_eq!(cache_a_len, 1);
+        assert_eq!(cache_b_len, 1);
+    }
+
+    /// The scoped-metatable cache must not be repopulated on every scope:
+    /// a second scope of the same type re-uses the metatable built by the
+    /// first. Confirms the `match cached { Some(mt) => mt, None => ... }`
+    /// branch in `create_scoped_userdata`.
+    #[test]
+    fn scope_userdata_metatable_is_built_once_per_type() {
+        let lua = Lua::new();
+        let mut a = ScopedCounter {
+            value: 0,
+            calls: Cell::new(0),
+        };
+        let mut b = ScopedCounter {
+            value: 0,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let _ud = scope.create_userdata_ref_mut(&lua, &mut a)?;
+            Ok(())
+        })
+        .expect("first scope should succeed");
+        let after_first = lua.inner.userdata_scoped_metatables.borrow().len();
+
+        lua.scope(|scope| {
+            let _ud = scope.create_userdata_ref_mut(&lua, &mut b)?;
+            Ok(())
+        })
+        .expect("second scope should succeed");
+        let after_second = lua.inner.userdata_scoped_metatables.borrow().len();
+
+        assert_eq!(after_first, 1);
+        assert_eq!(after_second, 1);
+    }
+
+    /// Rust-side shared borrow of a scoped userdata works inside the scope.
+    #[test]
+    fn scope_userdata_rust_side_scoped_borrow_inside_scope() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 21,
+            calls: Cell::new(0),
+        };
+
+        let observed = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                ud.scoped_borrow::<ScopedCounter, _>(|c| c.value)
+            })
+            .expect("scoped_borrow should succeed inside scope");
+        assert_eq!(observed, 21);
+    }
+
+    /// Rust-side mut borrow of a scoped userdata mutates the source.
+    #[test]
+    fn scope_userdata_rust_side_scoped_borrow_mut_inside_scope() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 0,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+            ud.scoped_borrow_mut::<ScopedCounter, _>(|c| c.value = 5)
+        })
+        .expect("scoped_borrow_mut should succeed");
+        assert_eq!(counter.value, 5);
+    }
+
+    /// The headline FFI-side guarantee: an `AnyUserData` smuggled out of its
+    /// scope cannot hand out a `&T` from Rust either. Cell invalidation drives
+    /// both sides; this test pins it down on the Rust side.
+    #[test]
+    fn scope_userdata_rust_side_borrow_after_scope_errors() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 7,
+            calls: Cell::new(0),
+        };
+
+        let leaked: AnyUserData = lua
+            .scope(|scope| scope.create_userdata_ref_mut(&lua, &mut counter))
+            .expect("scope body should succeed");
+
+        let err = leaked
+            .scoped_borrow::<ScopedCounter, _>(|c| c.value)
+            .expect_err("post-scope Rust borrow must fail");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("no longer valid") || msg.contains("scope has ended"),
+            "expected invalidation error, got: {msg}"
+        );
+
+        let err = leaked
+            .scoped_borrow_mut::<ScopedCounter, _>(|c| c.value = 99)
+            .expect_err("post-scope Rust mut-borrow must fail");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("no longer valid") || msg.contains("scope has ended"),
+            "expected invalidation error, got: {msg}"
+        );
+
+        assert_eq!(counter.value, 7, "the borrow must not have been touched");
+    }
+
+    /// The owned `AnyUserData::borrow`/`with_borrow` path is for
+    /// `Lua::create_userdata` (Rc<UserDataCell<T>> host); calling it against a
+    /// scoped userdata downcasts cleanly to None and errors. This is a safety
+    /// claim worth pinning explicitly: the owned path cannot accidentally
+    /// reach into a scoped cell.
+    #[test]
+    fn scope_userdata_owned_borrow_path_rejects_scoped_cells() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 1,
+            calls: Cell::new(0),
+        };
+
+        let err = lua
+            .scope(|scope| {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                Ok(ud.with_borrow::<ScopedCounter, _>(|c| c.value))
+            })
+            .expect("scope body should succeed")
+            .expect_err("owned borrow path must not reach a scoped cell");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("type mismatch"),
+            "expected type-mismatch error, got: {msg}"
+        );
+    }
+
+    /// And the reverse: an owned (`Lua::create_userdata`) AnyUserData rejects
+    /// `scoped_borrow`. Confirms the two paths are isolated.
+    #[test]
+    fn scope_userdata_scoped_borrow_rejects_owned_cells() {
+        let lua = Lua::new();
+        let ud = lua
+            .create_userdata(ScopedCounter {
+                value: 5,
+                calls: Cell::new(0),
+            })
+            .expect("owned userdata should create");
+
+        let err = ud
+            .scoped_borrow::<ScopedCounter, _>(|c| c.value)
+            .expect_err("scoped borrow must not reach an owned cell");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("type mismatch"),
+            "expected type-mismatch error, got: {msg}"
+        );
+    }
+
+    /// `scope.create_function` accepts a closure that captures by reference
+    /// from the surrounding stack frame; calling it from Lua sees the live
+    /// borrow. Mirrors the userdata-side basic test, but for closures.
+    #[test]
+    fn scope_function_captures_borrow_and_is_callable_from_lua() {
+        let lua = Lua::new();
+        let mut acc: i64 = 0;
+
+        let total: i64 = lua
+            .scope(|scope| {
+                let f = scope.create_function_mut(&lua, |_lua, n: i64| {
+                    acc += n;
+                    Ok(acc)
+                })?;
+                lua.globals().set("add", &f)?;
+                lua.load("add(2); add(3); return add(5)").eval::<i64>()
+            })
+            .expect("scoped function should dispatch");
+        assert_eq!(total, 10);
+        assert_eq!(acc, 10);
+    }
+
+    /// The closure body sees borrowed state across multiple invocations
+    /// inside one scope — verifies the closure isn't being re-built per call.
+    #[test]
+    fn scope_function_calls_share_one_closure() {
+        let lua = Lua::new();
+        let counts = Cell::new(0u32);
+
+        lua.scope(|scope| {
+            let f = scope.create_function(&lua, |_lua, ()| {
+                counts.set(counts.get() + 1);
+                Ok(())
+            })?;
+            lua.globals().set("tick", &f)?;
+            lua.load("for _ = 1, 4 do tick() end").exec()
+        })
+        .expect("scope should succeed");
+        assert_eq!(counts.get(), 4);
+    }
+
+    /// Headline safety property for functions: a `Function` smuggled past its
+    /// scope must error cleanly when called, not reach into the dropped
+    /// closure.
+    #[test]
+    fn scope_function_invalidated_after_scope_returns_runtime_error() {
+        let lua = Lua::new();
+        let mut acc: i64 = 0;
+
+        lua.scope(|scope| {
+            let f = scope.create_function_mut(&lua, |_lua, n: i64| {
+                acc += n;
+                Ok(acc)
+            })?;
+            lua.globals().set("add", &f)?;
+            lua.load("add(1)").exec()
+        })
+        .expect("scope body should succeed");
+        assert_eq!(acc, 1);
+
+        let err = lua
+            .load("return add(100)")
+            .eval::<i64>()
+            .expect_err("post-scope call must fail");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("no longer valid") || msg.contains("scope has ended"),
+            "expected invalidation error, got: {msg}"
+        );
+        assert_eq!(acc, 1, "the closure's borrow must not have been touched");
+    }
+
+    /// FnMut re-entry: if the closure calls back into Lua which calls itself,
+    /// the inner `try_borrow_mut` on the closure's `RefCell` must reject the
+    /// nested call rather than producing aliasing `&mut` captures.
+    #[test]
+    fn scope_function_reentrant_fnmut_is_rejected() {
+        let lua = Lua::new();
+        let mut count: i64 = 0;
+
+        let err = lua
+            .scope(|scope| {
+                let f = scope.create_function_mut(&lua, |lua, ()| {
+                    count += 1;
+                    if count < 2 {
+                        lua.load("recurse()").exec()?;
+                    }
+                    Ok(())
+                })?;
+                lua.globals().set("recurse", &f)?;
+                lua.load("recurse()").exec()
+            })
+            .expect_err("re-entrant FnMut must error");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("already borrowed"),
+            "expected FnMut-conflict error, got: {msg}"
+        );
+    }
+
+    /// Pairing test: a scoped userdata and a scoped function in the same
+    /// scope can both borrow from the same stack frame (different parts of
+    /// it). Models the Bevy use case: `&mut World` userdata plus a few
+    /// closures that look at adjacent locals.
+    #[test]
+    fn scope_function_and_userdata_in_same_scope() {
+        let lua = Lua::new();
+        let mut bag = ScopedFielded { n: 0 };
+        let log = Cell::new(0i64);
+
+        lua.scope(|scope| {
+            let ud = scope.create_userdata_ref_mut(&lua, &mut bag)?;
+            let logger = scope.create_function(&lua, |_lua, n: i64| {
+                log.set(log.get() + n);
+                Ok(())
+            })?;
+            lua.globals().set("b", &ud)?;
+            lua.globals().set("log", &logger)?;
+            lua.load("b.n = 42; log(b.n); log(b.n + 1)").exec()
+        })
+        .expect("mixed scope body should succeed");
+        assert_eq!(bag.n, 42);
+        assert_eq!(log.get(), 85);
+    }
+
+    /// Even if the scope body errors before returning, the scoped function is
+    /// still invalidated so a follow-up Lua call cannot resurrect the dead
+    /// closure.
+    #[test]
+    fn scope_function_invalidated_even_when_body_errors() {
+        let lua = Lua::new();
+        let value = Cell::new(5i64);
+
+        let _err = lua
+            .scope(|scope| -> Result<()> {
+                let f = scope.create_function(&lua, |_lua, ()| Ok(value.get()))?;
+                lua.globals().set("get", &f)?;
+                Err(LuaError::runtime(format_args!("aborting")))
+            })
+            .expect_err("scope body should propagate error");
+
+        let err = lua
+            .load("return get()")
+            .eval::<i64>()
+            .expect_err("function must be invalidated after error-exit scope");
+        let msg = runtime_error_message(&err);
+        assert!(
+            msg.contains("no longer valid") || msg.contains("scope has ended"),
+            "expected invalidation error, got: {msg}"
+        );
+    }
+
+    /// Many functions in one scope, all calling into shared borrowed state.
+    /// Stresses the invalidator list ordering: every closure must remain
+    /// callable until the scope ends, and all are invalidated together.
+    #[test]
+    fn scope_function_many_closures_in_one_scope() {
+        let lua = Lua::new();
+        let total = Cell::new(0i64);
+        let total_ref = &total;
+
+        lua.scope(|scope| {
+            for i in 1..=8 {
+                let f = scope.create_function(&lua, move |_lua, ()| {
+                    total_ref.set(total_ref.get() + i);
+                    Ok(())
+                })?;
+                lua.globals().set(format!("f{}", i).as_str(), &f)?;
+            }
+            lua.load("f1(); f2(); f3(); f4(); f5(); f6(); f7(); f8()").exec()
+        })
+        .expect("scope with many closures should succeed");
+        assert_eq!(total.get(), 36);
+    }
+
+    /// If the closure body returns an error, the scope still drops and
+    /// invalidates everything it created. We confirm by then using the
+    /// leaked global from a follow-up call — it must report invalidated, not
+    /// stale-but-alive.
+    #[test]
+    fn scope_userdata_invalidated_even_when_body_errors() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 1,
+            calls: Cell::new(0),
+        };
+
+        let err = lua
+            .scope(|scope| -> Result<()> {
+                let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+                lua.globals().set("c", &ud)?;
+                Err(LuaError::runtime(format_args!("aborting scope")))
+            })
+            .expect_err("scope body should propagate error");
+        let _ = err;
+
+        let leaked_err = lua
+            .load("return c:get()")
+            .eval::<i64>()
+            .expect_err("leaked userdata must still be invalidated");
+        let msg = runtime_error_message(&leaked_err);
+        assert!(
+            msg.contains("no longer valid") || msg.contains("scope has ended"),
+            "expected invalidation error after scope-with-error, got: {msg}"
+        );
+    }
+
+    /// Cloning an `AnyUserData` produces two handles to the same scope cell.
+    /// Invalidation runs against the cell, so a clone that escapes via a
+    /// global must fail at the same point a direct handle would. Pins the
+    /// "every reference to the same cell sees invalidation together"
+    /// invariant.
+    #[test]
+    fn scope_userdata_cloned_handles_invalidate_together() {
+        let lua = Lua::new();
+        let mut counter = ScopedCounter {
+            value: 9,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|scope| {
+            let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
+            let clone = ud.clone();
+            lua.globals().set("a", &ud)?;
+            lua.globals().set("b", &clone)?;
+            lua.load("assert(a:get() == 9); assert(b:get() == 9)").exec()
+        })
+        .expect("scope body should succeed");
+
+        let err_a = lua
+            .load("return a:get()")
+            .eval::<i64>()
+            .expect_err("original handle must error post-scope");
+        let err_b = lua
+            .load("return b:get()")
+            .eval::<i64>()
+            .expect_err("cloned handle must error post-scope");
+        assert!(runtime_error_message(&err_a).contains("no longer valid"));
+        assert!(runtime_error_message(&err_b).contains("no longer valid"));
+    }
+
+    /// Nested `Lua::scope` calls: cells created in the inner scope invalidate
+    /// when the inner returns; cells in the outer remain live until the outer
+    /// returns. Pins that scope cells don't leak across siblings/parents.
+    #[test]
+    fn scope_userdata_nested_scopes_isolated() {
+        let lua = Lua::new();
+        let mut outer_counter = ScopedCounter {
+            value: 1,
+            calls: Cell::new(0),
+        };
+        let mut inner_counter = ScopedCounter {
+            value: 100,
+            calls: Cell::new(0),
+        };
+
+        lua.scope(|outer| {
+            let o = outer.create_userdata_ref_mut(&lua, &mut outer_counter)?;
+            lua.globals().set("outer", &o)?;
+
+            lua.scope(|inner| {
+                let i = inner.create_userdata_ref_mut(&lua, &mut inner_counter)?;
+                lua.globals().set("inner", &i)?;
+                lua.load("assert(outer:get() == 1); assert(inner:get() == 100)").exec()
+            })?;
+
+            // Inner ended. `inner` global is dead, but `outer` is still live.
+            let inner_err = lua
+                .load("return inner:get()")
+                .eval::<i64>()
+                .expect_err("inner userdata must be dead after inner scope");
+            assert!(runtime_error_message(&inner_err).contains("no longer valid"));
+
+            let outer_alive: i64 = lua
+                .load("return outer:get()")
+                .eval()
+                .expect("outer userdata must still be alive in outer scope");
+            assert_eq!(outer_alive, 1);
+            Ok(())
+        })
+        .expect("scope body should succeed");
+
+        // Outer ended; both should now be dead.
+        let err = lua
+            .load("return outer:get()")
+            .eval::<i64>()
+            .expect_err("outer userdata must be dead after outer scope");
+        assert!(runtime_error_message(&err).contains("no longer valid"));
+    }
+
+    // -- Direct exercises of the unsafe machinery, no Lua state --
+    //
+    // These tests bypass the full `Lua::scope` plumbing and poke `ScopedCell`
+    // / `ScopedFnCell` directly. They exist so `cargo miri test scope_cell_`
+    // can validate the scope unsafe surface in isolation. The full suite
+    // still routes through the rest of the runtime, which currently has
+    // pre-existing aliasing violations under Miri (lua-gc raw-pointer
+    // patterns, unrelated to scope); these direct tests are the
+    // miri-runnable subset.
+
+    #[test]
+    fn scope_cell_shared_then_shared_succeeds() {
+        let mut data = 17_i32;
+        let cell = ScopedCell::<i32>::new(&mut data);
+
+        let a = cell.try_borrow().expect("first shared borrow");
+        let b = cell.try_borrow().expect("second shared borrow");
+        assert_eq!(*a, 17);
+        assert_eq!(*b, 17);
+        drop(a);
+        drop(b);
+
+        cell.invalidate();
+        assert!(cell.try_borrow().is_err(), "post-invalidate must fail");
+    }
+
+    #[test]
+    fn scope_cell_mut_then_shared_fails() {
+        let mut data = 5_i32;
+        let cell = ScopedCell::<i32>::new(&mut data);
+
+        let mut m = cell.try_borrow_mut().expect("first mut borrow");
+        *m = 42;
+        let s = cell.try_borrow();
+        assert!(s.is_err(), "shared borrow while mut-held must fail");
+        drop(m);
+
+        let s = cell.try_borrow().expect("shared borrow after mut release");
+        assert_eq!(*s, 42);
+    }
+
+    #[test]
+    fn scope_cell_shared_then_mut_fails() {
+        let mut data = 99_i32;
+        let cell = ScopedCell::<i32>::new(&mut data);
+
+        let s = cell.try_borrow().expect("first shared borrow");
+        let m = cell.try_borrow_mut();
+        assert!(m.is_err(), "mut borrow while shared-held must fail");
+        drop(s);
+
+        let mut m = cell.try_borrow_mut().expect("mut borrow after shared release");
+        *m = 100;
+        drop(m);
+        assert_eq!(data, 100);
+    }
+
+    #[test]
+    fn scope_cell_invalidate_after_drop_of_guards_is_clean() {
+        let mut data = String::from("hi");
+        let cell = ScopedCell::<String>::new(&mut data);
+        {
+            let guard = cell.try_borrow().expect("borrow");
+            assert_eq!(&*guard, "hi");
+        }
+        cell.invalidate();
+        assert!(cell.try_borrow().is_err());
+        assert!(cell.try_borrow_mut().is_err());
+    }
+
+    #[test]
+    fn scope_cell_drop_guard_decrements_borrow_count() {
+        let mut data = 0_i32;
+        let cell = ScopedCell::<i32>::new(&mut data);
+        {
+            let _a = cell.try_borrow().expect("a");
+            let _b = cell.try_borrow().expect("b");
+            assert!(cell.try_borrow_mut().is_err());
+        }
+        cell.try_borrow_mut().expect("mut borrow once guards drop");
+    }
+
+    #[test]
+    fn scope_fn_cell_dispatches_and_invalidates() {
+        let counter = Cell::new(0i64);
+        let adapter: Box<dyn Fn(&Lua, Vec<Value>) -> Result<Vec<Value>>> =
+            Box::new(|_lua, _args| Ok(Vec::new()));
+        let cell = Rc::new(ScopedFnCell {
+            boxed: RefCell::new(Some(adapter)),
+        });
+
+        let lua = Lua::new();
+        cell.try_call(&lua, Vec::new()).expect("pre-invalidate call");
+        counter.set(counter.get() + 1);
+
+        cell.invalidate();
+
+        let err = cell
+            .try_call(&lua, Vec::new())
+            .expect_err("post-invalidate call must fail");
+        let msg = runtime_error_message(&err);
+        assert!(msg.contains("no longer valid"), "got: {msg}");
+        assert_eq!(counter.get(), 1);
     }
 }

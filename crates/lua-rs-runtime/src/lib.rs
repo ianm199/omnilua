@@ -1215,6 +1215,20 @@ impl MetaMethod {
     }
 }
 
+/// Root `value` on the state for as long as the state itself lives.
+///
+/// The returned [`ExternalRootKey`] is intentionally discarded: this helper is
+/// the explicit name for the "cached per-type metadata" rooting pattern used by
+/// [`UserDataMethodRegistry::build_metatable`] (the metatable itself, the
+/// field-getter / method / field-setter tables, and any raw `__index`/`__newindex`
+/// referenced by the composed dispatch closures). Those values must stay
+/// reachable for the state's whole lifetime and only ever free together with the
+/// state. Do not call this for any value you want the GC to be able to collect
+/// later: it is by design an un-undoable root.
+fn root_for_state_lifetime(state: &mut LuaState, value: RawLuaValue) {
+    let _ = state.external_root_value(value);
+}
+
 struct UserDataMethodRegistry<'lua, T: UserData> {
     lua: &'lua Lua,
     methods: Vec<(String, Function)>,
@@ -1287,32 +1301,43 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
             }
         }
 
-        // __index: field getter, then method, then raw __index. When there are no
-        // fields and no raw __index, the method table is the __index directly (the
-        // fast path, unchanged behavior for method-only types).
+        // __index: field getter, then method, then raw __index.
         //
-        // We deliberately do NOT capture the high-level `Table`/`Function` handles
-        // in the closure: each of those holds a `RootedValue` with a strong
-        // `Rc<LuaInner>`, which would cycle through the heap-resident closure back
-        // to the state and leak it on drop. Instead we capture raw arena handles
-        // (rooted permanently on the state) and rebuild `Table`/`Function` views
+        // - fields → must compose (field → method → raw via a single closure)
+        // - raw_index + methods (no fields) → must compose (method → raw)
+        // - raw_index only (no fields, no methods) → set raw __index directly,
+        //   skipping the composed closure entirely. This is the common shape
+        //   for bridges that bind reflected state via a raw `add_meta_method`
+        //   (e.g. bms-lua-rs's `LuaRef`) and the lookup is on the hot path.
+        // - method-only → method_table as __index (existing fast path)
+        //
+        // The composed closure deliberately captures raw `GcRef`/`RawLuaValue`
+        // handles, not high-level `Table`/`Function`: each high-level wrapper
+        // holds a `RootedValue` with a strong `Rc<LuaInner>`, which would cycle
+        // through the heap-resident closure back to the state and leak it on
+        // drop. Raw handles are rooted permanently via
+        // [`root_for_state_lifetime`], and `Table`/`Function` views are rebuilt
         // per call from the closure's `&lua`.
-        if !self.fields_get.is_empty() || raw_index.is_some() {
+        let has_fields_get = !self.fields_get.is_empty();
+        let has_methods = !self.methods.is_empty();
+        let needs_index_composition = has_fields_get || (raw_index.is_some() && has_methods);
+
+        if needs_index_composition {
             let (getters_raw, methods_raw, raw_index_raw) = lua.with_state(|state| {
                 let g = match field_getters.root.raw_for_lua(lua, state)? {
                     RawLuaValue::Table(g) => g,
                     v => return Err(type_error_raw(&v, "table")),
                 };
-                let _ = state.external_root_value(RawLuaValue::Table(g.clone()));
+                root_for_state_lifetime(state, RawLuaValue::Table(g.clone()));
                 let m = match method_table.root.raw_for_lua(lua, state)? {
                     RawLuaValue::Table(m) => m,
                     v => return Err(type_error_raw(&v, "table")),
                 };
-                let _ = state.external_root_value(RawLuaValue::Table(m.clone()));
+                root_for_state_lifetime(state, RawLuaValue::Table(m.clone()));
                 let r = match &raw_index {
                     Some(f) => {
                         let rv = f.root.raw_for_lua(lua, state)?;
-                        let _ = state.external_root_value(rv.clone());
+                        root_for_state_lifetime(state, rv.clone());
                         Some(rv)
                     }
                     None => None,
@@ -1342,23 +1367,27 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
                 Ok(Value::Nil)
             })?;
             metatable.set(MetaMethod::Index.name(), &index_fn)?;
+        } else if let Some(raw) = raw_index.as_ref() {
+            metatable.set(MetaMethod::Index.name(), raw)?;
         } else {
             metatable.set(MetaMethod::Index.name(), &method_table)?;
         }
 
-        // __newindex: field setter, then raw __newindex, else an error. Same
-        // raw-capture pattern as __index above.
-        if !self.fields_set.is_empty() || raw_newindex.is_some() {
+        // __newindex: field setter, then raw __newindex, else error. Same
+        // composed-vs-pass-through choice as __index above.
+        let has_fields_set = !self.fields_set.is_empty();
+
+        if has_fields_set {
             let (setters_raw, raw_newindex_raw) = lua.with_state(|state| {
                 let s = match field_setters.root.raw_for_lua(lua, state)? {
                     RawLuaValue::Table(s) => s,
                     v => return Err(type_error_raw(&v, "table")),
                 };
-                let _ = state.external_root_value(RawLuaValue::Table(s.clone()));
+                root_for_state_lifetime(state, RawLuaValue::Table(s.clone()));
                 let r = match &raw_newindex {
                     Some(f) => {
                         let rv = f.root.raw_for_lua(lua, state)?;
-                        let _ = state.external_root_value(rv.clone());
+                        root_for_state_lifetime(state, rv.clone());
                         Some(rv)
                     }
                     None => None,
@@ -1384,6 +1413,8 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
                     )))
                 })?;
             metatable.set(MetaMethod::NewIndex.name(), &newindex_fn)?;
+        } else if let Some(raw) = raw_newindex.as_ref() {
+            metatable.set(MetaMethod::NewIndex.name(), raw)?;
         }
 
         self.lua.with_state(|state| {
@@ -1391,10 +1422,7 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
             let RawLuaValue::Table(metatable) = metatable_raw else {
                 return Err(type_error_raw(&metatable_raw, "table"));
             };
-            // Permanent root: the returned key is intentionally dropped (it is a
-            // `Copy` token with no `Drop`), so the metatable stays alive for the
-            // life of the state. It frees when the state's external-root set frees.
-            let _key = state.external_root_value(RawLuaValue::Table(metatable.clone()));
+            root_for_state_lifetime(state, RawLuaValue::Table(metatable.clone()));
             Ok(metatable)
         })
     }
@@ -2556,6 +2584,60 @@ mod tests {
             "LuaInner leaked via the composed __index/__newindex closures: \
              they capture Table/Function values whose RootedValue holds a \
              strong Rc<LuaInner>"
+        );
+    }
+
+    /// Maximal mixed shape: field getter + field setter + regular method +
+    /// raw `__index` + raw `__newindex` all on one type. Exercises every
+    /// branch of the composed dispatch and every permanently rooted handle.
+    /// If a future change reintroduces a captured wrapper anywhere in the
+    /// composition path, this is the test most likely to catch it.
+    #[test]
+    fn lua_state_frees_with_fields_methods_and_raw_meta() {
+        use std::rc::Rc;
+
+        struct Mixed {
+            x: f64,
+            log: Vec<String>,
+        }
+        impl UserData for Mixed {
+            fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+                m.add_field_method_get("x", |_, this| Ok(this.x));
+                m.add_field_method_set("x", |_, this, v: f64| {
+                    this.x = v;
+                    Ok(())
+                });
+                m.add_method("log_len", |_, this, ()| Ok(this.log.len() as i64));
+                m.add_method_mut("push_log", |_, this, s: String| {
+                    this.log.push(s);
+                    Ok(())
+                });
+                m.add_meta_method(MetaMethod::Index, |_, _this, key: String| {
+                    Ok(::std::format!("dynamic:{key}"))
+                });
+                m.add_meta_method_mut(
+                    MetaMethod::NewIndex,
+                    |_, _this, (_k, _v): (String, Value)| Ok(()),
+                );
+            }
+        }
+
+        let weak_inner = {
+            let lua = Lua::new();
+            let weak = Rc::downgrade(&lua.inner);
+            let _ = lua
+                .create_userdata(Mixed {
+                    x: 1.0,
+                    log: Vec::new(),
+                })
+                .expect("create");
+            weak
+        };
+
+        assert!(
+            weak_inner.upgrade().is_none(),
+            "maximal-composition userdata leaked LuaInner: \
+             check the composed __index / __newindex captures"
         );
     }
 

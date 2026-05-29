@@ -648,10 +648,6 @@ impl TableInner {
             }
             let idx = lf - 1;
             self.lastfree = Some(idx);
-            // A node is free iff its key is nil, exactly as upstream Lua's
-            // `getfreepos`. The previous version also scanned the whole node
-            // vector for a chain predecessor on every probe, making each hash
-            // insert O(n) and the table O(n^2) (issue #38).
             if self.node[idx].key_is_nil() {
                 return Some(idx);
             }

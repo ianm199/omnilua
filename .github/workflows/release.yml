@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify (tag + rust + conformance)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: tag matches workspace version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$tag" != "$ver" ]; then
+            echo "tag v$tag does not match workspace version $ver" >&2
+            exit 1
+          fi
+          echo "releasing v$ver"
+      - name: make test
+        run: make test
+
+  publish-crates:
+    name: publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish (dependency order, idempotent)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          published() {
+            local n="$1"
+            local path="${n:0:2}/${n:2:2}/$n"
+            curl -sf "https://index.crates.io/$path" | grep -q "\"vers\":\"$ver\""
+          }
+          for c in \
+            lua-gc lua-types lua-vm lua-code lua-coro lua-lex lua-parse \
+            lua-rs-lfs lua-stdlib lua-rs-derive lua-rs-runtime \
+            lua-rs-hlua-shim lua-cli; do
+            if published "$c"; then
+              echo "already on crates.io, skipping: $c@$ver"
+              continue
+            fi
+            echo "::group::publish $c@$ver"
+            cargo publish -p "$c"
+            echo "::endgroup::"
+          done
+
+  publish-wasm:
+    name: publish lua-rs-wasm
+    needs: verify
+    uses: ./.github/workflows/npm-publish-wasm.yml
+    with:
+      dry_run: false
+      tag: latest
+    secrets: inherit
+
+  github-release:
+    name: github release
+    needs: [publish-crates, publish-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: create release if absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists, leaving it as is"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi

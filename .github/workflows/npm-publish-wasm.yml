@@ -16,6 +16,14 @@ on:
         options:
           - latest
           - next
+  workflow_call:
+    inputs:
+      dry_run:
+        required: true
+        type: boolean
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -26,12 +34,15 @@ jobs:
     name: publish lua-rs-wasm
     runs-on: ubuntu-latest
     steps:
-      - name: require main branch
+      - name: require main branch or version tag
         run: |
-          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "This workflow must run from main; got $GITHUB_REF" >&2
-            exit 1
-          fi
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/tags/v*) ;;
+            *)
+              echo "This workflow must run from main or a v* tag; got $GITHUB_REF" >&2
+              exit 1
+              ;;
+          esac
 
       - uses: actions/checkout@v4
 

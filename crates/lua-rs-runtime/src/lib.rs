@@ -84,6 +84,11 @@
 //! so an `App -> World -> Component` chain stays a chain of short borrows rather
 //! than one long-held `&mut`. See [`Lua::scope`] for the full contract.
 //!
+//! With the `derive` feature, a `#[lua_methods]` method that returns a
+//! reference is registered as a delegate automatically: `fn entity(&mut self,
+//! id: u32) -> &mut Entity` becomes `world:entity(id)` with no hand-written
+//! accessor. `&mut T` returns give a mutable delegate, `&T` a read-only one.
+//!
 //! # Known limitations and planned work
 //!
 //! - `#[lua_methods]` does not yet special-case methods that return
@@ -613,25 +618,52 @@ impl ScopeInvalidate for ScopedFnCell {
 // regardless of where it bottomed out (`App -> World`, `World -> Inner`,
 // etc.). Composition (`delegate` on a delegated userdata) builds a fresh
 // closure that wraps the parent's `enter_mut` plus the new accessor.
+/// How a delegated cell reaches its referent. `Mut` borrows the parent
+/// exclusively and yields `&mut S` (from `delegate`); `Ref` borrows the
+/// parent shared and yields `&S` (from `delegate_ref`). A `Ref` delegate is
+/// read-only: a mutating child method on it fails cleanly.
+enum DelegateEnter<S: 'static> {
+    Mut(Box<dyn Fn(&mut dyn FnMut(&mut S)) -> Result<()>>),
+    Ref(Box<dyn Fn(&mut dyn FnMut(&S)) -> Result<()>>),
+}
+
 struct DelegatedCell<S: 'static> {
-    enter_mut: RefCell<Option<Box<dyn Fn(&mut dyn FnMut(&mut S)) -> Result<()>>>>,
+    enter: RefCell<Option<DelegateEnter<S>>>,
 }
 
 impl<S: 'static> DelegatedCell<S> {
+    fn invalid() -> LuaError {
+        LuaError::runtime(format_args!(
+            "scoped userdata is no longer valid (its scope has ended)"
+        ))
+    }
+
+    /// Shared access. Works for both delegate kinds: a `Mut` cell yields
+    /// `&mut S` which is downgraded to `&S`; a `Ref` cell yields `&S`.
+    fn enter_ref(&self, f: &mut dyn FnMut(&S)) -> Result<()> {
+        let guard = self.enter.borrow();
+        match guard.as_ref().ok_or_else(Self::invalid)? {
+            DelegateEnter::Mut(g) => g(&mut |t| f(&*t)),
+            DelegateEnter::Ref(g) => g(f),
+        }
+    }
+
+    /// Exclusive access. Only a `Mut` delegate can grant it; a `Ref` delegate
+    /// is read-only and rejects mutating methods.
     fn enter_mut(&self, f: &mut dyn FnMut(&mut S)) -> Result<()> {
-        let guard = self.enter_mut.borrow();
-        let inner = guard.as_ref().ok_or_else(|| {
-            LuaError::runtime(format_args!(
-                "scoped userdata is no longer valid (its scope has ended)"
-            ))
-        })?;
-        inner(f)
+        let guard = self.enter.borrow();
+        match guard.as_ref().ok_or_else(Self::invalid)? {
+            DelegateEnter::Mut(g) => g(f),
+            DelegateEnter::Ref(_) => Err(LuaError::runtime(format_args!(
+                "cannot call a mutating method on a read-only delegated reference"
+            ))),
+        }
     }
 }
 
 impl<S: 'static> ScopeInvalidate for DelegatedCell<S> {
     fn invalidate(&self) {
-        *self.enter_mut.borrow_mut() = None;
+        *self.enter.borrow_mut() = None;
     }
 }
 
@@ -1265,12 +1297,12 @@ impl Lua {
         if let Ok(delegated) = Rc::clone(host).downcast::<DelegatedCell<T>>() {
             let mut slot: Option<Result<R>> = None;
             let mut f_slot = Some(f);
-            delegated.enter_mut(&mut |t| {
+            delegated.enter_ref(&mut |t| {
                 if let Some(f) = f_slot.take() {
-                    slot = Some(f(&*t));
+                    slot = Some(f(t));
                 }
             })?;
-            return slot.expect("delegated enter_mut must invoke its callback");
+            return slot.expect("delegated enter_ref must invoke its callback");
         }
 
         Err(LuaError::runtime(format_args!(
@@ -1841,7 +1873,7 @@ impl AnyUserData {
                     Ok(())
                 });
             let cell = Rc::new(DelegatedCell::<S> {
-                enter_mut: RefCell::new(Some(enter)),
+                enter: RefCell::new(Some(DelegateEnter::Mut(enter))),
             });
             return lua.create_delegated_userdata::<S>(cell);
         }
@@ -1855,13 +1887,59 @@ impl AnyUserData {
                     })
                 });
             let cell = Rc::new(DelegatedCell::<S> {
-                enter_mut: RefCell::new(Some(enter)),
+                enter: RefCell::new(Some(DelegateEnter::Mut(enter))),
             });
             return lua.create_delegated_userdata::<S>(cell);
         }
 
         Err(LuaError::runtime(format_args!(
             "delegate: receiver is not a scoped userdata of the expected type"
+        )))
+    }
+
+    /// Shared counterpart to [`Self::delegate`]. The accessor takes `&P` and
+    /// returns `&S`, the parent is borrowed shared per call, and the resulting
+    /// sub-userdata is read-only: a mutating method on it fails with a clean
+    /// runtime error. Used for `&self -> &S` accessors.
+    pub fn delegate_ref<P, S, F>(&self, lua: &Lua, accessor: F) -> Result<AnyUserData>
+    where
+        P: UserData,
+        S: UserData,
+        F: Fn(&P) -> &S + 'static,
+    {
+        let host = self
+            .host_value
+            .as_ref()
+            .ok_or_else(|| LuaError::runtime(format_args!("missing Rust userdata payload")))?;
+
+        if let Ok(parent_cell) = Rc::clone(host).downcast::<ScopedCell<P>>() {
+            let parent_for_closure = Rc::clone(&parent_cell);
+            let enter: Box<dyn Fn(&mut dyn FnMut(&S)) -> Result<()>> = Box::new(move |f| {
+                let guard = parent_for_closure.try_borrow()?;
+                f(accessor(&*guard));
+                Ok(())
+            });
+            let cell = Rc::new(DelegatedCell::<S> {
+                enter: RefCell::new(Some(DelegateEnter::Ref(enter))),
+            });
+            return lua.create_delegated_userdata::<S>(cell);
+        }
+
+        if let Ok(parent_cell) = Rc::clone(host).downcast::<DelegatedCell<P>>() {
+            let parent_for_closure = Rc::clone(&parent_cell);
+            let enter: Box<dyn Fn(&mut dyn FnMut(&S)) -> Result<()>> = Box::new(move |f| {
+                parent_for_closure.enter_ref(&mut |p| {
+                    f(accessor(p));
+                })
+            });
+            let cell = Rc::new(DelegatedCell::<S> {
+                enter: RefCell::new(Some(DelegateEnter::Ref(enter))),
+            });
+            return lua.create_delegated_userdata::<S>(cell);
+        }
+
+        Err(LuaError::runtime(format_args!(
+            "delegate_ref: receiver is not a scoped userdata of the expected type"
         )))
     }
 }

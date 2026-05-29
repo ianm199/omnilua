@@ -16,6 +16,10 @@ unsafe_code = "allow"
 # Re-export the derive macros (LuaUserData, lua_methods) from this crate.
 derive = ["dep:lua-rs-derive"]
 
+[[example]]
+name = "scope_delegate_macro"
+required-features = ["derive"]
+
 [dependencies]
 lua-gc.workspace = true
 lua-types.workspace = true

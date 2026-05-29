@@ -316,6 +316,49 @@ fn expand_methods(item: ItemImpl) -> syn::Result<TokenStream> {
             }
         };
 
+        // A method that returns a reference can't be marshaled as a Lua value;
+        // instead it names a sub-object reachable from `self`. Register it as
+        // an `add_function` that builds a delegate (a live sub-reference,
+        // re-borrowed from the parent per call). `&mut T` returns become a
+        // mutable delegate, `&T` returns a read-only one.
+        if let ReturnType::Type(_, ty) = &method.sig.output {
+            if let Type::Reference(r) = &**ty {
+                let referent = &*r.elem;
+                let ret_is_mut = r.mutability.is_some();
+                if !ret_is_mut && is_mut {
+                    return Err(syn::Error::new_spanned(
+                        &method.sig,
+                        "#[lua_methods]: a method returning `&T` must take `&self`; \
+                         use `-> &mut T` to expose a mutable delegate",
+                    ));
+                }
+                let func_binding = if arg_names.is_empty() {
+                    quote! { __ud: ::lua_rs_runtime::AnyUserData }
+                } else {
+                    quote! {
+                        ( __ud #(, #arg_names)* ):
+                            ( ::lua_rs_runtime::AnyUserData #(, #arg_types)* )
+                    }
+                };
+                let accessor = quote! { move |__this| <#self_ty>::#name(__this #(, #arg_names)*) };
+                let reg = if ret_is_mut {
+                    quote! {
+                        __m.add_function(#lua_name, |__lua, #func_binding| {
+                            __ud.delegate::<Self, #referent, _>(__lua, #accessor)
+                        });
+                    }
+                } else {
+                    quote! {
+                        __m.add_function(#lua_name, |__lua, #func_binding| {
+                            __ud.delegate_ref::<Self, #referent, _>(__lua, #accessor)
+                        });
+                    }
+                };
+                regs.push(reg);
+                continue;
+            }
+        }
+
         let call = quote! { <#self_ty>::#name(__this #(, #arg_names)*) };
         let returns_unit = matches!(&method.sig.output, ReturnType::Default)
             || matches!(&method.sig.output, ReturnType::Type(_, ty) if is_unit_type(ty));

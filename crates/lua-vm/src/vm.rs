@@ -1738,7 +1738,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         }
                         state.set_top(ra + 1);
                         let t = if b != 0 || c != 0 {
-                            state.new_table_with_sizes(b as u32, c as u32)?
+                            state.new_table_with_sizes(c as u32, b as u32)?
                         } else {
                             state.new_table()
                         };

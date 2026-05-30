@@ -117,6 +117,18 @@
         justify-content: flex-end;
       }
 
+      .sb-ctl {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 13px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .sb-num {
+        width: 120px;
+      }
+
       .select,
       .button {
         height: 36px;
@@ -308,7 +320,7 @@
           <div class="mark" aria-hidden="true"><span>Lua</span></div>
           <div>
             <h1>lua-rs WASM Playground</h1>
-            <div class="sub">lua-rs-wasm@0.0.4 via wasm32-unknown-unknown</div>
+            <div class="sub">lua-rs (main) via wasm32-unknown-unknown</div>
           </div>
         </div>
         <div class="toolbar">
@@ -317,7 +329,11 @@
             <option value="module">module</option>
             <option value="io">io</option>
             <option value="errors">errors</option>
+            <option value="runaway">runaway (sandbox)</option>
           </select>
+          <label class="sb-ctl" title="Run untrusted code with a bounded instruction budget"><input type="checkbox" id="sandbox" /> sandbox</label>
+          <input id="max-instr" class="select sb-num" type="number" min="0" step="100000" value="2000000" title="max instructions (0 = unlimited)" aria-label="max instructions" />
+          <label class="sb-ctl" title="Strip os.execute, io, load, require, debug, …"><input type="checkbox" id="strict" /> strict</label>
           <button id="reset" class="button" type="button">Reset</button>
           <button id="run" class="button primary" type="button">Run</button>
         </div>
@@ -353,7 +369,7 @@
     </main>
 
     <script type="module">
-      import { loadLuaRs, luaRsWasmUrl } from "https://cdn.jsdelivr.net/npm/lua-rs-wasm@0.0.4/index.mjs";
+      import { loadLuaRs, luaRsWasmUrl } from "../../packages/lua-rs-wasm/index.mjs";
 
       const editor = document.querySelector("#editor");
       const consoleEl = document.querySelector("#console");
@@ -363,6 +379,25 @@
       const fileList = document.querySelector("#file-list");
       const runButton = document.querySelector("#run");
       const resetButton = document.querySelector("#reset");
+      const sandboxEl = document.querySelector("#sandbox");
+      const maxInstrEl = document.querySelector("#max-instr");
+      const strictEl = document.querySelector("#strict");
+
+      // Apply (or clear) the sandbox. setLimits resets the runtime so the limits
+      // take effect on a fresh state, so this runs on toggle rather than per-run.
+      function applySandbox() {
+        if (!lua || !lua.setLimits) {
+          return;
+        }
+        if (sandboxEl.checked) {
+          lua.setLimits({
+            maxInstructions: Number(maxInstrEl.value) || 0,
+            strict: strictEl.checked,
+          });
+        } else {
+          lua.setLimits({ maxInstructions: 0, maxMemory: 0, strict: false });
+        }
+      }
 
       const files = {
         "./greeter.lua": `
@@ -419,6 +454,14 @@ end)
 
 print("pcall ok:", ok)
 print("error:", err)
+`,
+        runaway: `
+-- Check "sandbox" above, then Run. The instruction budget aborts this
+-- even though it is wrapped in a pcall loop -- the trip is uncatchable.
+local n = 0
+while true do
+  pcall(function() while true do n = n + 1 end end)
+end
 `,
       };
 
@@ -477,6 +520,11 @@ print("error:", err)
           return;
         }
 
+        // In sandbox mode, give each run a fresh instruction budget.
+        if (sandboxEl.checked && lua.sandboxReset) {
+          lua.sandboxReset();
+        }
+
         host.resetOutput();
         const result = lua.tryExec(editor.value);
         writeOutput(host.outputText());
@@ -485,7 +533,8 @@ print("error:", err)
         if (result.ok) {
           setStatus(runStatus, "ok", "ok");
         } else {
-          setStatus(runStatus, "error", "err");
+          const trip = lua.lastTrip ? lua.lastTrip() : null;
+          setStatus(runStatus, trip ? `sandbox: ${trip} limit hit` : "error", "err");
           writeOutput(`${host.outputText()}${result.error}`);
         }
       }
@@ -494,6 +543,10 @@ print("error:", err)
         editor.value = samples[sampleEl.value].trimStart();
         setStatus(runStatus, "idle");
       });
+
+      sandboxEl.addEventListener("change", applySandbox);
+      maxInstrEl.addEventListener("change", () => sandboxEl.checked && applySandbox());
+      strictEl.addEventListener("change", () => sandboxEl.checked && applySandbox());
 
       runButton.addEventListener("click", runCurrentProgram);
 

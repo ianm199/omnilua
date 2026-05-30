@@ -31,6 +31,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      # Build the wasm artifact so the browser playground loads the current
+      # `main` (including unreleased features like the sandbox) from the
+      # in-repo package rather than a pinned npm/CDN version.
+      - name: Rust toolchain (wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build wasm playground artifact
+        run: node packages/lua-rs-wasm/scripts/build-wasm.mjs
+      # The build dir is huge and not part of the site; the only artifact we
+      # need (dist/lua_wasm.wasm) was copied out of it by build-wasm.mjs.
+      - name: Drop build dir from the Pages upload
+        run: rm -rf target
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact

@@ -315,6 +315,128 @@ fn pcall_still_catches_ordinary_errors_under_sandbox() {
     assert_eq!(sandbox.tripped(), None);
 }
 
+/// A catastrophic-backtracking pattern match — one stdlib C call that the
+/// per-instruction budget cannot preempt — is now bounded by charging the
+/// matcher's work against the instruction budget.
+#[test]
+fn catastrophic_pattern_is_bounded() {
+    use std::time::{Duration, Instant};
+    let config = SandboxConfig {
+        instruction_limit: Some(2_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    };
+    let (lua, sandbox) = Lua::sandboxed(config).unwrap();
+
+    let start = Instant::now();
+    // Classic exponential Lua-pattern backtracking: N optional `a?` followed by
+    // N required `a`, matched against N `a` — 2^N backtracks without a budget.
+    let result = lua
+        .load(
+            r#"
+            local s = ("a"):rep(28)
+            local p = ("a?"):rep(28) .. ("a"):rep(28)
+            return s:match(p)
+        "#,
+        )
+        .exec();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "catastrophic pattern hung"
+    );
+    assert!(result.is_err(), "runaway match should abort");
+    assert_eq!(sandbox.tripped(), Some(TripReason::Instructions));
+}
+
+/// `string.gsub` with a runaway pattern is bounded too, and the abort is
+/// uncatchable (a `pcall` loop around it cannot keep it alive).
+#[test]
+fn catastrophic_gsub_is_uncatchable() {
+    use std::time::{Duration, Instant};
+    let config = SandboxConfig {
+        instruction_limit: Some(2_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    };
+    let (lua, sandbox) = Lua::sandboxed(config).unwrap();
+
+    let start = Instant::now();
+    let result = lua
+        .load(
+            r#"
+            local p = ("a?"):rep(28) .. ("a"):rep(28)
+            while true do pcall(function() (("a"):rep(28)):gsub(p, "x") end) end
+        "#,
+        )
+        .exec();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "gsub pcall loop escaped"
+    );
+    assert!(result.is_err());
+    assert_eq!(sandbox.tripped(), Some(TripReason::Instructions));
+}
+
+/// Ordinary pattern matching still works correctly under a sandbox (the matcher
+/// instrumentation must not change results, only bound runaway work).
+#[test]
+fn ordinary_pattern_matching_still_works() {
+    let config = SandboxConfig {
+        instruction_limit: Some(10_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    };
+    let (lua, sandbox) = Lua::sandboxed(config).unwrap();
+
+    let result = lua
+        .load(
+            r#"
+            assert(("hello world"):match("(%w+) (%w+)") == "hello")
+            assert(("a,b,c"):gsub(",", ";") == "a;b;c")
+            local n = 0
+            for _ in ("1 22 333"):gmatch("%d+") do n = n + 1 end
+            assert(n == 3, "gmatch count")
+        "#,
+        )
+        .exec();
+    assert!(result.is_ok(), "ordinary matching broke: {result:?}");
+    assert_eq!(sandbox.tripped(), None);
+}
+
+/// `table.sort` with an adversarial comparator cannot run unbounded: each
+/// comparison is a metered Lua call, so the instruction budget bounds it.
+#[test]
+fn adversarial_sort_is_bounded() {
+    use std::time::{Duration, Instant};
+    let config = SandboxConfig {
+        instruction_limit: Some(2_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    };
+    let (lua, sandbox) = Lua::sandboxed(config).unwrap();
+
+    let start = Instant::now();
+    let result = lua
+        .load(
+            r#"
+            local t = {}
+            for i = 1, 5000 do t[i] = i end
+            -- inconsistent comparator: forces pathological comparison counts
+            table.sort(t, function(a, b) return true end)
+        "#,
+        )
+        .exec();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "adversarial sort hung"
+    );
+    assert!(result.is_err());
+}
+
 /// A plain (non-sandboxed) runtime is unaffected: no hook, no stripping.
 #[test]
 fn plain_runtime_is_unbounded() {

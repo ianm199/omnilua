@@ -1701,13 +1701,25 @@ impl LuaState {
     /// Called from `trace_exec` on every thread, once per `interval`
     /// instructions — never on the budget-disabled hot path.
     pub fn sandbox_charge_interval(&self) -> Option<LuaError> {
+        let interval = self.global().sandbox.interval.get();
+        self.sandbox_charge(interval as u64)
+    }
+
+    /// Charge `amount` instructions against the runtime-wide budget and sample
+    /// the memory ceiling. Returns the uncatchable abort error if a limit is
+    /// crossed (recording the reason and arming the sticky `aborting` flag), or
+    /// `None` otherwise. No-op when no sandbox is active.
+    ///
+    /// Used both by the per-interval VM charge and by loop-heavy stdlib
+    /// functions (the pattern matcher) so a single native call cannot run for
+    /// longer than the instruction budget allows.
+    pub fn sandbox_charge(&self, amount: u64) -> Option<LuaError> {
         let g = self.global();
-        let interval = g.sandbox.interval.get();
-        if interval == 0 {
+        if g.sandbox.interval.get() == 0 {
             return None;
         }
         if g.sandbox.instr_limited.get() {
-            let rem = g.sandbox.instr_remaining.get().saturating_sub(interval as u64);
+            let rem = g.sandbox.instr_remaining.get().saturating_sub(amount);
             g.sandbox.instr_remaining.set(rem);
             if rem == 0 {
                 g.sandbox.tripped.set(SANDBOX_TRIP_INSTRUCTIONS);
@@ -1727,6 +1739,19 @@ impl LuaState {
             }
         }
         None
+    }
+
+    /// Upper bound on the work a single pattern-match call may do before it must
+    /// stop and let the caller charge the budget. Equal to the remaining
+    /// instruction budget when an instruction limit is active, else `0` meaning
+    /// "unlimited" (preserving non-sandboxed behavior exactly).
+    pub fn sandbox_match_step_limit(&self) -> u64 {
+        let g = self.global();
+        if g.sandbox.interval.get() != 0 && g.sandbox.instr_limited.get() {
+            g.sandbox.instr_remaining.get()
+        } else {
+            0
+        }
     }
 
     /// Whether a sandbox abort is in flight. While true, protected-call builtins

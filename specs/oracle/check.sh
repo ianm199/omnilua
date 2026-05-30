@@ -46,6 +46,21 @@ if [ "$ver" = "5.3" ]; then
   run "<const> rejected"    'local x <const> = 1; print(x)'
   run "strcoerce->float"    "print(math.type('0x10'+0))"
   run "table.create=nil"    'print(type(table.create))'
+  # Expanded slice drawn from official-5.3 test surface (bitwise/math/string),
+  # all behaviors the shared modern core + 5.3 seams implement.
+  run "bitwise &"           'print(6 & 3)'
+  run "bitwise ~"           'print(5 ~ 3)'
+  run "bitwise <<"          'print(1 << 10)'
+  run "bnot"                'print(~0)'
+  run "math.type int"       'print(math.type(3), math.type(3.0))'
+  run "floor div"           'print(7//2, math.type(7//2))'
+  run "maxinteger"          'print(math.maxinteger)'
+  run "tointeger"           'print(math.tointeger(3.0))'
+  run "format %d"           "print(string.format('%d', 42))"
+  run "format %f"           "print(string.format('%5.2f', 3.14159))"
+  run "tostring float"      'print(tostring(1.0))'
+  run "pow is float"        'print(math.type(2^2))'
+  run "bit32.band mask"     'print(bit32.band(0xFF,0x0F))'
 fi
 
 if [ "$ver" = "5.4" ]; then

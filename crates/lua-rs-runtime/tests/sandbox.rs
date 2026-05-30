@@ -482,6 +482,70 @@ fn adversarial_sort_is_bounded() {
     assert!(result.is_err());
 }
 
+/// Deep non-tail recursion errors cleanly via the call-depth guard rather than
+/// overflowing the host (Rust) stack and crashing the process.
+#[test]
+fn recursion_deep_nontail_errors_cleanly() {
+    let (lua, _s) = Lua::sandboxed(SandboxConfig {
+        instruction_limit: Some(50_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    })
+    .unwrap();
+    let result = lua.load("local function f(n) return 1 + f(n + 1) end f(0)").exec();
+    assert!(result.is_err(), "deep recursion must error, not crash");
+}
+
+/// Infinite metamethod nesting (`__index` that re-indexes) errors cleanly via
+/// the C-call depth guard.
+#[test]
+fn recursion_infinite_metamethod_errors_cleanly() {
+    let (lua, _s) = Lua::sandboxed(SandboxConfig {
+        instruction_limit: Some(50_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    })
+    .unwrap();
+    let result = lua
+        .load(
+            r#"
+            local t = setmetatable({}, {__index = function(tbl, k) return tbl[k] end})
+            return t.x
+        "#,
+        )
+        .exec();
+    assert!(result.is_err(), "infinite metamethod recursion must error, not crash");
+}
+
+/// A nested-coroutine `__close` cascade (the historically stack-overflow-prone
+/// case) errors cleanly rather than crashing the host.
+#[test]
+fn recursion_coroutine_close_cascade_errors_cleanly() {
+    let (lua, _s) = Lua::sandboxed(SandboxConfig {
+        instruction_limit: Some(50_000_000),
+        memory_limit_bytes: None,
+        check_interval: 1000,
+        remove_globals: Vec::new(),
+    })
+    .unwrap();
+    let result = lua
+        .load(
+            r#"
+            local function nest(n)
+                if n == 0 then return end
+                local x <close> = setmetatable({}, {__close = function() end})
+                local co = coroutine.wrap(function() nest(n - 1) coroutine.yield() end)
+                co()
+            end
+            nest(3000)
+        "#,
+        )
+        .exec();
+    assert!(result.is_err(), "close cascade must error, not crash");
+}
+
 /// A plain (non-sandboxed) runtime is unaffected: no hook, no stripping.
 #[test]
 fn plain_runtime_is_unbounded() {

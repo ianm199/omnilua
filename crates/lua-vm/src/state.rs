@@ -121,11 +121,24 @@ pub(crate) const LUA_MINSTACK: usize = 20;
 // macros.tsv: BASIC_STACK_SIZE → const BASIC_STACK_SIZE: u32 = 2 * LUA_MINSTACK
 pub(crate) const BASIC_STACK_SIZE: usize = 2 * LUA_MINSTACK;
 
-// PORT NOTE: lowered from 200 to 80 because our debug-build Rust frames
-// are ~5–10× larger than C frames (debuginfo, stack-allocated CallInfo
-// arrays, marker state). At 200 we SIGSEGV on cstack's 1000-coroutine
-// close cascade before nCcalls trips. 80 is safe for an 8 MB Rust thread
-// stack with a comfortable margin.
+/// Maximum nested non-yielding C-call recursion depth — the single source of
+/// truth for the call-depth guard (also used by `do_::ccall_inner` and
+/// `do_::lua_resume`).
+///
+/// This is the structural defense that keeps a recursive interpreter sound for
+/// untrusted code: a recursive Rust interpreter consumes host (Rust) stack per
+/// nested Lua→Lua call, so unbounded Lua recursion would otherwise overflow the
+/// OS thread stack and crash the process. Tripping this limit instead raises a
+/// catchable `"stack overflow"` / `"C stack overflow"` Lua error.
+///
+/// Safe margin: each nested call frame consumes a bounded amount of Rust stack,
+/// so `MAXCCALLS` frames fit within the default ~8 MiB thread stack with room to
+/// spare — verified on macOS/Linux release builds against deep non-tail
+/// recursion, infinite `__index`/`__concat`/`__tostring` metamethod chains, and
+/// nested-coroutine `__close` cascades, all of which error cleanly rather than
+/// SIGSEGV (see the `recursion_*` sandbox tests). Embedders that run the VM on a
+/// smaller thread stack should lower this constant proportionally (roughly
+/// `stack_bytes / 40_000`).
 pub(crate) const LUAI_MAXCCALLS: u32 = 200;
 
 // macros.tsv: CIST_C → const CIST_C: u16 = 1 << 1

@@ -1762,7 +1762,6 @@ impl LuaState {
                 return Ok(existing.clone());
             }
             self.mark_gc_check_needed();
-            let _local = crate::string::new(self, bytes)?;
             let new_ref = GcRef::new(LuaString::from_bytes(bytes.to_vec()));
             self.global_mut()
                 .interned_lt

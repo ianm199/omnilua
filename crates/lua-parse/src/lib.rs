@@ -67,6 +67,10 @@ pub const TK_FLT: TokenKind = 290;
 pub const TK_INT: TokenKind = 291;
 pub const TK_NAME: TokenKind = 292;
 pub const TK_STRING: TokenKind = 293;
+/// `global` — Lua 5.5 reserved word. Out-of-band id mirroring
+/// [`lua_lex::TK_GLOBAL`]; only ever emitted on the `LuaVersion::V55` lexer
+/// path, so 5.1-5.4 are unaffected and `global` stays a valid identifier there.
+pub const TK_GLOBAL: TokenKind = 294;
 
 // ── Parser constants ────────────────────────────────────────────────────────
 
@@ -3953,6 +3957,81 @@ fn checktoclose(ls: &mut LexState, _state: &mut LuaState, level: i32) -> Result<
     Ok(())
 }
 
+/// Lua 5.5 `global` declaration statement — PRELIMINARY GROUNDWORK STUB.
+///
+/// Grammar (manual §3.3.7, `specs/research/5.5-upstream-delta.md` §1b):
+/// ```text
+/// stat ::= global attnamelist ['=' explist]
+/// stat ::= global [attrib] '*'
+/// attnamelist ::= [attrib] Name [attrib] {',' Name [attrib]}
+/// attrib ::= '<' Name '>'        -- only <const> is legal for a global; <close> is an error
+/// ```
+///
+/// HOW FAR THIS GETS: this entry point is only reached on the `LuaVersion::V55`
+/// path (the lexer only emits [`TK_GLOBAL`] there). It RECOGNIZES and fully
+/// *consumes* both grammar forms — the collective `global *` (with an optional
+/// leading `<const>` attribute) and the `global x <const>, y` name list with an
+/// optional `= explist` initializer — so a syntactically valid `global`
+/// statement parses without error. The declared names and their attributes are
+/// parsed and then DROPPED (parse-and-noop). No bytecode is emitted and the
+/// scope resolver is not touched.
+///
+/// WHAT THE FULL STATEFUL SCOPE MODEL STILL NEEDS (manual §2.2,
+/// `specs/research/5.5-upstream-delta.md` §1c/§1d):
+///  1. Per-scope mode flag: a chunk starts with an implicit `global *` (every
+///     free name is `_ENV.name`, as in 5.4). The FIRST explicit `global` decl
+///     in a scope VOIDS that implicit declaration for the rest of the scope.
+///  2. Declared-set tracking: in a voided scope, every free name must resolve
+///     to a local, an upvalue, or a name in some in-scope `global` declaration;
+///     upstream encodes this with `VGLOBAL` and the sentinel `var->u.info == -1`
+///     meaning "preambular `global *` still active".
+///  3. Undeclared-name compile error: a free name with no declaration is a
+///     COMPILE-TIME error, emitted via the new `OP_ERRNNIL` opcode
+///     (`A Bx`, "raise error if R[A] ~= nil", K[Bx-1] is the global name). That
+///     opcode, the `ivABC` operand mode, and the reordered SHRI/SHLI are not yet
+///     in `lua-code`, so even storing to a declared global cannot be codegen'd
+///     faithfully yet.
+///  4. `<const>` globals must be read-only (compile error on assignment); a
+///     `global` decl with an initializer raises a RUNTIME error if the global
+///     already holds a non-nil value; `<close>` on a global is a compile error.
+///  5. `global *` (optionally `global <const> *`) re-enables global-by-default
+///     for the scope.
+///  6. The `LUA_COMPAT_GLOBAL` axis (default on upstream): un-reserves `global`
+///     as a keyword and recognizes the statement only contextually. We model
+///     the strict (compat-off) behavior; a per-state compat flag is future work.
+fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
+    lex_next(ls, state)?; // skip 'global'
+
+    // `global [attrib] '*'` — the collective form.
+    if test_next(ls, state, b'<' as TokenKind)? {
+        let _attr = str_check_name(ls, state)?;
+        check_next(ls, state, b'>' as TokenKind)?;
+        check_next(ls, state, b'*' as TokenKind)?;
+        return Ok(());
+    }
+    if test_next(ls, state, b'*' as TokenKind)? {
+        return Ok(());
+    }
+
+    // `global attnamelist ['=' explist]` — the name-list form. Parse and drop
+    // the names + their per-name attributes (groundwork only).
+    loop {
+        let _name = str_check_name(ls, state)?;
+        if test_next(ls, state, b'<' as TokenKind)? {
+            let _attr = str_check_name(ls, state)?;
+            check_next(ls, state, b'>' as TokenKind)?;
+        }
+        if !test_next(ls, state, b',' as TokenKind)? {
+            break;
+        }
+    }
+    if test_next(ls, state, b'=' as TokenKind)? {
+        let mut e = ExprDesc::default();
+        explist(ls, state, &mut e)?;
+    }
+    Ok(())
+}
+
 fn localstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     let mut toclose: i32 = -1;
     let mut nvars: i32 = 0;
@@ -4145,6 +4224,9 @@ fn statement(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         TK_GOTO => {
             lex_next(ls, state)?; // skip 'goto'
             gotostat(ls, state)?;
+        }
+        TK_GLOBAL => {
+            globalstat(ls, state)?;
         }
         _ => {
             exprstat(ls, state)?;

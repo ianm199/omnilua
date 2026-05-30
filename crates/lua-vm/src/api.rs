@@ -1275,7 +1275,9 @@ pub fn raw_get_p(state: &mut LuaState, idx: i32, p: *const core::ffi::c_void) ->
 pub fn create_table(state: &mut LuaState, narray: i32, nrec: i32) -> Result<(), LuaError> {
     let t = state.new_table();
     if narray > 0 || nrec > 0 {
-        t.resize(state, narray as usize, nrec as usize)?;
+        let na32 = (narray as usize).min(u32::MAX as usize) as u32;
+        let nh32 = (nrec as usize).min(u32::MAX as usize) as u32;
+        t.resize(na32, nh32)?;
     }
     state.push(LuaValue::Table(t));
     state.gc().check_step();
@@ -1387,7 +1389,7 @@ fn aux_raw_set(state: &mut LuaState, idx: i32, key: LuaValue, n: u32) -> Result<
         .ok_or_else(|| LuaError::runtime(format_args!("table expected")))?;
     let top = state.top_idx();
     let val = state.get_at(top - 1);
-    t.raw_set(state, key, val)?;
+    t.try_raw_set(key, val)?;
     t.invalidate_tm_cache();
     let top_val = state.get_at(top - 1);
     state.gc().barrier_back(&t, &top_val);
@@ -1411,7 +1413,7 @@ pub fn raw_set_i(state: &mut LuaState, idx: i32, n: i64) -> Result<(), LuaError>
         .ok_or_else(|| LuaError::runtime(format_args!("table expected")))?;
     let top = state.top_idx();
     let val = state.get_at(top - 1);
-    t.raw_set_int(state, n, val)?;
+    t.try_raw_set_int(n, val)?;
     let top_val = state.get_at(top - 1);
     state.gc().barrier_back(&t, &top_val);
     state.pop();

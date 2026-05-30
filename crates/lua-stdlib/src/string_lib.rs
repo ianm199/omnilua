@@ -1179,8 +1179,8 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
         if let Some(e) = match_pat(&mut ms, src, 0)? {
             if Some(e) != last_match {
                 let e_val = LuaValue::Int((e + 1) as i64);
-                tbl.raw_set_int(state, 3, e_val.clone())?;
-                tbl.raw_set_int(state, 4, e_val)?;
+                tbl.try_raw_set_int(3, e_val.clone())?;
+                tbl.try_raw_set_int(4, e_val)?;
                 return push_captures(state, &ms, src, e);
             }
         }

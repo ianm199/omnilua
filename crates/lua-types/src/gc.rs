@@ -83,6 +83,11 @@ impl<T: Trace + 'static> GcRef<T> {
     /// fire at honest memory pressure. No-op on `delta == 0`, when no heap is
     /// active, or when the underlying box is uncollected (see
     /// [`lua_gc::Gc::account_buffer`]).
+    ///
+    /// The table accounting path ([`GcRef<LuaTable>::resize`]) guards with
+    /// `delta != 0`, so the thread-local `with_current_heap` access here only
+    /// runs when a table buffer actually (re)allocated.
+    #[inline]
     pub fn account_buffer(&self, delta: isize) {
         if delta == 0 {
             return;

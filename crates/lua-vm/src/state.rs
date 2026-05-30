@@ -521,10 +521,7 @@ pub trait LuaTableRefExt {
     fn get(&self, _k: &LuaValue) -> LuaValue;
     fn get_int(&self, _k: i64) -> LuaValue;
     fn get_short_str(&self, _k: &GcRef<LuaString>) -> LuaValue;
-    fn raw_set(&self, _state: &mut LuaState, _k: LuaValue, _v: LuaValue) -> Result<(), LuaError>;
-    fn raw_set_int(&self, _state: &mut LuaState, _k: i64, _v: LuaValue) -> Result<(), LuaError>;
     fn invalidate_tm_cache(&self);
-    fn resize(&self, _state: &mut LuaState, _na: usize, _nh: usize) -> Result<(), LuaError>;
     fn next(&self, _k: LuaValue) -> Result<Option<(LuaValue, LuaValue)>, LuaError>;
 }
 impl LuaTableRefExt for GcRef<LuaTable> {
@@ -538,22 +535,7 @@ impl LuaTableRefExt for GcRef<LuaTable> {
     fn get_int(&self, k: i64) -> LuaValue { (**self).get_int(k) }
     #[inline]
     fn get_short_str(&self, k: &GcRef<LuaString>) -> LuaValue { (**self).get_short_str(k) }
-    /// Forwards to [`LuaTable::try_raw_set`], which performs the nil/NaN
-    /// key validation internally as part of its integer-fast-path match.
-    #[inline]
-    fn raw_set(&self, _state: &mut LuaState, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
-        (**self).try_raw_set(k, v)
-    }
-    #[inline]
-    fn raw_set_int(&self, _state: &mut LuaState, k: i64, v: LuaValue) -> Result<(), LuaError> {
-        (**self).try_raw_set_int(k, v)
-    }
     fn invalidate_tm_cache(&self) {}
-    fn resize(&self, _state: &mut LuaState, na: usize, nh: usize) -> Result<(), LuaError> {
-        let na32 = na.min(u32::MAX as usize) as u32;
-        let nh32 = nh.min(u32::MAX as usize) as u32;
-        (**self).resize(na32, nh32)
-    }
     fn next(&self, k: LuaValue) -> Result<Option<(LuaValue, LuaValue)>, LuaError> {
         (**self).try_next_pair(&k)
     }
@@ -1723,7 +1705,6 @@ impl LuaState {
         self.mark_gc_check_needed();
         let t = GcRef::new(LuaTable::placeholder());
         self.table_resize(&t, array_size as usize, hash_size as usize)?;
-        t.account_buffer(t.buffer_bytes() as isize);
         Ok(t)
     }
 
@@ -2706,7 +2687,7 @@ impl LuaState {
             return Err(LuaError::type_error(t, "index"));
         };
         let tbl = tbl.clone();
-        tbl.raw_set(self, k, v)
+        tbl.try_raw_set(k, v)
     }
     #[inline]
     pub fn table_array_set(&mut self, t: &LuaValue, idx: usize, v: LuaValue) -> Result<(), LuaError> {
@@ -2714,14 +2695,15 @@ impl LuaState {
             return Err(LuaError::type_error(t, "index"));
         };
         let tbl = tbl.clone();
-        tbl.raw_set_int(self, idx as i64 + 1, v)
+        tbl.try_raw_set_int(idx as i64 + 1, v)
     }
     pub fn table_ensure_array(&mut self, t: &LuaValue, n: usize) -> Result<(), LuaError> {
         let LuaValue::Table(tbl) = t else {
             return Err(LuaError::type_error(t, "index"));
         };
         if n > tbl.array_len() {
-            tbl.resize(self, n, 0)?;
+            let n32 = n.min(u32::MAX as usize) as u32;
+            tbl.resize(n32, 0)?;
         }
         Ok(())
     }
@@ -2743,7 +2725,9 @@ impl LuaState {
     }
     pub fn table_resize(&mut self, t: &GcRef<LuaTable>, na: usize, nh: usize) -> Result<(), LuaError> {
         self.mark_gc_check_needed();
-        t.resize(self, na, nh)
+        let na32 = na.min(u32::MAX as usize) as u32;
+        let nh32 = nh.min(u32::MAX as usize) as u32;
+        t.resize(na32, nh32)
     }
     pub fn table_getn(&self, t: &GcRef<LuaTable>) -> i64 {
         // PORT NOTE: C's `luaH_getn` returns a boundary i such that t[i] is

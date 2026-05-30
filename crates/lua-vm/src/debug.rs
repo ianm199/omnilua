@@ -712,7 +712,7 @@ fn collect_valid_lines(state: &mut LuaState, cl: Option<&LuaClosure>) -> Result<
         for i in start_i..p.lineinfo.len() {
             currentline = next_line(p, currentline, i);
             // TODO(port): luaH_setint lives in crate::table; stub call here
-            t.raw_set_int(state, currentline as i64, v.clone())?;
+            t.try_raw_set_int(currentline as i64, v.clone())?;
         }
     }
     Ok(())

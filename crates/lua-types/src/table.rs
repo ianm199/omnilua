@@ -253,6 +253,16 @@ impl TableInner {
     #[inline]
     fn is_dummy(&self) -> bool { self.lastfree.is_none() }
 
+    /// Bytes of allocator-reserved capacity backing the array and node parts.
+    /// Mirrors [`LuaTable::buffer_bytes`] but on the already-borrowed inner so
+    /// the cold mutation paths can sample their own growth delta without a
+    /// second `RefCell` borrow.
+    #[inline]
+    fn capacity_bytes(&self) -> usize {
+        self.array.capacity() * std::mem::size_of::<LuaValue>()
+            + self.node.capacity() * std::mem::size_of::<TableNode>()
+    }
+
     /// `sizenode(t)` — nominal hash-part capacity (`1 << lsizenode`).
     #[inline]
     fn sizenode(&self) -> u32 { 1u32 << self.lsizenode }
@@ -987,6 +997,11 @@ impl TableInner {
     /// (it lives inside the `Vec` at offset `key-1 < alimit`), so the
     /// `TOTAL_GROW_CAP` guard cannot apply. Only the cold path can
     /// allocate; the guard runs there.
+    ///
+    /// Any allocator-reserved buffer growth this can cause happens via
+    /// `TableInner::resize` on the cold `#t+1`/hash-insert path, which is
+    /// charged to the GC pacer at the [`GcRef<LuaTable>::resize`] accounting
+    /// site — so this setter itself stays a bare store with no per-write charge.
     #[inline]
     fn try_raw_set_int_fast(&mut self, key: i64, value: LuaValue) -> Result<(), LuaError> {
         let alimit = self.alimit as u64;
@@ -1267,7 +1282,12 @@ impl LuaTable {
 
     /// Raw set without metamethod dispatch. Nil keys are an error;
     /// NaN-float keys are an error. Setting `v == Nil` clears the slot.
-    pub fn raw_set(&self, k: LuaValue, v: LuaValue) {
+    ///
+    /// Private body: callers must reach this through the accounted
+    /// [`GcRef<LuaTable>::raw_set`] wrapper so buffer growth is charged to
+    /// the GC pacer. The wrapper shadows this via `Deref`.
+    ///
+    fn raw_set_inner(&self, k: LuaValue, v: LuaValue) {
         if matches!(k, LuaValue::Nil) { return; }
         if let LuaValue::Float(f) = &k {
             if f.is_nan() { return; }
@@ -1281,8 +1301,13 @@ impl LuaTable {
     /// that are exact integers) take the same direct array-part fast
     /// path used by [`LuaTable::try_raw_set_int`]; other key shapes
     /// fall through to the generic slot lookup.
+    ///
+    /// Private body: callers must reach this through the accounted
+    /// [`GcRef<LuaTable>::try_raw_set`] wrapper. The wrapper shadows this
+    /// via `Deref`.
+    ///
     #[inline]
-    pub fn try_raw_set(&self, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
+    fn try_raw_set_inner(&self, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
         match &k {
             LuaValue::Nil => {
                 Err(LuaError::runtime(format_args!("table index is nil")))
@@ -1310,7 +1335,9 @@ impl LuaTable {
     }
 
     /// Generic-key path for [`Self::try_raw_set`]. Split out so the
-    /// integer fast path stays branch-light and inlineable.
+    /// integer fast path stays branch-light and inlineable. Samples its own
+    /// buffer-capacity delta around the (possibly reallocating) insert; this
+    /// path is already cold, so the extra sample is in the noise.
     #[cold]
     #[inline(never)]
     fn try_raw_set_generic(&self, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
@@ -1329,17 +1356,40 @@ impl LuaTable {
     /// [`TableSlotRef`] indirection — and only consults the
     /// `TOTAL_GROW_CAP` allocation guard when the key would create a
     /// new slot.
+    ///
+    /// Private body: callers must reach this through the accounted
+    /// [`GcRef<LuaTable>::try_raw_set_int`] wrapper. The wrapper shadows
+    /// this via `Deref`.
+    ///
+    /// The integer fast path stores in place into the already-allocated array
+    /// part; its only growth is the array-`Vec` resize taken on the `#t+1`
+    /// heuristic, which is charged at its `TableInner::resize` site via the
+    /// `pending_buffer_delta` accumulator the cold path records into (read and
+    /// flushed by the [`GcRef<LuaTable>::try_raw_set_int`] wrapper). The
+    /// no-growth in-place store records nothing and leaves the accumulator at
+    /// `0`, so the write-heavy hot path stays a bare array store.
     #[inline]
-    pub fn try_raw_set_int(&self, k: i64, v: LuaValue) -> Result<(), LuaError> {
+    fn try_raw_set_int_inner(&self, k: i64, v: LuaValue) -> Result<(), LuaError> {
         let mut inner = self.inner.borrow_mut();
         inner.try_raw_set_int_fast(k, v)
     }
 
     /// Resize the table to new array and hash sizes (sizing hint from
     /// the bytecode's `OP_NEWTABLE`).
-    pub fn resize(&self, new_asize: u32, new_hsize: u32) -> Result<(), LuaError> {
+    ///
+    /// Private body: callers must reach this through the accounted
+    /// [`GcRef<LuaTable>::resize`] wrapper. The wrapper shadows this via
+    /// `Deref`.
+    ///
+    /// Returns the signed buffer-capacity byte delta the resize caused, for the
+    /// accounted [`GcRef<LuaTable>::resize`] wrapper to charge to the pacer.
+    /// This is the single construction-time charge for tables built via
+    /// `new_table_with_sizes`.
+    fn resize_inner(&self, new_asize: u32, new_hsize: u32) -> Result<isize, LuaError> {
         let mut inner = self.inner.borrow_mut();
-        inner.resize(new_asize, new_hsize)
+        let before = inner.capacity_bytes();
+        inner.resize(new_asize, new_hsize)?;
+        Ok(inner.capacity_bytes() as isize - before as isize)
     }
 
     /// Number of array-part slots currently allocated. Cheap counter
@@ -1495,6 +1545,74 @@ impl LuaTable {
     }
 }
 
+// ── GcRef<LuaTable> accounted mutators ─────────────────────────────────────────
+//
+// The four table mutators (`raw_set`, `try_raw_set`, `try_raw_set_int`,
+// `resize`) live here, on `GcRef<LuaTable>`, rather than on `LuaTable`. A
+// `&LuaTable` method cannot reach its own GC header, so it cannot charge the
+// growth of its array/node `Vec` backings to the pacer; a `GcRef<LuaTable>`
+// can. Inherent methods shadow the `Deref` to `LuaTable`, so existing call
+// sites `tbl.try_raw_set(...)` (tbl: `GcRef<LuaTable>`) hit these accounted
+// versions with no change, and making the `LuaTable` bodies (`*_inner`) private
+// means any caller that mutates a table through a bare `&LuaTable` — bypassing
+// the GC header — fails to compile. That structural guarantee is the durable
+// Phase-1b win: it is impossible to mutate a table off the accounting path.
+//
+// WHERE THE CHARGE LIVES. A table's array/node `Vec`s are (re)allocated in
+// exactly one place: `TableInner::resize` (called both at construction via
+// `new_table_with_sizes` and on every rehash/array-grow). `resize` is therefore
+// the single accounting site — it samples capacity before/after and charges the
+// delta. `raw_set`/`try_raw_set`/`try_raw_set_int`'s own array/hash growth flows
+// through that same `resize`, so they need no per-write charge of their own and
+// stay zero-overhead passthroughs (the write-heavy `table.insert`/`remove`/
+// `t[i]=v` hot paths must not pay a thread-local heap lookup per store).
+//
+// This deliberately does NOT add an incremental per-write charge: the only
+// workloads whose buffers grow *after* construction (`t[#t+1]=v` loops,
+// `table.insert`) either keep the table live to the end with the collector
+// stopped (no charge could ever drive a collection there) or grow through
+// `resize` anyway, so a per-write charge buys no measurable RSS while taxing the
+// hottest table path. The construction/resize charge is what moves binarytrees.
+
+impl GcRef<LuaTable> {
+    /// [`LuaTable::raw_set`] through the accounting boundary. Buffer growth is
+    /// charged at the underlying `resize`, so this is a pure passthrough.
+    #[inline]
+    pub fn raw_set(&self, k: LuaValue, v: LuaValue) {
+        (**self).raw_set_inner(k, v)
+    }
+
+    /// [`LuaTable::try_raw_set`] through the accounting boundary. Buffer growth
+    /// is charged at the underlying `resize`, so this is a pure passthrough.
+    #[inline]
+    pub fn try_raw_set(&self, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
+        (**self).try_raw_set_inner(k, v)
+    }
+
+    /// [`LuaTable::try_raw_set_int`] through the accounting boundary. Buffer
+    /// growth is charged at the underlying `resize`, so this is a pure
+    /// passthrough — the write-heavy `table.insert`/`remove` shift path stays a
+    /// bare in-place array store with no per-write heap lookup.
+    #[inline]
+    pub fn try_raw_set_int(&self, k: i64, v: LuaValue) -> Result<(), LuaError> {
+        (**self).try_raw_set_int_inner(k, v)
+    }
+
+    /// Accounted [`LuaTable::resize`]. The single table-buffer accounting site:
+    /// charges the array/node buffer growth (or shrink) the resize caused to the
+    /// GC pacer. Also the one construction-time charge for tables built via
+    /// `new_table_with_sizes` (which calls through here), so honest table memory
+    /// drives collection timing.
+    #[inline]
+    pub fn resize(&self, new_asize: u32, new_hsize: u32) -> Result<(), LuaError> {
+        let delta = (**self).resize_inner(new_asize, new_hsize)?;
+        if delta != 0 {
+            self.account_buffer(delta);
+        }
+        Ok(())
+    }
+}
+
 // ── Free helpers ──────────────────────────────────────────────────────────────
 
 /// True iff `v` is a collectable non-string LuaValue whose target was
@@ -1568,4 +1686,13 @@ fn extract_weak_mode(mt: &LuaTable) -> u8 {
 //                  (state::fast_get / state::table_get_with_tm). Weak-table mode
 //                  flags + the prune_weak_dead / ephemeron_values_to_mark
 //                  helpers integrate with the lua-gc Trace impl.
+//                  Phase-1b GC accounting boundary: the four table mutators
+//                  (raw_set / try_raw_set / try_raw_set_int / resize) are
+//                  inherent methods on GcRef<LuaTable>; the LuaTable bodies are
+//                  private *_inner (so a bare &LuaTable cannot mutate off the
+//                  accounting path). Array/node Vec (re)allocation happens only
+//                  in TableInner::resize, so GcRef<LuaTable>::resize is the
+//                  single site that charges buffer-capacity deltas to the GC
+//                  pacer (covering construction via new_table_with_sizes). The
+//                  write setters are zero-overhead passthroughs.
 // ──────────────────────────────────────────────────────────────────────────────

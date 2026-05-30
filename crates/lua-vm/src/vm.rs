@@ -28,10 +28,24 @@ use lua_types::tagmethod::TagMethod;
 use lua_types::opcode::Instruction;
 use crate::state::LuaState;
 
-/// TODO(phase-b): lua-types does not yet expose `OpCode`. Stubbed locally with
-/// all 5.4 opcodes so call sites in vm.rs/debug.rs resolve; the real numeric
-/// values and per-opcode mode flags live in `lua-types/src/opcode.rs` once
-/// translated.
+/// TODO(multiversion, Step 0 deferred): this `OpCode` is a DUPLICATE of the
+/// canonical one in `lua-code/src/opcodes.rs:87`. The Step-0 plan wanted them
+/// consolidated to one owner (`lua-code`) with `lua-vm` depending on it, but
+/// that creates a DEPENDENCY CYCLE: `lua-code/Cargo.toml` already depends on
+/// `lua-vm`, so `lua-vm` cannot depend back on `lua-code`. Consolidating
+/// therefore requires moving the canonical `OpCode`/`OP_MODES`/`Instruction`
+/// definitions DOWN into `lua-types` (which `lua-types/src/opcode.rs` already
+/// reserves) and pointing both `lua-vm` and `lua-code` at it — plus reconciling
+/// variant-name skew between the two copies (`lua-vm` uses `BXOrK`/`BXOr`,
+/// `lua-code` uses `BXorK`/`BXor`; `lua-vm` also has `LoadKx`/`GetUpval`
+/// aliases) and the `InstructionExt` decode trait that lives here. That is a
+/// larger refactor than the Step-0 scaffold; deferred to keep 5.4 green.
+/// Duplicate sites: `lua-vm/src/vm.rs:45` (this enum) vs
+/// `lua-code/src/opcodes.rs:87` (canonical).
+///
+/// Original note: Stubbed locally with all 5.4 opcodes so call sites in
+/// vm.rs/debug.rs resolve; the real numeric values and per-opcode mode flags
+/// live in `lua-types/src/opcode.rs` once translated.
 ///
 /// `#[repr(u8)]` with explicit discriminants matching C-Lua's `lopcodes.h`
 /// numbering (0=OP_MOVE, 1=OP_LOADI, ..., 82=OP_EXTRAARG). The ordered, dense

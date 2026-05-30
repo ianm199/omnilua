@@ -1741,6 +1741,31 @@ impl LuaState {
         None
     }
 
+    /// Reject a size-known-upfront allocation that would push GC-tracked memory
+    /// past the ceiling, *before* the buffer is built. Returns the uncatchable
+    /// memory abort if `total_bytes() + additional` exceeds the limit. Used by
+    /// stdlib functions that allocate a large buffer of a computed size in one
+    /// instruction (e.g. `string.rep`, `string.pack`, `table.concat`), where the
+    /// per-instruction `sandbox_check_memory` would only fire *after* the
+    /// allocation already happened.
+    pub fn sandbox_reserve(&self, additional: usize) -> Option<LuaError> {
+        let g = self.global();
+        if g.sandbox.interval.get() == 0 {
+            return None;
+        }
+        if let Some(limit) = g.sandbox.mem_limit.get() {
+            let projected = g.total_bytes().saturating_add(additional);
+            if projected > limit {
+                g.sandbox.tripped.set(SANDBOX_TRIP_MEMORY);
+                g.sandbox.aborting.set(true);
+                return Some(LuaError::runtime(format_args!(
+                    "sandbox: memory limit exceeded"
+                )));
+            }
+        }
+        None
+    }
+
     /// Upper bound on the work a single pattern-match call may do before it must
     /// stop and let the caller charge the budget. Equal to the remaining
     /// instruction budget when an instruction limit is active, else `0` meaning

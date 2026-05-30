@@ -315,6 +315,51 @@ fn pcall_still_catches_ordinary_errors_under_sandbox() {
     assert_eq!(sandbox.tripped(), None);
 }
 
+/// A single huge `string.rep` allocation is refused *before* it is built,
+/// rather than overshooting the ceiling (the stdlib self-guard is 2 GiB, far
+/// above a typical sandbox cap).
+#[test]
+fn huge_string_rep_aborts_at_cap() {
+    let config = SandboxConfig {
+        instruction_limit: None,
+        memory_limit_bytes: Some(32 * 1024 * 1024),
+        check_interval: 256,
+        remove_globals: Vec::new(),
+    };
+    let (lua, sandbox) = Lua::sandboxed(config).unwrap();
+
+    let result = lua
+        .load("return ('x'):rep(256 * 1024 * 1024)")
+        .exec();
+    assert!(result.is_err(), "256 MiB rep under a 32 MiB cap must abort");
+    assert_eq!(sandbox.tripped(), Some(TripReason::Memory));
+}
+
+/// The memory cap is uncatchable too: a `pcall` loop allocating big strings
+/// cannot keep running.
+#[test]
+fn memory_cap_is_uncatchable() {
+    use std::time::{Duration, Instant};
+    let config = SandboxConfig {
+        instruction_limit: None,
+        memory_limit_bytes: Some(32 * 1024 * 1024),
+        check_interval: 256,
+        remove_globals: Vec::new(),
+    };
+    let (lua, sandbox) = Lua::sandboxed(config).unwrap();
+
+    let start = Instant::now();
+    let result = lua
+        .load("while true do pcall(function() return ('x'):rep(64 * 1024 * 1024) end) end")
+        .exec();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "memory cap escaped via pcall loop"
+    );
+    assert!(result.is_err());
+    assert_eq!(sandbox.tripped(), Some(TripReason::Memory));
+}
+
 /// A catastrophic-backtracking pattern match — one stdlib C call that the
 /// per-instruction budget cannot preempt — is now bounded by charging the
 /// matcher's work against the instruction budget.

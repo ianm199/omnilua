@@ -357,6 +357,10 @@ pub fn str_rep(state: &mut LuaState) -> Result<usize, LuaError> {
         }
         let total = per * (n as usize) - lsep;
 
+        if let Some(err) = state.sandbox_reserve(total) {
+            return Err(err);
+        }
+
         let mut buf: Vec<u8> = Vec::with_capacity(total);
         for i in 0..(n as usize) {
             buf.extend_from_slice(s);

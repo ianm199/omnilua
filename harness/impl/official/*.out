@@ -1,0 +1,4 @@
+/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-sandbox/target/debug/lua-rs: cannot open /Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-sandbox/reference/lua-c/testes/*.lua: cannot open '/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-sandbox/reference/lua-c/testes/*.lua': No such file or directory (os error 2)
+stack traceback:
+	[C]: in function 'dofile'
+	...eriments/lua-rs-sandbox/harness/impl/official/*.wrap.lua:2: in main chunk

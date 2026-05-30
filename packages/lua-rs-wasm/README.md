@@ -65,6 +65,31 @@ print(greeter.message("node wasm"))
 `);
 ```
 
+## Sandboxing untrusted scripts
+
+Bound CPU and memory and strip host access before running untrusted Lua. Limits
+are enforced on every thread (coroutines included) and **cannot be caught** with
+`pcall`. Call `setLimits` once, then `run`/`exec`/`tryExec` as usual; `lastTrip`
+reports which limit (if any) stopped a run, and `sandboxReset` refills the
+budget.
+
+```js
+lua.setLimits({
+  maxInstructions: 5_000_000,
+  maxMemory: 64 * 1024 * 1024,
+  strict: true, // also remove os.execute, io, load, require, debug, …
+});
+
+const result = lua.tryExec("while true do end"); // runaway user script
+console.log(result.ok); // false
+console.log(lua.lastTrip()); // "instructions"  ("memory" | null)
+
+lua.sandboxReset(); // refill the budget for the next run
+```
+
+Omit a limit (or pass `0`) to leave that dimension unbounded. Design and threat
+model: [SANDBOXING_EXPLORATION.md](https://github.com/ianm199/lua-rs/blob/main/docs/SANDBOXING_EXPLORATION.md).
+
 The wrapper supplies the `lua_rs_host` imports expected by `lua-wasm`, copies
 Lua source into exported WASM memory, runs it through `lua_rs_wasm_run`, exposes
 last-error text, and keeps one Lua state alive across `lua.exec(...)` calls until

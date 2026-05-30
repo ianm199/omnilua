@@ -4,6 +4,29 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — sandboxing for untrusted Lua
+
+Run untrusted scripts with bounded CPU and memory and no host access. Limits are
+enforced on every thread (coroutines included) and are **uncatchable** — a script
+cannot escape them with `pcall`/`xpcall`/`coroutine.resume`. A non-sandboxed
+runtime pays zero overhead.
+
+- **Rust:** `Lua::sandboxed(SandboxConfig)` returns the runtime plus a `Sandbox`
+  handle (`tripped()` / `reset()`). `Lua::install_sandbox` and
+  `LuaRuntime::install_sandbox` apply limits to an existing runtime.
+- **CLI:** `--sandbox`, `--max-instructions=N`, `--max-memory=N[K|M|G]`.
+- **WASM / JS:** `lua_rs_wasm_set_limits` / `lua_rs_wasm_last_trip` /
+  `lua_rs_wasm_sandbox_reset`; the `lua-rs-wasm` JS wrapper adds `setLimits`,
+  `lastTrip`, and `sandboxReset`.
+
+Three controls: an instruction budget (aborts infinite loops and runaway
+recursion), a memory ceiling (refuses oversize allocations before they happen,
+plus per-interval sampling), and capability stripping (removes `os.execute`,
+`io`, `load`, `require`, `debug`, … from `_G`). Design and threat model:
+[docs/SANDBOXING_EXPLORATION.md](docs/SANDBOXING_EXPLORATION.md).
+
 ## [0.0.17] - 2026-05-30
 
 ### Changed — `#[derive(LuaUserData)]` field exposure (BREAKING)

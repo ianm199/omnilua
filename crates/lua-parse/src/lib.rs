@@ -184,6 +184,11 @@ pub struct ExprPayload {
     pub ind_t: u8,
     pub var_ridx: u8,
     pub var_vidx: u16,
+    /// Lua 5.5: when this expression resolves a global that was declared
+    /// `global x <const>`, the declared name is recorded here so that an
+    /// assignment to it is rejected by [`check_readonly`]. `None` for every
+    /// other expression (and on all pre-5.5 versions).
+    pub global_const_name: Option<GcRef<LuaString>>,
 }
 
 // ── ExprDesc ────────────────────────────────────────────────────────────────
@@ -417,6 +422,18 @@ pub struct LexState {
     pub lex: lua_lex::LexState,
     /// Parser recursion depth for C-Lua's `enterlevel` / `leavelevel` guard.
     pub recursion_depth: u32,
+    /// Lua 5.5 global-declaration mode (manual §2.2). A chunk begins with an
+    /// implicit `global *` (`false` here): every free name is a global, as in
+    /// 5.4. The first explicit `global name, …` declaration flips this to
+    /// `true` ("strict"), after which a free name must appear in
+    /// [`Self::declared_globals`] or it is a compile-time error. `global *`
+    /// flips it back to `false`. Only ever set on the 5.5 path (the lexer emits
+    /// `TK_GLOBAL` only there), so pre-5.5 versions are unaffected.
+    pub global_strict: bool,
+    /// Names declared via `global`, each paired with whether it was declared
+    /// `<const>` (read-only). Consulted by name resolution under
+    /// [`Self::global_strict`].
+    pub declared_globals: Vec<(GcRef<LuaString>, bool)>,
 }
 
 const PARSER_MAX_C_CALLS: u32 = 200;
@@ -2006,6 +2023,16 @@ fn init_var(ls: &LexState, fs: &FuncState, e: &mut ExprDesc, vidx: i32) {
 
 /// Raises an error if expression `e` describes a read-only variable.
 fn check_readonly(ls: &mut LexState, state: &mut LuaState, e: &ExprDesc) -> Result<(), LuaError> {
+    // Lua 5.5: assignment to a `global x <const>` declared global is rejected
+    // at compile time, tagged on the resolved expression by `singlevar`.
+    if let Some(name) = e.u.global_const_name.as_ref() {
+        let msg = format!(
+            "attempt to assign to const variable '{}'",
+            String::from_utf8_lossy(name.as_bytes())
+        );
+        // Semantic error (C's luaK_semerror): no "near <token>" suffix.
+        return Err(lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0));
+    }
     let varname: Option<GcRef<LuaString>> = {
         let fs = ls.fs.as_ref().unwrap();
         match e.k {
@@ -2255,6 +2282,32 @@ fn singlevar(ls: &mut LexState, state: &mut LuaState, var: &mut ExprDesc) -> Res
     ls.fs = fs_box;
     recurse_result?;
     if var.k == ExprKind::Void {
+        // Lua 5.5: once a scope is in strict mode (an explicit `global`
+        // declaration was seen), a free name must be a declared global —
+        // otherwise it is a compile-time error (manual §2.2). `global_strict`
+        // is only ever set on the 5.5 path, so pre-5.5 resolution is unchanged.
+        let is_const_global = if ls.global_strict {
+            let mut declared_const: Option<bool> = None;
+            for (n, c) in &ls.declared_globals {
+                if GcRef::ptr_eq(n, &varname) {
+                    declared_const = Some(*c);
+                    break;
+                }
+            }
+            match declared_const {
+                None => {
+                    let msg = format!(
+                        "variable '{}' not declared",
+                        String::from_utf8_lossy(varname.as_bytes())
+                    );
+                    // Semantic error (C's luaK_semerror): no "near <token>" suffix.
+                    return Err(lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0));
+                }
+                Some(c) => c,
+            }
+        } else {
+            false
+        };
         let envn = ls.envn.clone().expect("envn must be set when resolving globals");
         let mut env_var = ExprDesc::default();
         let mut fs_box = ls.fs.take();
@@ -2266,9 +2319,11 @@ fn singlevar(ls: &mut LexState, state: &mut LuaState, var: &mut ExprDesc) -> Res
         let fs = ls.fs.as_mut().unwrap();
         cg_exp_to_any_reg_up(fs, line, &mut env_var)?;
         let mut key = ExprDesc::default();
+        let const_name = if is_const_global { Some(varname.clone()) } else { None };
         codestring(&mut key, varname);
         cg_indexed(fs, line, &mut env_var, &mut key)?;
         *var = env_var;
+        var.u.global_const_name = const_name;
     }
     Ok(())
 }
@@ -4002,33 +4057,60 @@ fn checktoclose(ls: &mut LexState, _state: &mut LuaState, level: i32) -> Result<
 fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     lex_next(ls, state)?; // skip 'global'
 
-    // `global [attrib] '*'` — the collective form.
+    // `global [<const>] '*'` — the collective form re-enables global-by-default
+    // for the rest of the scope (voids any earlier strict-mode declaration).
     if test_next(ls, state, b'<' as TokenKind)? {
         let _attr = str_check_name(ls, state)?;
         check_next(ls, state, b'>' as TokenKind)?;
         check_next(ls, state, b'*' as TokenKind)?;
+        ls.global_strict = false;
         return Ok(());
     }
     if test_next(ls, state, b'*' as TokenKind)? {
+        ls.global_strict = false;
         return Ok(());
     }
 
-    // `global attnamelist ['=' explist]` — the name-list form. Parse and drop
-    // the names + their per-name attributes (groundwork only).
+    // `global attnamelist ['=' explist]` — the name-list form. Record each
+    // declared name (with its `<const>`-ness) and switch the scope into strict
+    // mode so subsequent free names must be declared (manual §2.2).
     loop {
-        let _name = str_check_name(ls, state)?;
+        let name = str_check_name(ls, state)?;
+        let mut is_const = false;
         if test_next(ls, state, b'<' as TokenKind)? {
-            let _attr = str_check_name(ls, state)?;
+            let attr = str_check_name(ls, state)?;
             check_next(ls, state, b'>' as TokenKind)?;
+            match attr.as_bytes() {
+                b"const" => is_const = true,
+                b"close" => {
+                    return Err(lua_lex::syntax_error(
+                        &mut ls.lex,
+                        b"<close> is not allowed for a global declaration",
+                    ));
+                }
+                other => {
+                    let msg = format!(
+                        "unknown attribute '{}'",
+                        String::from_utf8_lossy(other)
+                    );
+                    return Err(lua_lex::syntax_error(&mut ls.lex, msg.as_bytes()));
+                }
+            }
         }
+        ls.declared_globals.push((name, is_const));
         if !test_next(ls, state, b',' as TokenKind)? {
             break;
         }
     }
+    // PRELIMINARY: an `= explist` initializer is parsed but its values are not
+    // yet stored to the globals (the declare / enforce / const core is what the
+    // multi-version gates exercise; storing initializers needs the global-store
+    // codegen path and is tracked as follow-up).
     if test_next(ls, state, b'=' as TokenKind)? {
         let mut e = ExprDesc::default();
         explist(ls, state, &mut e)?;
     }
+    ls.global_strict = true;
     Ok(())
 }
 
@@ -4270,7 +4352,6 @@ fn mainfunc(ls: &mut LexState, state: &mut LuaState, main_fs: FuncState) -> Resu
     close_func(ls, state)
 }
 
-///                           const char *name, int firstchar)
 /// Top-level entry point: parses a chunk and returns the main LClosure.
 /// LUAI_FUNC visibility.
 ///
@@ -4318,6 +4399,8 @@ pub fn parse(
         envn: Some(lex_ls.envn.clone()),
         lex: lex_ls,
         recursion_depth: 0,
+        global_strict: false,
+        declared_globals: Vec::new(),
     };
     //   `mainfunc`; it does NOT pre-read the first token. `mainfunc` itself
     //   issues the initial `luaX_next` once its prelude (open_func, vararg

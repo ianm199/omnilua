@@ -87,7 +87,120 @@ fn shift(x: u32, disp: i64) -> u32 {
     }
 }
 
-/// The `bit32` function roster. PRELIMINARY subset; see module doc.
+/// `w` low bits set, matching `bit32`'s field mask (`width` in `1..=32`).
+fn mask_w(w: u32) -> u32 {
+    if w >= 32 {
+        0xFFFF_FFFF
+    } else {
+        (1u32 << w) - 1
+    }
+}
+
+/// Validate and return the `(field, width)` pair for `extract`/`replace`,
+/// matching Lua 5.2's `fieldargs` bounds checks. `width_arg` defaults to 1.
+fn field_args(
+    state: &mut LuaState,
+    field_arg: i32,
+    width_arg: i32,
+) -> Result<(u32, u32), LuaError> {
+    let f = state.check_integer(field_arg)?;
+    let w = if state.get_top() >= width_arg {
+        state.check_integer(width_arg)?
+    } else {
+        1
+    };
+    if f < 0 {
+        return Err(LuaError::arg_error(field_arg, "field cannot be negative"));
+    }
+    if w < 1 {
+        return Err(LuaError::arg_error(width_arg, "width must be positive"));
+    }
+    if f + w > 32 {
+        return Err(LuaError::arg_error(
+            field_arg,
+            "trying to access non-existent bits",
+        ));
+    }
+    Ok((f as u32, w as u32))
+}
+
+/// `bit32.btest(...)` — true iff the AND of all arguments is non-zero.
+fn bit_btest(state: &mut LuaState) -> Result<usize, LuaError> {
+    let top = state.get_top();
+    let mut acc: u32 = 0xFFFF_FFFF;
+    for i in 1..=top {
+        acc &= arg_u32(state, i)?;
+    }
+    state.push(LuaValue::Bool(acc != 0));
+    Ok(1)
+}
+
+/// `bit32.extract(n, field [, width])` — the `width` bits of `n` at `field`.
+fn bit_extract(state: &mut LuaState) -> Result<usize, LuaError> {
+    let n = arg_u32(state, 1)?;
+    let (f, w) = field_args(state, 2, 3)?;
+    push_u32(state, (n >> f) & mask_w(w));
+    Ok(1)
+}
+
+/// `bit32.replace(n, v, field [, width])` — `n` with its `width` bits at
+/// `field` replaced by the low bits of `v`.
+fn bit_replace(state: &mut LuaState) -> Result<usize, LuaError> {
+    let n = arg_u32(state, 1)?;
+    let v = arg_u32(state, 2)?;
+    let (f, w) = field_args(state, 3, 4)?;
+    let m = mask_w(w);
+    push_u32(state, (n & !(m << f)) | ((v & m) << f));
+    Ok(1)
+}
+
+/// `bit32.arshift(x, disp)` — arithmetic right shift (sign-propagating);
+/// negative `disp` shifts left.
+fn bit_arshift(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = arg_u32(state, 1)?;
+    let disp = state.check_integer(2)?;
+    let r = if disp < 0 {
+        shift(x, -disp)
+    } else if disp >= 32 {
+        if x & 0x8000_0000 != 0 {
+            0xFFFF_FFFF
+        } else {
+            0
+        }
+    } else if x & 0x8000_0000 != 0 {
+        (x >> disp) | !(0xFFFF_FFFFu32 >> disp)
+    } else {
+        x >> disp
+    };
+    push_u32(state, r);
+    Ok(1)
+}
+
+/// 32-bit rotate left by `disp` (mod 32); negative rotates right.
+fn rotate(x: u32, disp: i64) -> u32 {
+    let d = (((disp % 32) + 32) % 32) as u32;
+    if d == 0 {
+        x
+    } else {
+        (x << d) | (x >> (32 - d))
+    }
+}
+
+fn bit_lrotate(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = arg_u32(state, 1)?;
+    let disp = state.check_integer(2)?;
+    push_u32(state, rotate(x, disp));
+    Ok(1)
+}
+
+fn bit_rrotate(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = arg_u32(state, 1)?;
+    let disp = state.check_integer(2)?;
+    push_u32(state, rotate(x, -disp));
+    Ok(1)
+}
+
+/// The `bit32` function roster — the full Lua 5.2/5.3 surface.
 const BIT32_FUNCS: &[(&[u8], LuaCFunction)] = &[
     (b"band", bit_band),
     (b"bor", bit_bor),
@@ -95,8 +208,12 @@ const BIT32_FUNCS: &[(&[u8], LuaCFunction)] = &[
     (b"bnot", bit_bnot),
     (b"lshift", bit_lshift),
     (b"rshift", bit_rshift),
-    // TODO(multiversion-5.3): add the remaining 5.2/5.3 bit32 functions —
-    // btest, extract, replace, arshift, lrotate, rrotate.
+    (b"btest", bit_btest),
+    (b"extract", bit_extract),
+    (b"replace", bit_replace),
+    (b"arshift", bit_arshift),
+    (b"lrotate", bit_lrotate),
+    (b"rrotate", bit_rrotate),
 ];
 
 /// Open the `bit32` library, leaving the populated table on the stack.

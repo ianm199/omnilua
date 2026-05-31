@@ -2061,14 +2061,16 @@ fn check_readonly(ls: &mut LexState, state: &mut LuaState, e: &ExprDesc) -> Resu
         }
     };
     if let Some(vname) = varname {
-        // luaX_syntaxerror; route through `syntax_error` here for parity so
-        // constructs.lua's checkload(":1: attempt to assign...") matches.
+        // C's luaK_semerror: a semantic error carries no "near <token>" suffix
+        // (it zeroes ls->t.token before luaX_syntaxerror). Use lex_error with
+        // token 0 to match the reference exactly for every version. constructs.lua's
+        // checkload(":1: attempt to assign...") still matches (prefix).
         let _ = state;
         let msg = format!(
             "attempt to assign to const variable '{}'",
             String::from_utf8_lossy(vname.as_bytes())
         );
-        return Err(lua_lex::syntax_error(&mut ls.lex, msg.as_bytes()));
+        return Err(lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0));
     }
     Ok(())
 }
@@ -3831,7 +3833,14 @@ fn fornum(
     new_local_var(ls, state, for_state_str.clone())?;
     new_local_var(ls, state, for_state_str.clone())?;
     new_local_var(ls, state, for_state_str)?;
-    new_local_var(ls, state, varname)?;
+    let ctrl_vidx = new_local_var(ls, state, varname)?;
+    // Lua 5.5: the numeric for-loop control variable is read-only — assigning
+    // to it is a compile error. The FORLOOP opcode still updates the register
+    // directly, so loop progress is unaffected. (No effect on pre-5.5.)
+    if state.global().lua_version == lua_types::LuaVersion::V55 {
+        let firstlocal = ls.fs.as_ref().unwrap().firstlocal;
+        get_local_var_desc_mut(ls, firstlocal, ctrl_vidx).kind = VarKind::Const;
+    }
     check_next(ls, state, b'=' as TokenKind)?;
     exp1(ls, state)?; // initial value
     check_next(ls, state, b',' as TokenKind)?;
@@ -3865,7 +3874,13 @@ fn forlist(
     new_local_var(ls, state, for_state_str.clone())?;
     new_local_var(ls, state, for_state_str.clone())?;
     new_local_var(ls, state, for_state_str)?;
-    new_local_var(ls, state, indexname)?;
+    let idx_vidx = new_local_var(ls, state, indexname)?;
+    // Lua 5.5: the first control variable of a generic for is read-only (the
+    // remaining loop variables stay assignable).
+    if state.global().lua_version == lua_types::LuaVersion::V55 {
+        let firstlocal = ls.fs.as_ref().unwrap().firstlocal;
+        get_local_var_desc_mut(ls, firstlocal, idx_vidx).kind = VarKind::Const;
+    }
     while test_next(ls, state, b',' as TokenKind)? {
         let extra_name = str_check_name(ls, state)?;
         new_local_var(ls, state, extra_name)?;

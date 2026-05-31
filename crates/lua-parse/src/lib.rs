@@ -264,6 +264,12 @@ pub struct BlockCnt {
     pub upval: bool,
     pub isloop: bool,
     pub insidetbc: bool,
+    /// Lua 5.5: the `global`-declaration scope state (LexState `global_strict`
+    /// and the length of `declared_globals`) saved on block entry and restored
+    /// on exit, so a `global` declaration is scoped to its enclosing block —
+    /// e.g. `do global x end` does not leak strict mode past the block.
+    pub saved_global_strict: bool,
+    pub saved_declared_globals: usize,
 }
 
 // ── FuncState ───────────────────────────────────────────────────────────────
@@ -2694,6 +2700,8 @@ fn movegotosout(ls: &mut LexState, bl_firstgoto: usize, bl_nactvar: u8, bl_upval
 fn enter_block(ls: &mut LexState, isloop: bool) {
     let firstlabel = ls.dyd.label.len() as i32;
     let firstgoto = ls.dyd.gt.len() as i32;
+    let saved_global_strict = ls.global_strict;
+    let saved_declared_globals = ls.declared_globals.len();
     let insidetbc = ls.fs.as_ref()
         .and_then(|f| f.bl.as_ref())
         .map_or(false, |b| b.insidetbc);
@@ -2707,6 +2715,8 @@ fn enter_block(ls: &mut LexState, isloop: bool) {
         upval: false,
         isloop,
         insidetbc,
+        saved_global_strict,
+        saved_declared_globals,
     });
     fs.bl = Some(new_bl);
     debug_assert!(fs.freereg as i32 == {
@@ -2742,6 +2752,18 @@ fn leave_block(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> 
             .expect("leave_block: no current block");
         (bl.nactvar, bl.isloop, bl.upval, bl.firstgoto, bl.firstlabel)
     };
+
+    // Lua 5.5: restore the `global`-declaration scope to what it was on block
+    // entry, so an explicit `global` decl (and the strict mode it triggers) is
+    // confined to its enclosing block.
+    {
+        let (sgs, sdg) = {
+            let bl = ls.fs.as_ref().unwrap().bl.as_ref().unwrap();
+            (bl.saved_global_strict, bl.saved_declared_globals)
+        };
+        ls.global_strict = sgs;
+        ls.declared_globals.truncate(sdg);
+    }
 
     let stklevel = reg_level(ls, ls.fs.as_ref().unwrap(), bl_nactvar as i32);
     let mut fs_box = ls.fs.take().unwrap();

@@ -605,16 +605,60 @@ impl Cli {
     }
 }
 
-/// `lua.c`: `pmain` — the body of the interpreter. Assumes `state` already has
-/// its platform hooks installed; opens the standard libraries, installs
-/// `preload`-registered native modules, builds `arg`, runs `LUA_INIT`, then the
-/// `-e`/`-l` options, then the script, and finally enters the REPL when
-/// appropriate. Returns the process exit code.
-pub(crate) fn run(
+/// `lua.c`: `pmain` — the body of the interpreter, run *beneath a C CallInfo*.
+///
+/// lua.c's `main` does not call `pmain` directly: it pushes it as a C closure
+/// and `lua_pcall`s it, so the script/REPL chunk runs one frame below `pmain`'s
+/// C frame on the call stack. An uncaught error therefore walks `... main chunk
+/// -> pmain (C) -> base_ci`, and the standalone traceback renders `pmain` as the
+/// trailing `[C]: in ?` frame (#79d). lua-rs reproduces this by pushing this fn
+/// as a C closure ([`run`]) and `pcall_k`ing it; the stack walker
+/// (`get_stack`/`get_info`/`push_func_name`) then sees one extra C frame and
+/// emits `[C]: in ?` with no other change to frame numbering.
+///
+/// `argv` and `preload` cannot be captured by a lua-rs C closure (it is a bare
+/// `fn(&mut LuaState)`), so — mirroring lua.c passing them as `pmain` arguments
+/// — [`run`] parks them on `GlobalState::cli_argv`/`cli_preload` and this fn
+/// `take()`s them at entry.
+///
+/// Returns `Ok(1)` always, leaving a boolean success flag on the stack
+/// (`true` = exit 0, `false` = exit 1), exactly like lua.c's `pmain`
+/// (`lua_pushboolean(L, 1); return 1`) — orchestration failures are already
+/// `report`ed here, so the flag, not the outer pcall, drives the exit code.
+fn pmain(state: &mut LuaState) -> Result<usize, LuaError> {
+    let argv = state
+        .global_mut()
+        .cli_argv
+        .take()
+        .expect("pmain: cli_argv not set by run()");
+    let preload = state
+        .global_mut()
+        .cli_preload
+        .take()
+        .expect("pmain: cli_preload not set by run()");
+    let argv = argv.as_slice();
+
+    let ok = pmain_body(state, argv, preload);
+
+    // C-Lua's `main` calls `lua_close(L)` after `pmain`, which runs every
+    // remaining `__gc` finalizer (`luaC_freeallobjects`). Drive the same
+    // close-time finalizer pass before the `LuaState` is dropped so programs
+    // that keep a finalizable object alive to program end still observe their
+    // `__gc` side effects (e.g. `gc.lua`'s `>>> closing state <<<`).
+    api::run_close_finalizers(state);
+
+    api::push_boolean(state, ok);
+    Ok(1)
+}
+
+/// The orchestration sequence formerly inlined in `run`. Returns `true` on
+/// success (process exit 0) and `false` on a reported orchestration failure
+/// (exit 1), mirroring the boolean `pmain` leaves on the stack in lua.c.
+fn pmain_body(
     state: &mut LuaState,
     argv: &[Vec<u8>],
     preload: fn(&mut LuaState) -> Result<(), LuaError>,
-) -> i32 {
+) -> bool {
     let (args, script) = collectargs(argv);
 
     let mut cli = Cli {
@@ -627,7 +671,7 @@ pub(crate) fn run(
     if args == HAS_ERROR {
         let bad = argv.get(script as usize).map(|v| v.as_slice()).unwrap_or(b"");
         cli.print_usage(bad);
-        return 1;
+        return false;
     }
 
     if args & HAS_V != 0 {
@@ -637,7 +681,7 @@ pub(crate) fn run(
     if args & HAS_BIG_E != 0 {
         api::push_boolean(state, true);
         if let Err(e) = api::set_field(state, LUA_REGISTRYINDEX, b"LUA_NOENV") {
-            return if cli.report(Err(e)) { 0 } else { 1 };
+            return cli.report(Err(e));
         }
     }
 
@@ -652,11 +696,11 @@ pub(crate) fn run(
 
     if let Err(e) = open_libs(state) {
         cli.report(Err(e));
-        return 1;
+        return false;
     }
     if let Err(e) = preload(state) {
         cli.report(Err(e));
-        return 1;
+        return false;
     }
 
     let sandbox_opts = parse_sandbox_opts(argv);
@@ -666,7 +710,7 @@ pub(crate) fn run(
                 lua_stdlib::sandbox::strip_globals(state, lua_stdlib::sandbox::STRICT_REMOVED_GLOBALS)
             {
                 cli.report(Err(e));
-                return 1;
+                return false;
             }
         }
         let instr = sandbox_opts.instruction_limit();
@@ -678,20 +722,20 @@ pub(crate) fn run(
 
     if let Err(e) = createargtable(state, argv, script) {
         cli.report(Err(e));
-        return 1;
+        return false;
     }
 
     if args & HAS_BIG_E == 0 && !cli.handle_luainit(state) {
-        return 1;
+        return false;
     }
 
     let optlim = if script > 0 { script } else { argv.len() as i32 };
     if !cli.runargs(state, argv, optlim) {
-        return 1;
+        return false;
     }
 
     if script > 0 && !cli.handle_script(state, argv, script) {
-        return 1;
+        return false;
     }
 
     if args & HAS_I != 0 {
@@ -705,14 +749,54 @@ pub(crate) fn run(
         }
     }
 
-    // C-Lua's `main` calls `lua_close(L)` after `pmain`, which runs every
-    // remaining `__gc` finalizer (`luaC_freeallobjects`). Drive the same
-    // close-time finalizer pass before the `LuaState` is dropped so programs
-    // that keep a finalizable object alive to program end still observe their
-    // `__gc` side effects (e.g. `gc.lua`'s `>>> closing state <<<`).
-    api::run_close_finalizers(state);
+    true
+}
 
-    0
+/// `lua.c`: `main` (the `pmain` pcall portion) — push `pmain` as a C closure and
+/// `lua_pcall` it so the whole interpreter body runs beneath a base C CallInfo,
+/// giving uncaught errors their trailing `[C]: in ?` traceback frame (#79d).
+///
+/// `argv`/`preload` are parked on `GlobalState` for `pmain` to reclaim (a lua-rs
+/// C closure cannot capture Rust values). The outer pcall installs NO message
+/// handler (`errfunc = 0`) — exactly like lua.c; the traceback is produced by
+/// `docall`'s INNER `msghandler`, which runs while `pmain` is still on the
+/// stack. Returns the process exit code.
+pub(crate) fn run(
+    state: &mut LuaState,
+    argv: &[Vec<u8>],
+    preload: fn(&mut LuaState) -> Result<(), LuaError>,
+) -> i32 {
+    state.global_mut().cli_argv = Some(argv.to_vec());
+    state.global_mut().cli_preload = Some(preload);
+
+    let progname = argv
+        .first()
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_vec());
+
+    if let Err(e) = api::push_cclosure(state, pmain, 0) {
+        Cli { progname }.report(Err(e));
+        return 1;
+    }
+
+    match api::pcall_k(state, 0, 1, 0, 0, None) {
+        Ok(_) => {
+            let ok = api::to_boolean(state, -1);
+            state.pop_n(1);
+            if ok {
+                0
+            } else {
+                1
+            }
+        }
+        Err(e) => {
+            // An outer-pcall error is a non-Lua internal failure: orchestration
+            // errors are already `report`ed inside `pmain`. Mirror lua.c's
+            // `report(L, status)` after the outer pcall.
+            Cli { progname }.report(Err(e));
+            1
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -732,4 +816,13 @@ pub(crate) fn run(
 //                  invokes it during error synthesis (do_.rs pcall), so the
 //                  returned LuaError carries the traceback string. SIGINT
 //                  interruption of a running chunk is wired in repl.rs.
+//                  #79d: `run` now mirrors lua.c's `main` — it pushes `pmain`
+//                  as a C closure and `pcall_k`s it (errfunc=0, NO outer
+//                  message handler), so the whole interpreter body runs beneath
+//                  a base C CallInfo. Uncaught errors thus gain the trailing
+//                  `[C]: in ?` frame from the (unchanged) stack walker. argv/
+//                  preload are parked on GlobalState::cli_argv/cli_preload for
+//                  `pmain` to reclaim (a C closure cannot capture Rust values);
+//                  `pmain` leaves a boolean success flag on the stack that the
+//                  wrapper reads for the exit code (lua.c's lua_toboolean(-1)).
 // ──────────────────────────────────────────────────────────────────────────

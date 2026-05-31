@@ -994,6 +994,19 @@ pub struct GlobalState {
     /// so unit tests that never load text still work.
     pub parser_hook: Option<ParserHook>,
 
+    /// Transient slot carrying the CLI's `argv` into the `pmain` C closure.
+    /// Mirrors `lua.c`'s `lua_pushinteger(argc)/lua_pushlightuserdata(argv)`
+    /// arguments to `pmain`: a lua-rs C closure cannot capture Rust values, so
+    /// `lua-cli`'s `run` parks `argv` here, pushes a zero-arg `pmain` closure,
+    /// and `pcall_k`s it; `pmain` `take()`s it back out. Lives on `GlobalState`
+    /// to keep `lua-cli` free of `unsafe` light-userdata round-tripping.
+    pub cli_argv: Option<Vec<Vec<u8>>>,
+
+    /// Transient slot carrying the CLI's native-module `preload` callback into
+    /// the `pmain` C closure, paired with [`GlobalState::cli_argv`]. The type
+    /// matches `lua-cli::interp::run`'s `preload` parameter.
+    pub cli_preload: Option<fn(&mut LuaState) -> Result<(), LuaError>>,
+
     /// The Lua language version this state speaks. The single source of truth
     /// for version-gated behavior in the layers that read the state (parser,
     /// stdlib openers). The embedder sets this from the [`Lua`] instance's
@@ -4518,6 +4531,8 @@ pub fn new_state() -> Option<LuaState> {
 
     let global = GlobalState {
         parser_hook: None,
+        cli_argv: None,
+        cli_preload: None,
         lua_version: lua_types::LuaVersion::default(),
         file_loader_hook: None,
         file_open_hook: None,

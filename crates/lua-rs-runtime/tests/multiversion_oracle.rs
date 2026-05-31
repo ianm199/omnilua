@@ -530,6 +530,50 @@ fn v53_rejects_attribute_syntax() {
     err_contains(LuaVersion::V53, "local x <const> = 1; return x", "unexpected symbol");
 }
 
+/// Shared-core item F: `string.unpack` initial-position lower bound.
+///
+/// Lua 5.3's `posrelat` returns `0` for `pos == 0` (and for negatives whose
+/// magnitude exceeds the string length), after which `string.unpack`'s
+/// `pos = posrelat - 1` underflows and trips the "initial position out of
+/// string" guard. 5.4/5.5 switched to `posrelatI`, which maps `0` to `1`, so
+/// `pos == 0` is intentionally a valid start there. Confirmed against the
+/// lua5.3.6 / lua5.4.7 / lua5.5.0 reference binaries; matches tpack.lua's own
+/// version split (5.3 `checkerror("out of string", unpack, "c0", x, 0)`).
+#[test]
+fn v53_string_unpack_c0_initial_position_lower_bound() {
+    // 5.3: pos=0 and out-of-range-negative pos both reject.
+    err_contains(
+        LuaVersion::V53,
+        r#"return string.unpack("c0", "abc", 0)"#,
+        "initial position out of string",
+    );
+    err_contains(
+        LuaVersion::V53,
+        r#"return string.unpack("c0", "abc", -4)"#,
+        "initial position out of string",
+    );
+}
+
+/// Guard that the item-F gate is 5.3-only: 5.4/5.5 accept `pos == 0` (and the
+/// just-out-of-range negative) exactly as their references do, and every
+/// version still agrees on the in-range positions. A regression here would
+/// mean the `V53` branch leaked into the newer collectors.
+#[test]
+fn v54_v55_string_unpack_c0_pos_zero_accepted() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        // pos=0 is a valid start on 5.4/5.5 (posrelatI maps 0 -> 1). `c0`
+        // unpacks an empty string and returns the next position as 2nd result.
+        eq(v, r#"local _, p = string.unpack("c0", "abc", 0); return p"#, "1");
+        eq(v, r#"local _, p = string.unpack("c0", "abc", -4); return p"#, "1");
+    }
+    // In-range positions agree across every version (the gate is inert here).
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, r#"local _, p = string.unpack("c0", "abc", 1); return p"#, "1");
+        eq(v, r#"local _, p = string.unpack("c0", "abc", -3); return p"#, "1");
+        eq(v, r#"local _, p = string.unpack("c0", "abc", 4); return p"#, "4");
+    }
+}
+
 /// `LUA_COMPAT_MATHLIB` roster (issue #19; `specs/followup/5.3-math.md`).
 ///
 /// Per-version presence verified directly against the reference binaries:

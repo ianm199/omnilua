@@ -494,3 +494,56 @@ fn utf8_escape_bound_matches_reference_per_version() {
         }
     }
 }
+
+/// Shared-core item F (CLI message surface): `string.unpack("c0", x, 0)`.
+///
+/// On 5.3 the reference raises `bad argument #3 to 'unpack' (initial position
+/// out of string)` and exits 1; on 5.4/5.5 `pos == 0` is a valid start and the
+/// call succeeds (exit 0). We assert the behavioral split here and that, where
+/// a reference binary is present, our exit code matches it. The exact `to
+/// '<fn>'` funcname wording is item B (`arg_error` funcname omission) and is
+/// deliberately not asserted; the load-bearing claim is the raise itself plus
+/// the "initial position out of string" reason.
+#[test]
+fn string_unpack_c0_pos_zero_is_53_only_error() {
+    let prog = r#"print(string.unpack("c0", "abc", 0))"#;
+    for &v in VERSIONS {
+        let out = lua_rs()
+            .env("LUA_RS_VERSION", v)
+            .arg("-e")
+            .arg(prog)
+            .output()
+            .expect("spawn lua-rs -e");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if v == "5.3" {
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "[unpack-c0/{v}] pos=0 must error on 5.3:\nstderr={stderr}"
+            );
+            assert!(
+                stderr.contains("initial position out of string"),
+                "[unpack-c0/{v}] missing reason in stderr:\n{stderr}"
+            );
+        } else {
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[unpack-c0/{v}] pos=0 must be accepted on 5.4/5.5:\nstderr={stderr}"
+            );
+        }
+
+        if let Some(refbin) = reference_binary(v) {
+            let rout = Command::new(&refbin)
+                .arg("-e")
+                .arg(prog)
+                .output()
+                .expect("spawn reference");
+            assert_eq!(
+                rout.status.code(),
+                out.status.code(),
+                "[unpack-c0/{v}] exit code must match reference"
+            );
+        }
+    }
+}

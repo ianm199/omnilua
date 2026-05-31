@@ -201,6 +201,22 @@ fn pos_relat_i(pos: i64, len: usize) -> usize {
     }
 }
 
+/// Translate a relative position using Lua 5.3's `posrelat` (`lstrlib.c` 5.3):
+/// non-negatives pass through, an out-of-range negative clamps to `0`, and an
+/// in-range negative counts back from the end. Unlike `posrelat_i`, `0` stays
+/// `0`; `string.unpack` then subtracts one, underflowing into the
+/// "initial position out of string" guard exactly as the 5.3 reference does.
+///
+fn posrelat_53(pos: i64, len: usize) -> usize {
+    if pos >= 0 {
+        pos as usize
+    } else if (pos as i128).unsigned_abs() > len as u128 {
+        0
+    } else {
+        (len as i64 + pos + 1) as usize
+    }
+}
+
 /// Get an optional ending string position from argument `arg`, default `def`.
 /// Negative means back from end; clipped to `[0, len]`.
 ///
@@ -2511,7 +2527,11 @@ pub fn str_unpack(state: &mut LuaState) -> Result<usize, LuaError> {
     let data_bytes = state.check_arg_string(2)?.to_vec();
     let ld = data_bytes.len();
     let pos_raw = state.opt_arg_integer(3, 1)?;
-    let mut pos = pos_relat_i(pos_raw, ld).saturating_sub(1);
+    let mut pos = if matches!(state.global().lua_version, lua_types::LuaVersion::V53) {
+        posrelat_53(pos_raw, ld).wrapping_sub(1)
+    } else {
+        pos_relat_i(pos_raw, ld).saturating_sub(1)
+    };
 
     if pos > ld {
         return Err(LuaError::arg_error(3, "initial position out of string"));

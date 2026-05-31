@@ -678,7 +678,7 @@ pub fn io_open(state: &mut LuaState) -> Result<usize, LuaError> {
     let filename: Vec<u8> = state.check_arg_string(1)?;
     let mode: Vec<u8> = state.opt_arg_string(2, b"r")?;
     if !check_mode(&mode) {
-        return Err(LuaError::arg_error(2, "invalid mode"));
+        return Err(lua_vm::debug::arg_error_impl(state, 2, b"invalid mode"));
     }
     let hook = state.global().file_open_hook;
     match hook {
@@ -723,7 +723,7 @@ pub fn io_popen(state: &mut LuaState) -> Result<usize, LuaError> {
     let filename: Vec<u8> = state.check_arg_string(1)?;
     let mode: Vec<u8> = state.opt_arg_string(2, b"r")?;
     if !check_mode_popen(&mode) {
-        return Err(LuaError::arg_error(2, "invalid mode"));
+        return Err(lua_vm::debug::arg_error_impl(state, 2, b"invalid mode"));
     }
     let hook = state.global().popen_hook;
     match hook {
@@ -1124,7 +1124,7 @@ fn g_read(
                         success = true;
                     }
                     _ => {
-                        return Err(LuaError::arg_error(n, "invalid format"));
+                        return Err(lua_vm::debug::arg_error_impl(state, n, b"invalid format"));
                     }
                 }
             }
@@ -1489,9 +1489,10 @@ fn aux_lines(state: &mut LuaState, toclose: bool) -> Result<(), LuaError> {
     // absolute `top_idx`; using `state.top()` mirrors that.
     let n = state.top() - 1;
     if n > MAX_ARG_LINE as i32 {
-        return Err(LuaError::arg_error(
+        return Err(lua_vm::debug::arg_error_impl(
+            state,
             MAX_ARG_LINE as i32 + 2,
-            "too many arguments",
+            b"too many arguments",
         ));
     }
     state.push_value_at(1)?;

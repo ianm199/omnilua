@@ -57,6 +57,61 @@ fn err_contains(version: LuaVersion, code: &str, needle: &str) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Shared-core item A: an upvalue (e.g. `_ENV`) indexed by a relational/jump
+// key. `luaK_exp2val` must force the jump result into a register *before*
+// `luaK_indexed` discharges the table upvalue, or the boolean materialization
+// and the GETUPVAL collide and the table operand ends up holding a number.
+//
+// Version split confirmed against the reference binaries: 5.3 and 5.5 return
+// `nil` (our shared register-based GETTABUP needs the `VJMP` clause to match),
+// while 5.4's reference *genuinely* raises "attempt to index a number value"
+// (an upstream 5.4 bug 5.5 later fixed by adding `e->k == VJMP` to
+// `luaK_exp2val`). The fix reproduces all three faithfully.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_v55_env_relational_index_returns_nil() {
+    for v in [LuaVersion::V53, LuaVersion::V55] {
+        // _ENV (upvalue 0) indexed by a folded relational constant.
+        eq(v, "return _ENV[1 < 2]", "nil");
+        // A captured local upvalue indexed by the same.
+        eq(v, "local up = {}; return (function() return up[1 < 2] end)()", "nil");
+        // Non-folded comparison (two locals) through an upvalue.
+        eq(v,
+            "local x, y = 1, 1; local up = {}; \
+             return (function() return up[x == y] end)()",
+            "nil");
+        // Store side: `_ENV[1<2] = v` must index correctly too.
+        eq(v, "_ENV[1 < 2] = 7; return _ENV[true]", "7");
+    }
+}
+
+#[test]
+fn v54_env_relational_index_errors_like_reference() {
+    // Guard the deliberate 5.4-only divergence: the reference 5.4 binary raises
+    // on this exact construct; our port must not "improve" on it.
+    err_contains(LuaVersion::V54, "return _ENV[1 < 2]", "index a number value");
+    err_contains(
+        LuaVersion::V54,
+        "local up = {}; return (function() return up[1 < 2] end)()",
+        "index a number value",
+    );
+}
+
+#[test]
+fn all_versions_register_table_relational_index_unaffected() {
+    // Regression guard: a *register* table (GETTABLE, not GETTABUP) was always
+    // correct on every version. The fix must leave it untouched.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "local t = { [true] = 99 }; return t[1 < 2]", "99");
+        // Literal boolean key through an upvalue keeps working (no jump list).
+        eq(v, "_ENV[true] = 42; return _ENV[true]", "42");
+        // String-key upvalue index (the VKStr fast path) is a no-op for the fix.
+        eq(v, "xyz = 5; return _ENV.xyz", "5");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 5.5 global declarations (F1/F2/F8 + enforcement) and language changes (F3/F4)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -475,6 +530,50 @@ fn v53_rejects_attribute_syntax() {
     err_contains(LuaVersion::V53, "local x <const> = 1; return x", "unexpected symbol");
 }
 
+/// Shared-core item F: `string.unpack` initial-position lower bound.
+///
+/// Lua 5.3's `posrelat` returns `0` for `pos == 0` (and for negatives whose
+/// magnitude exceeds the string length), after which `string.unpack`'s
+/// `pos = posrelat - 1` underflows and trips the "initial position out of
+/// string" guard. 5.4/5.5 switched to `posrelatI`, which maps `0` to `1`, so
+/// `pos == 0` is intentionally a valid start there. Confirmed against the
+/// lua5.3.6 / lua5.4.7 / lua5.5.0 reference binaries; matches tpack.lua's own
+/// version split (5.3 `checkerror("out of string", unpack, "c0", x, 0)`).
+#[test]
+fn v53_string_unpack_c0_initial_position_lower_bound() {
+    // 5.3: pos=0 and out-of-range-negative pos both reject.
+    err_contains(
+        LuaVersion::V53,
+        r#"return string.unpack("c0", "abc", 0)"#,
+        "initial position out of string",
+    );
+    err_contains(
+        LuaVersion::V53,
+        r#"return string.unpack("c0", "abc", -4)"#,
+        "initial position out of string",
+    );
+}
+
+/// Guard that the item-F gate is 5.3-only: 5.4/5.5 accept `pos == 0` (and the
+/// just-out-of-range negative) exactly as their references do, and every
+/// version still agrees on the in-range positions. A regression here would
+/// mean the `V53` branch leaked into the newer collectors.
+#[test]
+fn v54_v55_string_unpack_c0_pos_zero_accepted() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        // pos=0 is a valid start on 5.4/5.5 (posrelatI maps 0 -> 1). `c0`
+        // unpacks an empty string and returns the next position as 2nd result.
+        eq(v, r#"local _, p = string.unpack("c0", "abc", 0); return p"#, "1");
+        eq(v, r#"local _, p = string.unpack("c0", "abc", -4); return p"#, "1");
+    }
+    // In-range positions agree across every version (the gate is inert here).
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, r#"local _, p = string.unpack("c0", "abc", 1); return p"#, "1");
+        eq(v, r#"local _, p = string.unpack("c0", "abc", -3); return p"#, "1");
+        eq(v, r#"local _, p = string.unpack("c0", "abc", 4); return p"#, "4");
+    }
+}
+
 /// `LUA_COMPAT_MATHLIB` roster (issue #19; `specs/followup/5.3-math.md`).
 ///
 /// Per-version presence verified directly against the reference binaries:
@@ -694,6 +793,101 @@ fn v_argerror_no_value() {
 }
 
 #[test]
+fn v_argerror_funcname_value_crossversion() {
+    // Item B (shared-core): luaL_argerror / luaL_checkoption callsites that used
+    // the state-less constructor lost the `to '<fn>'` qualifier and the offending
+    // value. They must now carry both on every affected version.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        // collectgarbage invalid option: funcname + offending value.
+        err_contains(v, "return collectgarbage('bogusopt')", "to 'collectgarbage'");
+        err_contains(v, "return collectgarbage('bogusopt')", "invalid option 'bogusopt'");
+        // tonumber base out of range: funcname.
+        err_contains(v, "return tonumber('x', 1)", "to 'tonumber'");
+        err_contains(v, "return tonumber('x', 1)", "base out of range");
+        // table.insert position out of bounds.
+        err_contains(v, "return table.insert({}, 5, 5)", "to 'insert'");
+        err_contains(v, "return table.insert({}, 5, 5)", "position out of bounds");
+        // math.random empty interval.
+        err_contains(v, "return math.random(5, 2)", "to 'random'");
+        err_contains(v, "return math.random(5, 2)", "interval is empty");
+        // no-integer-representation now routes through the faithful path.
+        err_contains(v, "return string.rep('x', 1.5)", "to 'rep'");
+        err_contains(v, "return string.rep('x', 1.5)", "number has no integer representation");
+    }
+}
+
+#[test]
+fn v_argerror_pack_unpack_funcname_crossversion() {
+    // Item B remainder (shared-core): the string.pack / string.unpack /
+    // string.packsize argument-error family used the state-less
+    // `LuaError::arg_error` constructor, dropping the `to '<fn>'` qualifier on
+    // every version. They must now resolve the function name like the rest of
+    // the faithful arg_error path. Cases below error identically on 5.3/5.4/5.5
+    // (pos-0 acceptance differs by version, so it is asserted separately).
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        // string.unpack: data string too short.
+        err_contains(v, r#"return string.unpack("i4", "ab")"#, "to 'unpack'");
+        err_contains(v, r#"return string.unpack("i4", "ab")"#, "data string too short");
+        // string.pack: unsigned overflow.
+        err_contains(v, r#"return string.pack("B", 999)"#, "to 'pack'");
+        err_contains(v, r#"return string.pack("B", 999)"#, "unsigned overflow");
+        // string.pack: integer overflow.
+        err_contains(v, r#"return string.pack("i2", 99999)"#, "to 'pack'");
+        err_contains(v, r#"return string.pack("i2", 99999)"#, "integer overflow");
+        // string.pack: string longer than given size.
+        err_contains(v, r#"return string.pack("c2", "abcd")"#, "to 'pack'");
+        err_contains(v, r#"return string.pack("c2", "abcd")"#, "string longer than given size");
+        // string.pack: invalid next option for 'X' (getdetails helper, now state-threaded).
+        err_contains(v, r#"return string.pack("Xc1", 1)"#, "to 'pack'");
+        err_contains(v, r#"return string.pack("Xc1", 1)"#, "invalid next option");
+        // string.pack: alignment not power of 2 (getdetails helper).
+        err_contains(v, r#"return string.pack("!3i4", 1)"#, "to 'pack'");
+        err_contains(v, r#"return string.pack("!3i4", 1)"#, "alignment not power of 2");
+        // string.packsize: variable-length format.
+        err_contains(v, r#"return string.packsize("s")"#, "to 'packsize'");
+        err_contains(v, r#"return string.packsize("s")"#, "variable-length format");
+        // string.format: %s with embedded zeros + modifiers (was state-less too).
+        err_contains(v, r#"return string.format("%5s", "a\0b")"#, "to 'format'");
+        err_contains(v, r#"return string.format("%5s", "a\0b")"#, "string contains zeros");
+
+        // Guard: the bare truncated `bad argument #N (` form (no `to '<fn>'`)
+        // must NOT survive for these callsites on any version.
+        let e = run(v, r#"return string.pack("B", 999)"#).unwrap_err();
+        assert!(e.contains("to 'pack'"),
+            "v{v:?} string.pack argerror lost funcname: {e}");
+    }
+    // pos-0 lower-bound rejection is 5.3-only; when it fires, it must also carry
+    // the funcname. (5.4/5.5 accept pos 0, asserted elsewhere.)
+    err_contains(LuaVersion::V53, r#"return string.unpack("c0", "abc", 0)"#, "to 'unpack'");
+    err_contains(LuaVersion::V53, r#"return string.unpack("c0", "abc", 0)"#,
+        "initial position out of string");
+}
+
+#[test]
+fn v_argerror_perversion_wording() {
+    // Item B per-version wording splits.
+    // utf8.offset: 5.3 says "out of range"; 5.4/5.5 say "out of bounds".
+    err_contains(LuaVersion::V53, "return utf8.offset('abc', 0, 0)", "position out of range");
+    err_contains(LuaVersion::V54, "return utf8.offset('abc', 0, 0)", "position out of bounds");
+    err_contains(LuaVersion::V55, "return utf8.offset('abc', 0, 0)", "position out of bounds");
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return utf8.offset('abc', 0, 0)", "to 'offset'");
+    }
+    // string.format width: 5.3 uses the old scanformat message; 5.4/5.5 the
+    // checkformat message including the offending spec.
+    err_contains(LuaVersion::V53, "return string.format('%200d', 1)",
+        "invalid format (width or precision too long)");
+    err_contains(LuaVersion::V54, "return string.format('%200d', 1)",
+        "invalid conversion specification: '%200d'");
+    err_contains(LuaVersion::V55, "return string.format('%200d', 1)",
+        "invalid conversion specification: '%200d'");
+    // string.format unknown conversion: 5.3 "invalid option", 5.4/5.5 "invalid conversion".
+    err_contains(LuaVersion::V53, "return string.format('%y', 1)", "invalid option '%y' to 'format'");
+    err_contains(LuaVersion::V54, "return string.format('%y', 1)", "invalid conversion '%y' to 'format'");
+    err_contains(LuaVersion::V55, "return string.format('%y', 1)", "invalid conversion '%y' to 'format'");
+}
+
+#[test]
 fn v_length_concat_location_prefix() {
     // (b) `#` and `..` carry the chunk-location prefix and the message body.
     for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
@@ -776,10 +970,14 @@ fn v54_utf8_offset_arity_unchanged() {
 #[test]
 fn v55_collectgarbage_drops_setpause_setstepmul() {
     // 5.5 removed setpause/setstepmul; they are now invalid options.
+    // Item B: the message carries the function name and the offending value,
+    // not the bare truncated `invalid option`.
     err_contains(LuaVersion::V55,
-        "return collectgarbage('setpause', 100)", "invalid option");
+        "return collectgarbage('setpause', 100)", "to 'collectgarbage'");
     err_contains(LuaVersion::V55,
-        "return collectgarbage('setstepmul', 100)", "invalid option");
+        "return collectgarbage('setpause', 100)", "invalid option 'setpause'");
+    err_contains(LuaVersion::V55,
+        "return collectgarbage('setstepmul', 100)", "invalid option 'setstepmul'");
 }
 
 #[test]
@@ -796,9 +994,9 @@ fn v55_collectgarbage_param_surface() {
     // param read returns an integer.
     eq(LuaVersion::V55,
         "return math.type(collectgarbage('param', 'pause'))", "integer");
-    // invalid param name errors via luaL_checkoption.
+    // invalid param name errors via luaL_checkoption, carrying the value.
     err_contains(LuaVersion::V55,
-        "return collectgarbage('param', 'bogus')", "invalid option");
+        "return collectgarbage('param', 'bogus')", "invalid option 'bogus'");
     // write returns the OLD value, then read returns the value just written
     // (round-trip on the faithful-shape backing store).
     eq(LuaVersion::V55,
@@ -863,5 +1061,247 @@ fn v53_v54_error_nil_stays_nil() {
         eq(v,
             "local ok, e = pcall(function() error('boom') end); return (e:gsub('^.*: ', ''))",
             "boom");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core item D: the `\u{...}` codepoint upper bound in the lexer.
+// `llex.c readutf8esc` caps the value differently by family: 5.3 bounds the
+// running value at 0x10FFFF (per-digit, *after* the shift), while 5.4/5.5
+// bound it at 0x7FFFFFFF (per-digit, *before* the shift). The fix version-gates
+// only the 5.3 path; 5.4/5.5 are unchanged. (5.1/5.2 have no `\u{}` escape.)
+// Reproduced against the reference binaries via `specs/oracle/diff_one.sh`.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_utf8_escape_caps_at_10ffff() {
+    // 0x10FFFF is the largest accepted codepoint on 5.3.
+    eq(LuaVersion::V53, r#"return #"\u{10FFFF}""#, "4");
+    // One past the cap, and the legacy 5.4/5.5 ceiling, both reject on 5.3.
+    err_contains(LuaVersion::V53, r#"return #"\u{110000}""#, "UTF-8 value too large");
+    err_contains(LuaVersion::V53, r#"return #"\u{110001}""#, "UTF-8 value too large");
+    err_contains(LuaVersion::V53, r#"return #"\u{7FFFFFFF}""#, "UTF-8 value too large");
+}
+
+#[test]
+fn v54_v55_utf8_escape_caps_at_7fffffff() {
+    // Guard that the unaffected versions keep the wider 0x7FFFFFFF ceiling:
+    // values 5.3 rejects (>0x10FFFF up to 0x7FFFFFFF) are still accepted here,
+    // and only values above 0x7FFFFFFF are rejected.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(v, r#"return #"\u{10FFFF}""#, "4");
+        eq(v, r#"return #"\u{110000}""#, "4");
+        eq(v, r#"return #"\u{7FFFFFFF}""#, "6");
+        err_contains(v, r#"return #"\u{80000000}""#, "UTF-8 value too large");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core item E: `print` and the global `tostring`.
+//
+// 5.1/5.2/5.3 `luaB_print` fetch the *global* `tostring` and call it on each
+// argument, so a `nil` global makes `print` raise "attempt to call a nil
+// value", a custom global `tostring` is honored, and a result that is neither
+// a string nor a coercible number raises "'tostring' must return a string to
+// 'print'". 5.4/5.5 `luaB_print` use `luaL_tolstring` directly and ignore the
+// global `tostring` entirely. Reproduced against the reference binaries via
+// `specs/oracle/diff_one.sh`.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_print_calls_global_tostring() {
+    // A nil global `tostring` makes print raise when it has an argument. The
+    // mutation is local to the inner chunk's `pcall`; restoring it keeps the
+    // wrapper's own `tostring(result)` (and other tests) unaffected.
+    err_contains(
+        LuaVersion::V53,
+        "local s = tostring; tostring = nil; local ok, e = pcall(print, 1); tostring = s; error(e, 0)",
+        "attempt to call a nil value",
+    );
+    // A custom global `tostring` is honored (no error, runs to completion).
+    eq(
+        LuaVersion::V53,
+        "local s = tostring; tostring = function(x) return 'X' .. x end; print(7); tostring = s; return 'ok'",
+        "ok",
+    );
+    // A result that is neither a string nor a coercible number raises.
+    err_contains(
+        LuaVersion::V53,
+        "local s = tostring; tostring = function(x) return {} end; local ok, e = pcall(print, 1); tostring = s; error(e, 0)",
+        "'tostring' must return a string to 'print'",
+    );
+    // A number return is coercible and accepted (mirrors C `lua_tolstring`).
+    eq(
+        LuaVersion::V53,
+        "local s = tostring; tostring = function(x) return 42 end; print(1); tostring = s; return 'ok'",
+        "ok",
+    );
+    // No arguments: the nil global is never called, so no error.
+    eq(
+        LuaVersion::V53,
+        "local s = tostring; tostring = nil; print(); tostring = s; return 'ok'",
+        "ok",
+    );
+}
+
+#[test]
+fn v54_v55_print_ignores_global_tostring() {
+    // Guard the unaffected versions: print uses luaL_tolstring directly, so a
+    // nil or non-string-returning global `tostring` does NOT affect print.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local s = tostring; tostring = nil; print(1); tostring = s; return 'ok'",
+            "ok",
+        );
+        eq(
+            v,
+            "local s = tostring; tostring = function(x) return {} end; print(1); tostring = s; return 'ok'",
+            "ok",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `utf8.char` codepoint ceiling is version-split. 5.3 rejects
+// codepoints above 0x10FFFF ("value out of range"); 5.4/5.5 widened the encoder
+// to accept up to 0x7FFFFFFF (the lax extended-UTF-8 range), rejecting only
+// above that. Distinct from the *lexer* `\u{}` ceiling (item D). Reproduced
+// against the reference binaries via `specs/oracle/diff_one.sh`; blocks the
+// `utf8.lua:151` `checkerror("value out of range", ...)` on 5.3.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_utf8_char_caps_at_10ffff() {
+    eq(LuaVersion::V53, "return #utf8.char(0x10FFFF)", "4");
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(utf8.char, 0x110000); error(e, 0)",
+        "value out of range",
+    );
+}
+
+#[test]
+fn v54_v55_utf8_char_caps_at_7fffffff() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return #utf8.char(0x110000)", "4");
+        eq(v, "return #utf8.char(0x7FFFFFFF)", "6");
+        err_contains(
+            v,
+            "local ok, e = pcall(utf8.char, 0x80000000); error(e, 0)",
+            "value out of range",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `string.format` spec-scanner error wording is version-split.
+// 5.3 `scanformat` raises "invalid format (repeated flags)" when the flag run
+// reaches `sizeof(FLAGS) == 6` characters; 5.4/5.5 `getformat` fold this into a
+// single "invalid format (too long)". Blocks `strings.lua:303`. Captured from
+// the reference binaries.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_format_repeated_flags() {
+    err_contains(
+        LuaVersion::V53,
+        "local aux = string.rep('0', 600); local ok, e = pcall(string.format, '%'..aux..'d', 10); error(e, 0)",
+        "invalid format (repeated flags)",
+    );
+}
+
+#[test]
+fn v54_v55_format_too_long() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(
+            v,
+            "local aux = string.rep('0', 600); local ok, e = pcall(string.format, '%'..aux..'d', 10); error(e, 0)",
+            "invalid format (too long)",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `string.pack`/`packsize` `c<n>` size parsing is version-split.
+// 5.3/5.4 read the size into a C `int`; a huge numeral overflows it and the
+// trailing digit is mis-read as a new option ("invalid format option '<d>'").
+// 5.5 widened `getnum` to `size_t`, so `c<near-maxinteger>` parses cleanly and
+// is bounded by the running-total checks ("format result too large" for
+// `packsize`, "result too long" for `pack`). Blocks `tpack.lua` on 5.5.
+// Captured from the reference binaries.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_v54_pack_csize_overflows_int() {
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        err_contains(
+            v,
+            "local f = string.format('c%d', math.maxinteger - 9); local ok, e = pcall(string.packsize, f); error(e, 0)",
+            "invalid format option '6'",
+        );
+    }
+}
+
+#[test]
+fn v55_pack_csize_wide() {
+    // The near-maxinteger size parses and packsize returns it.
+    eq(
+        LuaVersion::V55,
+        "return string.packsize(string.format('c%d', math.maxinteger - 9))",
+        "9223372036854775798",
+    );
+    // packsize running total overflow.
+    err_contains(
+        LuaVersion::V55,
+        "local f = string.format('c%dc10', math.maxinteger - 9); local ok, e = pcall(string.packsize, f); error(e, 0)",
+        "format result too large",
+    );
+    // pack running total overflow ("result too long"), reported on arg #1.
+    err_contains(
+        LuaVersion::V55,
+        "local f = string.format('xxxxxxxxxx c%d', math.maxinteger - 9); local ok, e = pcall(string.pack, f); error(e, 0)",
+        "result too long",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `math.random` argument handling is version-split. 5.3 treats
+// `random(N)` as `[1, N]` (so `random(0)` is the empty `[1, 0]`) and rejects
+// intervals whose width overflows a signed integer
+// (`low >= 0 || up <= LUA_MAXINTEGER + low` else "interval too large"). 5.4/5.5
+// rewrote the generator around a `project` bit-mask: `random(0)` returns a
+// full-range integer and any interval is accepted. Blocks `math.lua` on 5.3.
+// Captured from the reference binaries.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_random_interval_guards() {
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, 0); error(e, 0)",
+        "interval is empty",
+    );
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, math.mininteger, 0); error(e, 0)",
+        "interval too large",
+    );
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, -1, math.maxinteger); error(e, 0)",
+        "interval too large",
+    );
+    // A normal interval still works.
+    eq(LuaVersion::V53, "local r = math.random(1, 6); return r >= 1 and r <= 6", "true");
+}
+
+#[test]
+fn v54_v55_random_zero_and_full_range() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        // random(0) returns a full-range integer (no error).
+        eq(v, "return math.type(math.random(0))", "integer");
+        // Full integer range is accepted.
+        eq(v, "return math.type(math.random(math.mininteger, math.maxinteger))", "integer");
     }
 }

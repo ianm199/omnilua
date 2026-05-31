@@ -164,7 +164,7 @@ pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
             let pos = state.check_arg_integer(2)?;
             // Checks 1 <= pos <= e (wrapping subtraction catches pos <= 0)
             if !((pos as u64).wrapping_sub(1) < (e as u64)) {
-                return Err(LuaError::arg_error(2, "position out of bounds"));
+                return Err(lua_vm::debug::arg_error_impl(state, 2, b"position out of bounds"));
             }
             if let Some(tbl) = plain_table {
                 let value = state.value_at(3);
@@ -226,7 +226,8 @@ pub fn remove(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut pos = state.opt_arg_integer(2, size)?;
     if pos != size {
         if !((pos as u64).wrapping_sub(1) <= (size as u64)) {
-            return Err(LuaError::arg_error(2, "position out of bounds"));
+            let argn = if state.global().lua_version == lua_types::LuaVersion::V53 { 1 } else { 2 };
+            return Err(lua_vm::debug::arg_error_impl(state, argn, b"position out of bounds"));
         }
     }
     // Cache the table once to avoid re-resolving stack slot 1 on every
@@ -299,11 +300,11 @@ pub fn tmove(state: &mut LuaState) -> Result<usize, LuaError> {
 
     if e >= f {
         if !(f > 0 || e < i64::MAX + f) {
-            return Err(LuaError::arg_error(3, "too many elements to move"));
+            return Err(lua_vm::debug::arg_error_impl(state, 3, b"too many elements to move"));
         }
         let n = e - f + 1;
         if !(t <= i64::MAX - n + 1) {
-            return Err(LuaError::arg_error(4, "destination wrap around"));
+            return Err(lua_vm::debug::arg_error_impl(state, 4, b"destination wrap around"));
         }
         // Copy forward (increasing) when safe to do so; backward when ranges overlap.
         // TODO(port): state.compare(a, b, CompareOp::Eq) → lua_compare LUA_OPEQ; verify method
@@ -781,7 +782,7 @@ pub fn sort(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = aux_getn(state, 1, TAB_RW)?;
     if n > 1 {
         if !(n < i32::MAX as i64) {
-            return Err(LuaError::arg_error(1, "array too big"));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"array too big"));
         }
         if !matches!(state.type_at(2), LuaType::None | LuaType::Nil) {
             state.check_arg_type(2, LuaType::Function)?;

@@ -3034,10 +3034,41 @@ fn fieldsel(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Result
 }
 
 /// Handles '[' expr ']' indexing.
+/// Port of `luaK_exp2val` (`lcode.c`): if the expression carries a pending jump
+/// list (a relational/boolean result), force it into a real register so its
+/// boolean materialization is emitted before any later instruction; otherwise
+/// just discharge its variable form. Used by `yindex` so an upvalue indexed by
+/// a comparison key (`_ENV[1<2]`) lowers correctly.
+///
+/// `materialize_jmp` ports the version-specific guard. Lua 5.5's `luaK_exp2val`
+/// reads `if (e->k == VJMP || hasjumps(e))`; Lua 5.3 and 5.4 read only
+/// `if (hasjumps(e))`. Because our shared codegen lowers an upvalue index to a
+/// register-based GETTABUP for every version (unlike 5.3's RK-based form), the
+/// `VJMP` clause must also be applied for 5.3 to reproduce its `nil` result.
+/// Lua 5.4 deliberately omits the clause — its reference genuinely raises
+/// "attempt to index a number value" for `_ENV[1<2]`, an upstream behavior 5.5
+/// later fixed — so `materialize_jmp` is false on 5.4.
+fn exp_to_val(
+    fs: &mut FuncState,
+    line: i32,
+    e: &mut ExprDesc,
+    materialize_jmp: bool,
+) -> Result<(), LuaError> {
+    if (materialize_jmp && e.k == ExprKind::Jmp) || e.t != e.f {
+        cg_exp_to_any_reg(fs, line, e)?;
+    } else {
+        cg_discharge_vars(fs, line, e)?;
+    }
+    Ok(())
+}
+
 fn yindex(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Result<(), LuaError> {
     lex_next(ls, state)?;
     expr(ls, state, v)?;
-    // TODO(port): lua_code::exp_to_val(ls.fs.as_mut().unwrap(), v)?;
+    let line = ls.linenumber;
+    let materialize_jmp =
+        state.global().lua_version != lua_types::LuaVersion::V54;
+    exp_to_val(ls.fs.as_mut().unwrap(), line, v, materialize_jmp)?;
     check_next(ls, state, b']' as TokenKind)?;
     Ok(())
 }

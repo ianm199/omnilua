@@ -537,9 +537,10 @@ impl LuaState {
             Some(d) => Ok(d),
             None => {
                 if is_number(self, arg) {
-                    Err(LuaError::arg_error(
+                    Err(crate::debug::arg_error_impl(
+                        self,
                         arg,
-                        "number has no integer representation",
+                        b"number has no integer representation",
                     ))
                 } else {
                     let got = index_to_value(self, arg);

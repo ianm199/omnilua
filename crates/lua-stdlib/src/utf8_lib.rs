@@ -189,18 +189,30 @@ fn utf_len(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let lax: bool = state.to_boolean(4);
 
+    let is_v53 = state.global().lua_version == lua_types::LuaVersion::V53;
+    let initial_msg: &[u8] = if is_v53 {
+        b"initial position out of string"
+    } else {
+        b"initial position out of bounds"
+    };
+    let final_msg: &[u8] = if is_v53 {
+        b"final position out of string"
+    } else {
+        b"final position out of bounds"
+    };
+
     // Note: C short-circuits, so --posi only executes when 1 <= posi.
     if posi < 1 {
-        return Err(LuaError::arg_error(2, "initial position out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 2, initial_msg));
     }
     posi -= 1; // 1-based → 0-based
     if posi > len as i64 {
-        return Err(LuaError::arg_error(2, "initial position out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 2, initial_msg));
     }
 
     posj -= 1; // 1-based → 0-based (always decremented, no short-circuit)
     if posj >= len as i64 {
-        return Err(LuaError::arg_error(3, "final position out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 3, final_msg));
     }
 
     let mut n: i64 = 0;
@@ -240,12 +252,17 @@ fn codepoint(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let lax: bool = state.to_boolean(4);
 
+    let bounds_msg: &[u8] = if state.global().lua_version == lua_types::LuaVersion::V53 {
+        b"out of range"
+    } else {
+        b"out of bounds"
+    };
     if posi < 1 {
-        return Err(LuaError::arg_error(2, "out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 2, bounds_msg));
     }
 
     if pose > len as i64 {
-        return Err(LuaError::arg_error(3, "out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 3, bounds_msg));
     }
 
     if posi > pose {
@@ -289,7 +306,12 @@ fn codepoint(state: &mut LuaState) -> Result<usize, LuaError> {
 fn get_utf_char_bytes(state: &mut LuaState, arg: i32) -> Result<Vec<u8>, LuaError> {
     let code = state.check_arg_integer(arg)? as u64;
 
-    if code > MAX_UTF as u64 {
+    let max_code: u64 = if state.global().lua_version == lua_types::LuaVersion::V53 {
+        0x10FFFF
+    } else {
+        MAX_UTF as u64
+    };
+    if code > max_code {
         return crate::auxlib::arg_error(state, arg, b"value out of range").map(|_| Vec::new());
     }
 
@@ -341,12 +363,17 @@ fn byte_offset(state: &mut LuaState) -> Result<usize, LuaError> {
     let raw_posi: i64 = state.opt_arg_integer(3, default_posi)?;
     let posi_1based: i64 = pos_relat(raw_posi, len);
 
+    let pos_msg: &[u8] = if state.global().lua_version == lua_types::LuaVersion::V53 {
+        b"position out of range"
+    } else {
+        b"position out of bounds"
+    };
     if posi_1based < 1 {
-        return Err(LuaError::arg_error(3, "position out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 3, pos_msg));
     }
     let mut posi: i64 = posi_1based - 1; // 1-based → 0-based
     if posi > len as i64 {
-        return Err(LuaError::arg_error(3, "position out of bounds"));
+        return Err(lua_vm::debug::arg_error_impl(state, 3, pos_msg));
     }
 
     // `count` is a mutable copy of `n`; driven to 0 when the target character is found.
@@ -460,12 +487,12 @@ fn iter_aux(state: &mut LuaState, strict: bool) -> Result<usize, LuaError> {
 
     //    if (next == NULL || iscontp(next)) return luaL_error(L, MSGInvalid);
     match utf8_decode(&s[n as usize..], strict) {
-        None => Err(LuaError::runtime(format_args!("invalid UTF-8 code"))),
+        None => Err(lua_vm::debug::c_api_runtime(state, b"invalid UTF-8 code".to_vec())),
         Some((remaining, code)) => {
             let next_pos = len - remaining.len(); // 0-based index of the next character
             // valid sequence indicates a malformed input stream.
             if next_pos < len && is_cont(s[next_pos]) {
-                return Err(LuaError::runtime(format_args!("invalid UTF-8 code")));
+                return Err(lua_vm::debug::c_api_runtime(state, b"invalid UTF-8 code".to_vec()));
             }
             state.push(LuaValue::Int((n + 1) as i64)); // 1-based position for next iteration
             state.push(LuaValue::Int(code as i64));

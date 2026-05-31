@@ -171,13 +171,18 @@ enum KOption {
 struct Header {
     is_little: bool,
     max_align: usize,
+    /// 5.5 widened `c`/`s`-size parsing from `int` (5.3/5.4) to `size_t`, so
+    /// `c<huge>` numerals that overflowed `int` (and tripped "invalid format
+    /// option '<digit>'") are now accepted up to `LUA_MAXINTEGER`.
+    wide_size: bool,
 }
 
 impl Header {
-    fn new() -> Self {
+    fn new(wide_size: bool) -> Self {
         Header {
             is_little: cfg!(target_endian = "little"),
             max_align: 1,
+            wide_size,
         }
     }
 }
@@ -198,6 +203,22 @@ fn pos_relat_i(pos: i64, len: usize) -> usize {
         1
     } else {
         len.wrapping_add(pos as usize).wrapping_add(1)
+    }
+}
+
+/// Translate a relative position using Lua 5.3's `posrelat` (`lstrlib.c` 5.3):
+/// non-negatives pass through, an out-of-range negative clamps to `0`, and an
+/// in-range negative counts back from the end. Unlike `posrelat_i`, `0` stays
+/// `0`; `string.unpack` then subtracts one, underflowing into the
+/// "initial position out of string" guard exactly as the 5.3 reference does.
+///
+fn posrelat_53(pos: i64, len: usize) -> usize {
+    if pos >= 0 {
+        pos as usize
+    } else if (pos as i128).unsigned_abs() > len as u128 {
+        0
+    } else {
+        (len as i64 + pos + 1) as usize
     }
 }
 
@@ -420,7 +441,7 @@ pub fn str_char(state: &mut LuaState) -> Result<usize, LuaError> {
     for i in 1..=n {
         let c = state.check_arg_integer(i)? as u64;
         if c > u8::MAX as u64 {
-            return crate::auxlib::arg_error(state, i, b"value out of range");
+            return Err(lua_vm::debug::arg_error_impl(state, i, b"value out of range"));
         }
         buf.push(c as u8);
     }
@@ -1684,13 +1705,18 @@ const FMT_FLAGS_C: &[u8] = b"-";
 /// Mirrors C `checkformat` in lstrlib.c: consumes flags, then up to 2 width digits,
 /// then (if allowed) `.` + up to 2 precision digits, then asserts we are at the
 /// conversion character. Returns `Err("invalid conversion specification")` on failure.
-fn check_conv_spec(form: &[u8], flags: &[u8], allow_precision: bool) -> Result<(), LuaError> {
+fn check_conv_spec(
+    state: &mut LuaState,
+    form: &[u8],
+    flags: &[u8],
+    allow_precision: bool,
+) -> Result<(), LuaError> {
     let mut i = 1usize; // skip '%'
     while i < form.len() && flags.contains(&form[i]) {
         i += 1;
     }
     if i < form.len() && form[i] == b'0' {
-        return Err(LuaError::runtime(format_args!("invalid conversion specification")));
+        return Err(invalid_conv_spec(state, form));
     }
     if i < form.len() && form[i].is_ascii_digit() {
         i += 1;
@@ -1708,9 +1734,27 @@ fn check_conv_spec(form: &[u8], flags: &[u8], allow_precision: bool) -> Result<(
         }
     }
     if i != form.len() - 1 {
-        return Err(LuaError::runtime(format_args!("invalid conversion specification")));
+        return Err(invalid_conv_spec(state, form));
     }
     Ok(())
+}
+
+/// Build the version-appropriate "invalid conversion specification" error,
+/// prefixed with the calling location like reference `luaL_error`.
+///
+/// Lua 5.3 `scanformat` raises `invalid format (width or precision too long)`
+/// with no offending spec; Lua 5.4/5.5 `checkformat` raises
+/// `invalid conversion specification: '<form>'`.
+fn invalid_conv_spec(state: &mut LuaState, form: &[u8]) -> LuaError {
+    let msg: Vec<u8> = if state.global().lua_version == lua_types::LuaVersion::V53 {
+        b"invalid format (width or precision too long)".to_vec()
+    } else {
+        let mut m = b"invalid conversion specification: '".to_vec();
+        m.extend_from_slice(form);
+        m.push(b'\'');
+        m
+    };
+    lua_vm::debug::c_api_runtime(state, msg)
 }
 
 /// Parsed printf-style format specifier (flags, width, precision).
@@ -2009,7 +2053,7 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
         // Parse a format specifier
         arg += 1;
         if arg > top {
-            return Err(LuaError::arg_error(arg, "no value"));
+            return Err(lua_vm::debug::arg_error_impl(state, arg, b"no value"));
         }
 
         // Collect flags, width, precision
@@ -2017,6 +2061,17 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
         // Skip flags: -, +, #, 0, space
         while i < fmt_bytes.len() && b"-+#0 ".contains(&fmt_bytes[i]) {
             i += 1;
+        }
+        // Lua 5.3 `scanformat`: the flags buffer is `FLAGS = "-+ #0"`, so a flags
+        // run of `sizeof(FLAGS) == 6` or more characters is "repeated flags".
+        // 5.4/5.5 fold this into the single "(too long)" check below.
+        if state.global().lua_version == lua_types::LuaVersion::V53
+            && i - (spec_start + 1) >= 6
+        {
+            return Err(lua_vm::debug::c_api_runtime(
+                state,
+                b"invalid format (repeated flags)".to_vec(),
+            ));
         }
         // Skip width digits
         if i < fmt_bytes.len() && fmt_bytes[i] != b'0' {
@@ -2033,7 +2088,8 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
         }
 
         if i >= fmt_bytes.len() {
-            return Err(LuaError::runtime(format_args!("invalid conversion specification")));
+            let form: Vec<u8> = fmt_bytes[spec_start..].to_vec();
+            return Err(invalid_conv_spec(state, &form));
         }
 
         let conv = fmt_bytes[i];
@@ -2044,50 +2100,50 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
 
         // Must check before parse_fmt_spec to avoid overflow on huge widths.
         if spec_slice.len() + 1 >= 22 {
-            return Err(LuaError::runtime(format_args!("invalid format (too long)")));
+            return Err(lua_vm::debug::c_api_runtime(state, b"invalid format (too long)".to_vec()));
         }
 
         let spec = parse_fmt_spec(spec_slice);
 
         match conv {
             b'c' => {
-                check_conv_spec(form, FMT_FLAGS_C, false)?;
+                check_conv_spec(state, form, FMT_FLAGS_C, false)?;
                 let n = state.check_arg_integer(arg)?;
                 let body = vec![n as u8];
                 pad_str(&mut buf, &body, &spec);
             }
             b'd' | b'i' => {
-                check_conv_spec(form, FMT_FLAGS_I, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_I, true)?;
                 let n = state.check_arg_integer(arg)?;
                 let (sign, digits) = signed_int_parts(n, &spec);
                 pad_int(&mut buf, &sign, &digits, &spec);
             }
             b'u' => {
-                check_conv_spec(form, FMT_FLAGS_U, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_U, true)?;
                 let n = state.check_arg_integer(arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 10, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'o' => {
-                check_conv_spec(form, FMT_FLAGS_X, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_X, true)?;
                 let n = state.check_arg_integer(arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 8, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'x' => {
-                check_conv_spec(form, FMT_FLAGS_X, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_X, true)?;
                 let n = state.check_arg_integer(arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 16, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'X' => {
-                check_conv_spec(form, FMT_FLAGS_X, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_X, true)?;
                 let n = state.check_arg_integer(arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 16, true, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'a' | b'A' => {
-                check_conv_spec(form, FMT_FLAGS_F, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_F, true)?;
                 let n = state.check_arg_number(arg)?;
                 let body = format_hex_float(n, spec.precision);
                 let body: Vec<u8> = if conv == b'A' {
@@ -2117,7 +2173,7 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
                 pad_int(&mut buf, &sign, &digits, &no_prec_spec);
             }
             b'f' | b'e' | b'E' | b'g' | b'G' => {
-                check_conv_spec(form, FMT_FLAGS_F, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_F, true)?;
                 let n = state.check_arg_number(arg)?;
                 let body = format_float(n, conv, &spec);
                 let (sign, digits): (Vec<u8>, Vec<u8>) = if !body.is_empty() && (body[0] == b'-' || body[0] == b'+') {
@@ -2141,7 +2197,7 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
                 pad_int(&mut buf, &sign, &digits, &no_prec_spec);
             }
             b'p' => {
-                check_conv_spec(form, FMT_FLAGS_C, false)?;
+                check_conv_spec(state, form, FMT_FLAGS_C, false)?;
                 let s: Vec<u8> = match lua_vm::api::to_pointer(state, arg) {
                     Some(p) => format!("0x{:x}", p).into_bytes(),
                     None => b"(null)".to_vec(),
@@ -2157,22 +2213,27 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
                 addliteral(state, &mut buf, arg)?;
             }
             b's' => {
-                check_conv_spec(form, FMT_FLAGS_C, true)?;
+                check_conv_spec(state, form, FMT_FLAGS_C, true)?;
                 let s = state.to_display_string(arg)?;
                 let has_modifiers = spec.width != 0 || spec.precision.is_some();
                 if has_modifiers && s.contains(&0u8) {
-                    return Err(LuaError::arg_error(
-                        arg,
-                        "string contains zeros",
-                    ));
+                    return Err(lua_vm::debug::arg_error_impl(state, arg, b"string contains zeros"));
                 }
                 pad_str(&mut buf, &s, &spec);
                 state.pop_n(1);
             }
             _ => {
-                return Err(LuaError::runtime(format_args!(
-                    "invalid conversion '%{}' to 'format'", conv as char
-                )));
+                let verb: &[u8] = if state.global().lua_version == lua_types::LuaVersion::V53 {
+                    b"option"
+                } else {
+                    b"conversion"
+                };
+                let mut msg = b"invalid ".to_vec();
+                msg.extend_from_slice(verb);
+                msg.extend_from_slice(b" '");
+                msg.extend_from_slice(form);
+                msg.extend_from_slice(b"' to 'format'");
+                return Err(lua_vm::debug::c_api_runtime(state, msg));
             }
         }
     }
@@ -2192,15 +2253,21 @@ fn is_digit(c: u8) -> bool {
 
 /// Read an optional integer from the format string, returning `df` if absent.
 ///
-fn getnum(fmt: &[u8], pos: &mut usize, df: i32) -> i32 {
+/// `wide` selects the accumulator width: 5.3/5.4 used `int` (cap `i32::MAX`);
+/// 5.5 uses `size_t` (cap the host pointer width). The reference stops consuming
+/// digits once another `*10 + 9` would overflow, leaving the rest to be read as
+/// the next option — which is why `c<int-overflow>` yields "invalid format
+/// option '<digit>'" on 5.3/5.4 but parses cleanly on 5.5.
+fn getnum(fmt: &[u8], pos: &mut usize, df: i64, wide: bool) -> i64 {
     if *pos >= fmt.len() || !is_digit(fmt[*pos]) {
         return df;
     }
-    let mut a = 0i32;
+    let cap: i64 = if wide { i64::MAX } else { i32::MAX as i64 };
+    let mut a = 0i64;
     while *pos < fmt.len() && is_digit(fmt[*pos]) {
-        a = a * 10 + (fmt[*pos] - b'0') as i32;
+        a = a * 10 + (fmt[*pos] - b'0') as i64;
         *pos += 1;
-        if a > (i32::MAX - 9) / 10 {
+        if a > (cap - 9) / 10 {
             break;
         }
     }
@@ -2209,9 +2276,9 @@ fn getnum(fmt: &[u8], pos: &mut usize, df: i32) -> i32 {
 
 /// Read an integer from the format string, error if out of `[1, MAXINTSIZE]`.
 ///
-fn getnumlimit(fmt: &[u8], pos: &mut usize, df: i32) -> Result<usize, LuaError> {
-    let sz = getnum(fmt, pos, df);
-    if sz > MAX_INT_SIZE as i32 || sz <= 0 {
+fn getnumlimit(fmt: &[u8], pos: &mut usize, df: i64) -> Result<usize, LuaError> {
+    let sz = getnum(fmt, pos, df, false);
+    if sz > MAX_INT_SIZE as i64 || sz <= 0 {
         return Err(LuaError::runtime(format_args!(
             "integral size ({}) out of limits [1,{}]",
             sz, MAX_INT_SIZE
@@ -2248,9 +2315,9 @@ fn getoption(h: &mut Header, fmt: &[u8], pos: &mut usize, size: &mut usize) -> R
         b'd' => { *size = 8; Ok(KOption::Double) }  // sizeof(double) = 8
         b'i' => { *size = getnumlimit(fmt, pos, 4)?; Ok(KOption::Int) }
         b'I' => { *size = getnumlimit(fmt, pos, 4)?; Ok(KOption::Uint) }
-        b's' => { *size = getnumlimit(fmt, pos, std::mem::size_of::<usize>()  as i32)?; Ok(KOption::Kstring) }
+        b's' => { *size = getnumlimit(fmt, pos, std::mem::size_of::<usize>()  as i64)?; Ok(KOption::Kstring) }
         b'c' => {
-            let n = getnum(fmt, pos, -1);
+            let n = getnum(fmt, pos, -1, h.wide_size);
             if n == -1 {
                 return Err(LuaError::runtime(format_args!("missing size for format option 'c'")));
             }
@@ -2265,7 +2332,7 @@ fn getoption(h: &mut Header, fmt: &[u8], pos: &mut usize, size: &mut usize) -> R
         b'>' => { h.is_little = false; Ok(KOption::Nop) }
         b'=' => { h.is_little = cfg!(target_endian = "little"); Ok(KOption::Nop) }
         b'!' => {
-            let n = getnum(fmt, pos, NATIVE_MAX_ALIGN as i32);
+            let n = getnum(fmt, pos, NATIVE_MAX_ALIGN as i64, false);
             h.max_align = getnumlimit(fmt, pos, n)?;
             Ok(KOption::Nop)
         }
@@ -2276,6 +2343,7 @@ fn getoption(h: &mut Header, fmt: &[u8], pos: &mut usize, size: &mut usize) -> R
 /// Get full details about the next format option, including alignment padding.
 ///
 fn getdetails(
+    state: &mut LuaState,
     h: &mut Header,
     total_size: usize,
     fmt: &[u8],
@@ -2288,13 +2356,13 @@ fn getdetails(
 
     if opt == KOption::Paddalign {
         if *pos >= fmt.len() {
-            return Err(LuaError::arg_error(1, "invalid next option for option 'X'"));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"invalid next option for option 'X'"));
         }
         let mut dummy_size = 0usize;
         let next_opt = getoption(h, fmt, pos, &mut dummy_size)?;
         align = dummy_size;
         if next_opt == KOption::Char || align == 0 {
-            return Err(LuaError::arg_error(1, "invalid next option for option 'X'"));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"invalid next option for option 'X'"));
         }
     }
 
@@ -2305,7 +2373,7 @@ fn getdetails(
             align = h.max_align;
         }
         if (align & (align - 1)) != 0 {
-            return Err(LuaError::arg_error(1, "format asks for alignment not power of 2"));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"format asks for alignment not power of 2"));
         }
         *ntoalign = (align - (total_size & (align - 1))) & (align - 1);
     }
@@ -2379,7 +2447,7 @@ fn unpackint(_state: &LuaState, data: &[u8], is_little: bool, size: usize, is_si
 pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
     let fmt_bytes = state.check_arg_string(1)?.to_vec();
     let fmt = &fmt_bytes[..];
-    let mut h = Header::new();
+    let mut h = Header::new(state.global().lua_version == lua_types::LuaVersion::V55);
     let mut arg = 1i32;
     let mut total_size = 0usize;
     let mut buf: Vec<u8> = Vec::new();
@@ -2388,7 +2456,16 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
     while pos < fmt.len() {
         let mut size = 0usize;
         let mut ntoalign = 0usize;
-        let opt = getdetails(&mut h, total_size, fmt, &mut pos, &mut size, &mut ntoalign)?;
+        let opt = getdetails(state, &mut h, total_size, fmt, &mut pos, &mut size, &mut ntoalign)?;
+        // 5.5 `str_pack` rejects an oversized running total ("result too long")
+        // BEFORE consuming the value argument; 5.3/5.4 have no such check (their
+        // `int` sizes cannot reach the limit). MAX_SIZE is the host pointer width.
+        if h.wide_size {
+            let space = ntoalign + size;
+            if space > (i64::MAX as usize) || total_size > (i64::MAX as usize) - space {
+                return Err(lua_vm::debug::arg_error_impl(state, arg, b"result too long"));
+            }
+        }
         total_size += ntoalign + size;
         for _ in 0..ntoalign {
             buf.push(PACK_PAD_BYTE);
@@ -2401,7 +2478,7 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
                 if size < SZINT {
                     let lim: i64 = 1i64 << (size * NB as usize - 1);
                     if !(-lim <= n && n < lim) {
-                        return Err(LuaError::arg_error(arg, "integer overflow"));
+                        return Err(lua_vm::debug::arg_error_impl(state, arg, b"integer overflow"));
                     }
                 }
                 packint(&mut buf, n as u64, h.is_little, size, n < 0);
@@ -2411,7 +2488,7 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
                 if size < SZINT {
                     let lim: u64 = 1u64 << (size * NB as usize);
                     if (n as u64) >= lim {
-                        return Err(LuaError::arg_error(arg, "unsigned overflow"));
+                        return Err(lua_vm::debug::arg_error_impl(state, arg, b"unsigned overflow"));
                     }
                 }
                 packint(&mut buf, n as u64, h.is_little, size, false);
@@ -2437,7 +2514,7 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
             KOption::Char => {
                 let s = state.check_arg_string(arg)?.to_vec();
                 if s.len() > size {
-                    return Err(LuaError::arg_error(arg, "string longer than given size"));
+                    return Err(lua_vm::debug::arg_error_impl(state, arg, b"string longer than given size"));
                 }
                 buf.extend_from_slice(&s);
                 let pad = size - s.len();
@@ -2449,7 +2526,7 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
                 let s = state.check_arg_string(arg)?.to_vec();
                 let len = s.len();
                 if size < SZINT && len >= (1usize << (size * 8)) {
-                    return Err(LuaError::arg_error(arg, "string length does not fit in given size"));
+                    return Err(lua_vm::debug::arg_error_impl(state, arg, b"string length does not fit in given size"));
                 }
                 packint(&mut buf, len as u64, h.is_little, size, false);
                 buf.extend_from_slice(&s);
@@ -2458,7 +2535,7 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
             KOption::Zstr => {
                 let s = state.check_arg_string(arg)?.to_vec();
                 if s.contains(&0) {
-                    return Err(LuaError::arg_error(arg, "string contains zeros"));
+                    return Err(lua_vm::debug::arg_error_impl(state, arg, b"string contains zeros"));
                 }
                 buf.extend_from_slice(&s);
                 buf.push(0);
@@ -2483,20 +2560,25 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn str_packsize(state: &mut LuaState) -> Result<usize, LuaError> {
     let fmt_bytes = state.check_arg_string(1)?.to_vec();
     let fmt = &fmt_bytes[..];
-    let mut h = Header::new();
+    let mut h = Header::new(state.global().lua_version == lua_types::LuaVersion::V55);
     let mut total_size = 0usize;
     let mut pos = 0usize;
 
     while pos < fmt.len() {
         let mut size = 0usize;
         let mut ntoalign = 0usize;
-        let opt = getdetails(&mut h, total_size, fmt, &mut pos, &mut size, &mut ntoalign)?;
+        let opt = getdetails(state, &mut h, total_size, fmt, &mut pos, &mut size, &mut ntoalign)?;
         if opt == KOption::Kstring || opt == KOption::Zstr {
-            return Err(LuaError::arg_error(1, "variable-length format"));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"variable-length format"));
         }
         let space = ntoalign + size;
-        if total_size > PACK_MAXSIZE - space {
-            return Err(LuaError::arg_error(1, "format result too large"));
+        let max_total: usize = if h.wide_size {
+            i64::MAX as usize
+        } else {
+            PACK_MAXSIZE
+        };
+        if space > max_total || total_size > max_total - space {
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"format result too large"));
         }
         total_size += space;
     }
@@ -2511,25 +2593,29 @@ pub fn str_unpack(state: &mut LuaState) -> Result<usize, LuaError> {
     let data_bytes = state.check_arg_string(2)?.to_vec();
     let ld = data_bytes.len();
     let pos_raw = state.opt_arg_integer(3, 1)?;
-    let mut pos = pos_relat_i(pos_raw, ld).saturating_sub(1);
+    let mut pos = if matches!(state.global().lua_version, lua_types::LuaVersion::V53) {
+        posrelat_53(pos_raw, ld).wrapping_sub(1)
+    } else {
+        pos_relat_i(pos_raw, ld).saturating_sub(1)
+    };
 
     if pos > ld {
-        return Err(LuaError::arg_error(3, "initial position out of string"));
+        return Err(lua_vm::debug::arg_error_impl(state, 3, b"initial position out of string"));
     }
 
     let fmt = &fmt_bytes[..];
     let data = &data_bytes[..];
-    let mut h = Header::new();
+    let mut h = Header::new(state.global().lua_version == lua_types::LuaVersion::V55);
     let mut fmt_pos = 0usize;
     let mut n = 0usize;
 
     while fmt_pos < fmt.len() {
         let mut size = 0usize;
         let mut ntoalign = 0usize;
-        let opt = getdetails(&mut h, pos, fmt, &mut fmt_pos, &mut size, &mut ntoalign)?;
+        let opt = getdetails(state, &mut h, pos, fmt, &mut fmt_pos, &mut size, &mut ntoalign)?;
 
         if ntoalign + size > ld - pos {
-            return Err(LuaError::arg_error(2, "data string too short"));
+            return Err(lua_vm::debug::arg_error_impl(state, 2, b"data string too short"));
         }
         pos += ntoalign;
         state.ensure_stack(2, "too many results")?;
@@ -2568,16 +2654,19 @@ pub fn str_unpack(state: &mut LuaState) -> Result<usize, LuaError> {
             KOption::Kstring => {
                 let len = unpackint(state, &data[pos..pos + size], h.is_little, size, false)? as usize;
                 if len > ld - pos - size {
-                    return Err(LuaError::arg_error(2, "data string too short"));
+                    return Err(lua_vm::debug::arg_error_impl(state, 2, b"data string too short"));
                 }
                 state.push_bytes(&data[pos + size..pos + size + len])?;
                 pos += len;
             }
             KOption::Zstr => {
-                let end = data[pos..].iter().position(|&b| b == 0)
-                    .ok_or_else(|| LuaError::arg_error(2, "unfinished string for format 'z'"))?;
+                let found = data[pos..].iter().position(|&b| b == 0);
+                let end = match found {
+                    Some(e) => e,
+                    None => return Err(lua_vm::debug::arg_error_impl(state, 2, b"unfinished string for format 'z'")),
+                };
                 if pos + end >= ld {
-                    return Err(LuaError::arg_error(2, "unfinished string for format 'z'"));
+                    return Err(lua_vm::debug::arg_error_impl(state, 2, b"unfinished string for format 'z'"));
                 }
                 state.push_bytes(&data[pos..pos + end])?;
                 pos += end + 1;

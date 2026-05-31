@@ -414,7 +414,7 @@ fn math_fmod(state: &mut LuaState) -> Result<usize, LuaError> {
         let d = state.to_integer(2).unwrap_or(0);
         if (d as u64).wrapping_add(1) <= 1 {
             if d == 0 {
-                return Err(LuaError::arg_error(2, "zero"));
+                return Err(lua_vm::debug::arg_error_impl(state, 2, b"zero"));
             }
             state.push(LuaValue::Int(0));
         } else {
@@ -515,7 +515,7 @@ fn math_min(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.get_top();
     let mut imin: i32 = 1;
     if n < 1 {
-        return Err(LuaError::arg_error(1, "value expected"));
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
     }
     for i in 2..=n {
         if state.compare_lt(i, imin)? {
@@ -532,7 +532,7 @@ fn math_max(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.get_top();
     let mut imax: i32 = 1;
     if n < 1 {
-        return Err(LuaError::arg_error(1, "value expected"));
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
     }
     for i in 2..=n {
         if state.compare_lt(imax, i)? {
@@ -585,10 +585,14 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
         return Ok(1);
     }
 
+    let is_v53 = state.global().lua_version == lua_types::LuaVersion::V53;
+
     let (low, up) = match n_args {
         1 => {
             let up = state.check_integer(1)?;
-            if up == 0 {
+            // 5.4/5.5 `random(0)` returns a full-range integer; 5.3 has no such
+            // special case — it is `[1, 0]`, an empty interval.
+            if up == 0 && !is_v53 {
                 // I2UInt(rv) = rv (trivial for u64)
                 state.push(LuaValue::Int(rv as i64));
                 return Ok(1);
@@ -608,7 +612,14 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
     };
 
     if low > up {
-        return Err(LuaError::arg_error(1, "interval is empty"));
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"interval is empty"));
+    }
+
+    // 5.3 `math_random` rejects intervals whose width overflows a signed integer
+    // (`low >= 0 || up <= LUA_MAXINTEGER + low`). 5.4/5.5 use the `project`
+    // bit-mask algorithm, which handles the full range without erroring.
+    if is_v53 && !(low >= 0 || up <= i64::MAX.wrapping_add(low)) {
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"interval too large"));
     }
 
     let range = (up as u64).wrapping_sub(low as u64);

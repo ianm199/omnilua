@@ -1311,6 +1311,17 @@ fn read_utf8_esc(
 
     let mut r = get_hexa(state, ls)?;
 
+    // The codepoint upper bound is version-gated and the C control flow differs
+    // between families (`llex.c readutf8esc`):
+    //   * 5.3 (L336-340): `r = (r<<4)+digit; esccheck(r <= 0x10FFFF, ...)` —
+    //     accumulate the digit FIRST, then bound the running value at 0x10FFFF.
+    //   * 5.4 (L351) / 5.5 (L373): `esccheck(r <= (0x7FFFFFFFu >> 4), ...);
+    //     r = (r<<4)+digit` — bound BEFORE the shift, allowing up to 0x7FFFFFFF.
+    // The order (check-before-shift vs shift-before-check) is reproduced exactly
+    // because it also determines how many digits land in the `near '...'` buffer
+    // snippet of the error message.
+    let is_v53 = matches!(state.global().lua_version, lua_types::LuaVersion::V53);
+
     // cast_void: discard return value
     loop {
         save_and_next(ls, state)?;
@@ -1318,9 +1329,15 @@ fn read_utf8_esc(
             break;
         }
         i += 1;
-        esc_check(state, ls, r <= (0x7FFF_FFFFu32 >> 4), b"UTF-8 value too large")?;
-        // TODO(port): lua_vm::object::hex_value in Phase B
-        r = (r << 4) + hex_value_stub(ls.current);
+        if is_v53 {
+            // TODO(port): lua_vm::object::hex_value in Phase B
+            r = (r << 4) + hex_value_stub(ls.current);
+            esc_check(state, ls, r <= 0x10_FFFF, b"UTF-8 value too large")?;
+        } else {
+            esc_check(state, ls, r <= (0x7FFF_FFFFu32 >> 4), b"UTF-8 value too large")?;
+            // TODO(port): lua_vm::object::hex_value in Phase B
+            r = (r << 4) + hex_value_stub(ls.current);
+        }
     }
 
     esc_check(state, ls, ls.current == b'}' as i32, b"missing '}'")?;

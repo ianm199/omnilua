@@ -656,7 +656,8 @@ impl LuaStateStubExt for LuaState {
                 return Ok(i);
             }
         }
-        Err(LuaError::arg_error(arg, "invalid option"))
+        let extramsg = format!("invalid option '{}'", String::from_utf8_lossy(&name));
+        Err(lua_vm::debug::arg_error_impl(self, arg, extramsg.as_bytes()))
     }
 
     fn arg(&mut self, n: i32) -> LuaValue {

@@ -267,7 +267,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     check_cross_thread_stack(state, target_is_self, 3)?;
 
     if raw_opts.first() == Some(&b'>') {
-        return Err(LuaError::arg_error(arg + 2, "invalid option '>'"));
+        return Err(lua_vm::debug::arg_error_impl(state, arg + 2, b"invalid option '>'"));
     }
 
     // Build the effective options string, prepending '>' when the subject is a function.
@@ -293,7 +293,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
 
         // With '>' prefix, get_debug_info consumes the function from the top of stack.
         if state.get_debug_info(&options, &mut ar).is_err() {
-            return Err(LuaError::arg_error(arg + 2, "invalid option"));
+            return Err(lua_vm::debug::arg_error_impl(state, arg + 2, b"invalid option"));
         }
     } else {
         options = raw_opts;
@@ -308,7 +308,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
                 }
 
                 if state.get_debug_info(&options, &mut ar).is_err() {
-                    return Err(LuaError::arg_error(arg + 2, "invalid option"));
+                    return Err(lua_vm::debug::arg_error_impl(state, arg + 2, b"invalid option"));
                 }
             }
             DebugThreadTarget::Other(target_state) => {
@@ -322,7 +322,7 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
                     return Ok(1);
                 }
                 if target.get_debug_info(&options, &mut ar).is_err() {
-                    return Err(LuaError::arg_error(arg + 2, "invalid option"));
+                    return Err(lua_vm::debug::arg_error_impl(state, arg + 2, b"invalid option"));
                 }
                 info_target = Some(target);
             }
@@ -427,7 +427,7 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
     let name = match target_state {
         DebugThreadTarget::Current | DebugThreadTarget::Unavailable => {
             if !state.get_stack_level(level, &mut ar) {
-                return Err(LuaError::arg_error(arg + 1, "level out of range"));
+                return Err(lua_vm::debug::arg_error_impl(state, arg + 1, b"level out of range"));
             }
             check_cross_thread_stack(state, true, 1)?;
             // Pushes the local's value onto L1's stack and returns its name.
@@ -436,7 +436,7 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
         DebugThreadTarget::Other(target_state) => {
             let mut target = target_state.borrow_mut();
             if !target.get_stack_level(level, &mut ar) {
-                return Err(LuaError::arg_error(arg + 1, "level out of range"));
+                return Err(lua_vm::debug::arg_error_impl(state, arg + 1, b"level out of range"));
             }
             check_cross_thread_stack(state, false, 1)?;
             let name = target.get_local_at(&ar, nvar)?;
@@ -479,7 +479,7 @@ pub(crate) fn set_local(state: &mut LuaState) -> Result<usize, LuaError> {
     let name = match target_state {
         DebugThreadTarget::Current | DebugThreadTarget::Unavailable => {
             if !state.get_stack_level(level, &mut ar) {
-                return Err(LuaError::arg_error(arg + 1, "level out of range"));
+                return Err(lua_vm::debug::arg_error_impl(state, arg + 1, b"level out of range"));
             }
             check_cross_thread_stack(state, true, 1)?;
             let name = state.set_local_at(&ar, nvar)?;
@@ -492,7 +492,7 @@ pub(crate) fn set_local(state: &mut LuaState) -> Result<usize, LuaError> {
             let new_val = state.get_at(state.top_idx() - 1);
             let mut target = target_state.borrow_mut();
             if !target.get_stack_level(level, &mut ar) {
-                return Err(LuaError::arg_error(arg + 1, "level out of range"));
+                return Err(lua_vm::debug::arg_error_impl(state, arg + 1, b"level out of range"));
             }
             check_cross_thread_stack(state, false, 1)?;
             target.push(new_val);
@@ -590,7 +590,7 @@ fn check_upval(
         Err(_) => None,
     };
     if require_valid && id.is_none() {
-        return Err(LuaError::arg_error(argnup, "invalid upvalue index"));
+        return Err(lua_vm::debug::arg_error_impl(state, argnup, b"invalid upvalue index"));
     }
     Ok((id, nup))
 }
@@ -618,10 +618,10 @@ pub(crate) fn upvalue_join(state: &mut LuaState) -> Result<usize, LuaError> {
     let (_id1, n1) = check_upval(state, 1, 2, true)?;
     let (_id2, n2) = check_upval(state, 3, 4, true)?;
     if state.is_c_function_at(1) {
-        return Err(LuaError::arg_error(1, "Lua function expected"));
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"Lua function expected"));
     }
     if state.is_c_function_at(3) {
-        return Err(LuaError::arg_error(3, "Lua function expected"));
+        return Err(lua_vm::debug::arg_error_impl(state, 3, b"Lua function expected"));
     }
     state.join_upvalues(1, n1, 3, n2)?;
     Ok(0)

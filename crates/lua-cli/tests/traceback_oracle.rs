@@ -363,3 +363,319 @@ fn v55_global_already_defined_traceback_matches_reference() {
 
     let _ = std::fs::remove_file(&script);
 }
+
+/// Shared-core item A: `_ENV` (an upvalue) indexed by a relational/jump key.
+/// The CLI-level oracle for the version split. 5.3 and 5.5 print `nil` and exit
+/// 0; 5.4's reference *genuinely* raises "attempt to index a number value" and
+/// exits 1 (the upstream 5.4 `luaK_exp2val` bug that 5.5 fixed). When the
+/// reference binary is present we diff our normalized stderr/stdout against it.
+#[test]
+fn env_relational_index_matches_reference_per_version() {
+    const PROG: &str = "print(_ENV[1<2])";
+    for &v in VERSIONS {
+        let out = lua_rs()
+            .env("LUA_RS_VERSION", v)
+            .arg("-e")
+            .arg(PROG)
+            .output()
+            .expect("spawn lua-rs -e");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr_norm = normalize(&out.stderr, "");
+
+        if v == "5.4" {
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "[envrel/5.4] reference raises here; we must too:\n{stderr_norm}"
+            );
+            assert!(
+                stderr_norm.contains("attempt to index a number value"),
+                "[envrel/5.4] expected the index-a-number error:\n{stderr_norm}"
+            );
+        } else {
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[envrel/{v}] must exit 0:\n{stderr_norm}"
+            );
+            assert_eq!(
+                stdout.trim_end(),
+                "nil",
+                "[envrel/{v}] must print nil, got stdout `{stdout}` stderr `{stderr_norm}`"
+            );
+        }
+
+        if let Some(refbin) = reference_binary(v) {
+            let rout = Command::new(&refbin)
+                .arg("-e")
+                .arg(PROG)
+                .output()
+                .expect("spawn reference");
+            assert_eq!(
+                rout.status.code(),
+                out.status.code(),
+                "[envrel/{v}] exit code must match reference"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&rout.stdout).trim_end(),
+                stdout.trim_end(),
+                "[envrel/{v}] stdout must match reference"
+            );
+        }
+    }
+}
+
+/// Shared-core item D: the `\u{...}` codepoint upper bound. On 5.3 the lexer
+/// caps at 0x10FFFF (rejecting `\u{110000}` and `\u{7FFFFFFF}`); on 5.4/5.5 it
+/// caps at the wider 0x7FFFFFFF (accepting `\u{7FFFFFFF}`, rejecting only
+/// `\u{80000000}`). This is a lexer (compile-time) error reported on stderr, so
+/// we assert exit code and message at the CLI boundary, and diff against the
+/// reference binary when present.
+#[test]
+fn utf8_escape_bound_matches_reference_per_version() {
+    struct Case {
+        prog: &'static str,
+        rejected_on: &'static [&'static str],
+    }
+    const CASES: &[Case] = &[
+        Case { prog: r#"print(#"\u{10FFFF}")"#, rejected_on: &[] },
+        Case { prog: r#"print(#"\u{110000}")"#, rejected_on: &["5.3"] },
+        Case { prog: r#"print(#"\u{7FFFFFFF}")"#, rejected_on: &["5.3"] },
+        Case { prog: r#"print(#"\u{80000000}")"#, rejected_on: &["5.3", "5.4", "5.5"] },
+    ];
+
+    for case in CASES {
+        for &v in VERSIONS {
+            let out = lua_rs()
+                .env("LUA_RS_VERSION", v)
+                .arg("-e")
+                .arg(case.prog)
+                .output()
+                .expect("spawn lua-rs -e");
+            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+            let stderr_norm = normalize(&out.stderr, "");
+            let ctx = format!("utf8esc/{v}/`{}`", case.prog);
+
+            if case.rejected_on.contains(&v) {
+                assert_eq!(
+                    out.status.code(),
+                    Some(1),
+                    "[{ctx}] must reject (exit 1):\n{stderr_norm}"
+                );
+                assert!(
+                    stderr_norm.contains("UTF-8 value too large"),
+                    "[{ctx}] expected the 'UTF-8 value too large' lexer error:\n{stderr_norm}"
+                );
+            } else {
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "[{ctx}] must accept (exit 0):\n{stderr_norm}"
+                );
+            }
+
+            if let Some(refbin) = reference_binary(v) {
+                let rout = Command::new(&refbin)
+                    .arg("-e")
+                    .arg(case.prog)
+                    .output()
+                    .expect("spawn reference");
+                assert_eq!(
+                    rout.status.code(),
+                    out.status.code(),
+                    "[{ctx}] exit code must match reference"
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&rout.stdout).trim_end(),
+                    stdout.trim_end(),
+                    "[{ctx}] stdout must match reference"
+                );
+            }
+        }
+    }
+}
+
+/// Shared-core item F (CLI message surface): `string.unpack("c0", x, 0)`.
+///
+/// On 5.3 the reference raises `bad argument #3 to 'unpack' (initial position
+/// out of string)` and exits 1; on 5.4/5.5 `pos == 0` is a valid start and the
+/// call succeeds (exit 0). We assert the behavioral split here and that, where
+/// a reference binary is present, our exit code matches it. The exact `to
+/// '<fn>'` funcname wording is item B (`arg_error` funcname omission) and is
+/// deliberately not asserted; the load-bearing claim is the raise itself plus
+/// the "initial position out of string" reason.
+#[test]
+fn string_unpack_c0_pos_zero_is_53_only_error() {
+    let prog = r#"print(string.unpack("c0", "abc", 0))"#;
+    for &v in VERSIONS {
+        let out = lua_rs()
+            .env("LUA_RS_VERSION", v)
+            .arg("-e")
+            .arg(prog)
+            .output()
+            .expect("spawn lua-rs -e");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if v == "5.3" {
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "[unpack-c0/{v}] pos=0 must error on 5.3:\nstderr={stderr}"
+            );
+            assert!(
+                stderr.contains("initial position out of string"),
+                "[unpack-c0/{v}] missing reason in stderr:\n{stderr}"
+            );
+        } else {
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[unpack-c0/{v}] pos=0 must be accepted on 5.4/5.5:\nstderr={stderr}"
+            );
+        }
+
+        if let Some(refbin) = reference_binary(v) {
+            let rout = Command::new(&refbin)
+                .arg("-e")
+                .arg(prog)
+                .output()
+                .expect("spawn reference");
+            assert_eq!(
+                rout.status.code(),
+                out.status.code(),
+                "[unpack-c0/{v}] exit code must match reference"
+            );
+        }
+    }
+}
+
+/// Item B (shared-core): luaL_argerror / luaL_checkoption callsites must carry
+/// the `luaL_where` location prefix, the `to '<fn>'` qualifier, and the
+/// offending value. The location prefix only shows on the CLI message line
+/// (the in-process wrapper has no pmain frame), so this is a spawn test that
+/// diffs the full first stderr line against the reference for each version.
+#[test]
+fn argerror_funcname_first_line_matches_reference() {
+    let cases = [
+        r#"collectgarbage("bogusopt")"#,
+        r#"utf8.offset("abc", 0, 0)"#,
+        r#"string.format("%200d", 1)"#,
+        r#"string.format("%y", 1)"#,
+        r#"tonumber("x", 1)"#,
+        r#"table.insert({}, 5, 5)"#,
+        r#"math.random(5, 2)"#,
+        r#"string.rep("x", 1.5)"#,
+        // Item B remainder: string.pack / string.unpack / string.packsize
+        // arg-error family. Called via a global lookup so the name resolves to
+        // the dotted `'string.pack'` etc. — the full first line (incl. funcname
+        // and location prefix) must equal the reference on every version.
+        r#"string.unpack("i4", "ab")"#,
+        r#"string.pack("B", 999)"#,
+        r#"string.pack("c2", "abcd")"#,
+        r#"string.pack("Xc1", 1)"#,
+        r#"string.pack("!3i4", 1)"#,
+        r#"string.packsize("s")"#,
+        "string.format(\"%5s\", \"a\\0b\")",
+    ];
+    for &v in VERSIONS {
+        let Some(refbin) = reference_binary(v) else {
+            continue;
+        };
+        for prog in cases {
+            let out = lua_rs()
+                .env("LUA_RS_VERSION", v)
+                .arg("-e")
+                .arg(prog)
+                .output()
+                .expect("spawn lua-rs -e");
+            let rout = Command::new(&refbin)
+                .arg("-e")
+                .arg(prog)
+                .output()
+                .expect("spawn reference");
+
+            // Drop the leading "<progname>: " token (binary path differs).
+            let strip = |b: &[u8]| -> String {
+                let s = String::from_utf8_lossy(b);
+                let first = s.lines().next().unwrap_or("");
+                match first.split_once(": ") {
+                    Some((_prog, rest)) => rest.to_string(),
+                    None => first.to_string(),
+                }
+            };
+            let ours = strip(&out.stderr);
+            let theirs = strip(&rout.stderr);
+            assert_eq!(
+                ours, theirs,
+                "[argerror/{v}] `{prog}` first error line must match reference\n  ours: {ours}\n  ref : {theirs}"
+            );
+            assert_eq!(
+                out.status.code(),
+                rout.status.code(),
+                "[argerror/{v}] `{prog}` exit code must match reference"
+            );
+        }
+    }
+}
+
+/// Item E (shared-core): on 5.1/5.2/5.3 `print` calls the *global* `tostring`,
+/// so a nil global raises "attempt to call a nil value" and a non-string return
+/// raises "'tostring' must return a string to 'print'" (with the `luaL_where`
+/// location prefix on the CLI message line). On 5.4/5.5 `print` uses
+/// `luaL_tolstring` directly and ignores the global, so the same code runs
+/// cleanly. Spawn test diffing the first stderr line and exit code against the
+/// reference for each version.
+#[test]
+fn print_global_tostring_matches_reference_per_version() {
+    // (program, 5.3-errors?) — on 5.4/5.5 each program is expected to succeed.
+    let cases: &[(&str, bool)] = &[
+        ("tostring=nil; print(1)", true),
+        ("tostring=function(x) return {} end; print(1)", true),
+        ("tostring=function(x) return 'X'..x end; print(7)", false),
+        ("tostring=function(x) return 42 end; print(1)", false),
+        ("tostring=nil; print()", false),
+    ];
+    for &v in VERSIONS {
+        for &(prog, errs_on_53) in cases {
+            let out = lua_rs()
+                .env("LUA_RS_VERSION", v)
+                .arg("-e")
+                .arg(prog)
+                .output()
+                .expect("spawn lua-rs -e");
+            let expect_err = v == "5.3" && errs_on_53;
+            assert_eq!(
+                out.status.code(),
+                Some(if expect_err { 1 } else { 0 }),
+                "[print-tostring/{v}] `{prog}` exit code unexpected\n  stderr: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+
+            if let Some(refbin) = reference_binary(v) {
+                let rout = Command::new(&refbin)
+                    .arg("-e")
+                    .arg(prog)
+                    .output()
+                    .expect("spawn reference");
+                // Drop the leading "<progname>: " token (binary path differs).
+                let strip = |b: &[u8]| -> String {
+                    let s = String::from_utf8_lossy(b);
+                    let first = s.lines().next().unwrap_or("");
+                    match first.split_once(": ") {
+                        Some((_prog, rest)) => rest.to_string(),
+                        None => first.to_string(),
+                    }
+                };
+                assert_eq!(
+                    strip(&out.stderr),
+                    strip(&rout.stderr),
+                    "[print-tostring/{v}] `{prog}` first stderr line must match reference"
+                );
+                assert_eq!(
+                    out.status.code(),
+                    rout.status.code(),
+                    "[print-tostring/{v}] `{prog}` exit code must match reference"
+                );
+            }
+        }
+    }
+}

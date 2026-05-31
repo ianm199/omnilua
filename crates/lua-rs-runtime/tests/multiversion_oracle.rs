@@ -159,6 +159,41 @@ fn v53_string_coercion_is_float() {
     eq(LuaVersion::V54, "return math.type('0x10' + 0)", "integer");
 }
 
+/// 5.3 coerces numeric strings to integers in the *core* bitwise ops
+/// (`& | ~ << >>` and unary `~`), where 5.4/5.5 require number operands and
+/// raise. Boundary cases: a numeric-but-non-integral string yields "no integer
+/// representation"; a non-numeric string yields "perform bitwise operation".
+/// All values captured from lua5.3.6 (see `specs/followup/5.3-coerce-err.md`).
+#[test]
+fn v53_bitwise_string_coercion() {
+    eq(LuaVersion::V53, r#"return "3" & 5"#, "1");
+    eq(LuaVersion::V53, r#"return "0xff" | 0"#, "255");
+    eq(LuaVersion::V53, r#"return ~"5""#, "-6");
+    eq(LuaVersion::V53, r#"return "8" >> "1""#, "4");
+    eq(LuaVersion::V53, r#"return "8" << 1"#, "16");
+    eq(LuaVersion::V53, r#"return 5 & "3""#, "1");
+    eq(LuaVersion::V53, r#"return " 0x10 " & 255"#, "16");
+    eq(LuaVersion::V53, r#"return "3.0" & 1"#, "1");
+    eq(LuaVersion::V53, r#"return "0xffffffffffffffff" | 0"#, "-1");
+    eq(LuaVersion::V53, r#"return "0xfffffffffffffffe" & "-1""#, "-2");
+    eq(LuaVersion::V53, r#"return "   \n  -45  \t " >> "  -2  ""#, "-180");
+    // Boundaries that MUST still error on 5.3:
+    err_contains(LuaVersion::V53, r#"return "3.5" & 1"#, "no integer representation");
+    err_contains(LuaVersion::V53, r#"return "0xffffffffffffffff.0" | 0"#, "no integer representation");
+    err_contains(LuaVersion::V53, r#"return "abc" & 1"#, "perform bitwise operation on a string value");
+}
+
+/// Cross-version non-regression: 5.4/5.5 do NOT coerce strings in bitwise ops
+/// and keep raising "perform bitwise operation on a string value".
+#[test]
+fn v54_v55_bitwise_no_string_coercion() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, r#"return "3" & 5"#, "perform bitwise operation on a string value");
+        err_contains(v, r#"return ~"5""#, "perform bitwise operation on a string value");
+        err_contains(v, r#"return "8" >> "1""#, "perform bitwise operation on a string value");
+    }
+}
+
 #[test]
 fn v53_removed_builtins_absent() {
     eq(LuaVersion::V53, "return type(warn)", "nil");

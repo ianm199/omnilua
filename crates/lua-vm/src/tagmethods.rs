@@ -401,6 +401,69 @@ fn call_bin_tm(
     Ok(true)
 }
 
+/// Lua 5.3 core string→integer coercion for bitwise ops.
+///
+/// Returns:
+/// - `Some(Ok(()))` — both operands coerced to integers; the op was computed
+///   and written to `res`.
+/// - `Some(Err(..))` — an operand is a numeric-but-non-integral string
+///   (e.g. `"3.5"`, `"0xff..ff.0"`); raises "number has no integer
+///   representation" (`luaG_tointerror`), matching lua5.3.6.
+/// - `None` — coercion is impossible (an operand is a non-numeric string such
+///   as `"abc"`); the caller falls through to its normal error path, which
+///   raises "perform bitwise operation on".
+///
+/// The 5.3-only gate and the bitwise-event filter are applied by the caller.
+fn try_bitwise_strconv_53(
+    state: &mut LuaState,
+    p1: &LuaValue,
+    p1_idx: Option<StackIdx>,
+    p2: &LuaValue,
+    p2_idx: Option<StackIdx>,
+    res: StackIdx,
+    event: TagMethod,
+) -> Option<Result<(), LuaError>> {
+    // Both operands must be number-ish (integer, float, or a string that
+    // parses as a number). If either is genuinely non-numeric, bail to the
+    // caller's "perform bitwise operation on" path.
+    let n1 = p1.to_number_with_strconv();
+    let n2 = p2.to_number_with_strconv();
+    if n1.is_none() || n2.is_none() {
+        return None;
+    }
+    // Both are number-ish. Now require integer representations. If a number-ish
+    // operand has no integer representation (non-integral numeric string or
+    // float), 5.3 raises "number has no integer representation".
+    let i1 = p1.to_integer_with_strconv();
+    let i2 = p2.to_integer_with_strconv();
+    let (i1, i2) = match (i1, i2) {
+        (Some(a), Some(b)) => (a, b),
+        _ => {
+            let p1_idx = p1_idx.unwrap_or(StackIdx(0));
+            let p2_idx = p2_idx.unwrap_or(StackIdx(0));
+            return Some(Err(crate::debug::to_int_error(
+                state,
+                p1,
+                Some(p1_idx),
+                p2,
+                Some(p2_idx),
+            )));
+        }
+    };
+    let result = match event {
+        TagMethod::BAnd => i1 & i2,
+        TagMethod::BOr => i1 | i2,
+        TagMethod::BXor => i1 ^ i2,
+        TagMethod::Shl => crate::vm::shiftl(i1, i2),
+        TagMethod::Shr => crate::vm::shiftl(i1, i2.wrapping_neg()),
+        // Unary `~x` arrives here as a binary event with p1 == p2; `~i1`.
+        TagMethod::BNot => !i1,
+        _ => return None,
+    };
+    state.set_at(res, LuaValue::Int(result));
+    Some(Ok(()))
+}
+
 // ── luaT_trybinTM ────────────────────────────────────────────────────────────
 
 //                         StkId res, TMS event)
@@ -424,6 +487,32 @@ pub(crate) fn try_bin_tm(
     event: TagMethod,
 ) -> Result<(), LuaError> {
     if !call_bin_tm(state, p1, p2, res, event)? {
+        // Lua 5.3 coerces numeric strings to integers in the *core* bitwise
+        // ops (`& | ~ << >>` and unary `~`), where 5.4/5.5 require a real
+        // number operand and delegate string handling to a (non-existent)
+        // string metamethod. On the 5.3 path, after the metamethod lookup
+        // fails, retry the operation with string→integer coercion before
+        // raising. The boundary semantics (non-integral numeric string →
+        // "no integer representation"; non-numeric string → "perform bitwise
+        // operation") fall out of `to_integer_with_strconv` /
+        // `to_number_with_strconv`. See specs/followup/5.3-coerce-err.md.
+        if matches!(state.global().lua_version, lua_types::LuaVersion::V53)
+            && matches!(
+                event,
+                TagMethod::BAnd
+                    | TagMethod::BOr
+                    | TagMethod::BXor
+                    | TagMethod::Shl
+                    | TagMethod::Shr
+                    | TagMethod::BNot
+            )
+            && (matches!(p1, LuaValue::Str(_)) || matches!(p2, LuaValue::Str(_)))
+        {
+            if let Some(result) = try_bitwise_strconv_53(state, p1, p1_idx, p2, p2_idx, res, event)
+            {
+                return result;
+            }
+        }
         //   case TM_BAND: case TM_BOR: case TM_BXOR:
         //   case TM_SHL: case TM_SHR: case TM_BNOT: {
         //     if (ttisnumber(p1) && ttisnumber(p2))

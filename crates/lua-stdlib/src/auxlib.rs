@@ -203,6 +203,17 @@ fn push_func_name(
     ar: &mut LuaDebug,
     global_lookup_target: Option<&mut LuaState>,
 ) -> Result<(), LuaError> {
+    // Lua 5.5 reordered `pushfuncname` to prefer the `namewhat`
+    // (`global`/`field`/`method`/`local`/`upvalue`) over the global-name
+    // lookup, so a global C/Lua function renders `in global 'name'` rather than
+    // `in function 'name'`. 5.3/5.4 try the global-name lookup first.
+    let namewhat_first = state.global().lua_version == lua_types::LuaVersion::V55;
+    if namewhat_first && !ar.namewhat.is_empty() {
+        let namewhat = ar.namewhat.clone();
+        let name = ar.name.clone().unwrap_or_else(|| b"?".to_vec());
+        state.push_fstring(format_args!("{} '{}'", BStr(&namewhat), BStr(&name)))?;
+        return Ok(());
+    }
     let found_global = match global_lookup_target {
         Some(target) => push_global_func_name_from_target(state, target, ar)?,
         None => push_global_func_name(state, ar)?,

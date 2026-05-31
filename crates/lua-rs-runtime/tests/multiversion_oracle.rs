@@ -743,3 +743,44 @@ fn v55_version_string() {
     eq(LuaVersion::V54, "return _VERSION", "Lua 5.4");
     eq(LuaVersion::V53, "return _VERSION", "Lua 5.3");
 }
+
+#[test]
+fn v55_error_nil_becomes_no_error_object() {
+    // 5.5's luaG_errormsg converts a nil error object to the literal string
+    // "<no error object>" after the message handler runs (ldebug.c). The `run`
+    // wrapper pcalls the chunk and returns `tostring(error_object)`, so on 5.5
+    // the propagated object is the string and on 5.3/5.4 it stays nil.
+    // error(nil): explicit nil object.
+    err_contains(LuaVersion::V55,
+        "error(nil)", "<no error object>");
+    // error() with no argument: object defaults to nil.
+    err_contains(LuaVersion::V55,
+        "error()", "<no error object>");
+    // nested pcall still sees the converted string.
+    eq(LuaVersion::V55,
+        "local ok, e = pcall(function() error(nil) end); return type(e) .. ':' .. tostring(e)",
+        "string:<no error object>");
+    // xpcall whose handler returns nil also settles to the string (the
+    // conversion runs on the handler result, matching upstream ordering).
+    eq(LuaVersion::V55,
+        "local ok, e = xpcall(function() error('x') end, function() return nil end); \
+         return type(e) .. ':' .. tostring(e)",
+        "string:<no error object>");
+}
+
+#[test]
+fn v53_v54_error_nil_stays_nil() {
+    // Regression guard: 5.3/5.4 leave a nil error object as nil (no conversion).
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        eq(v,
+            "local ok, e = pcall(function() error(nil) end); return type(e) .. ':' .. tostring(e)",
+            "nil:nil");
+        eq(v,
+            "local ok, e = pcall(function() error() end); return type(e) .. ':' .. tostring(e)",
+            "nil:nil");
+        // A real string error object is untouched (sanity: conversion is nil-only).
+        eq(v,
+            "local ok, e = pcall(function() error('boom') end); return (e:gsub('^.*: ', ''))",
+            "boom");
+    }
+}

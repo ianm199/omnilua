@@ -153,14 +153,13 @@ fn file_entry_point_has_base_c_frame() {
                 ;
             let our_tb = norm.split_once("stack traceback:").map(|x| x.1);
             let ref_tb = refnorm.split_once("stack traceback:").map(|x| x.1);
-            // 5.5 differs in the top frame's namewhat (`in global 'error'` vs
-            // `in function 'error'`) — a separate, out-of-#79d divergence.
-            if v != "5.5" {
-                assert_eq!(
-                    our_tb, ref_tb,
-                    "[file/{v}] traceback body must match reference"
-                );
-            }
+            // The 5.5 namewhat divergence (`in global 'error'` vs
+            // `in function 'error'`) is now fixed in `push_func_name`, so the
+            // traceback body matches the reference for every version.
+            assert_eq!(
+                our_tb, ref_tb,
+                "[file/{v}] traceback body must match reference"
+            );
         }
 
         let _ = std::fs::remove_file(&script);
@@ -220,6 +219,94 @@ fn stdin_entry_point_has_base_c_frame() {
 /// offending initializer, exits 1, and prints a normal runtime traceback. This
 /// asserts the full stderr (message + traceback body) matches lua5.5.0, and
 /// that the reported line is the second `global x = ...` (line 3 here).
+/// Lua 5.5 reorders `pushfuncname` (lauxlib.c) to prefer `namewhat` over the
+/// global-name lookup, so a function reachable as a global renders
+/// `in global '<name>'` rather than 5.3/5.4's `in function '<name>'`. This
+/// covers both a global C function (`error`) and a global Lua function (`G`),
+/// and asserts 5.3/5.4 keep the `in function` rendering (no regression).
+#[test]
+fn namewhat_global_rendering_is_version_gated() {
+    // A global Lua fn G that calls the global C fn error — exercises both
+    // frames. `-e` so there is no script path to normalize.
+    const PROG: &str = "function G() error(\"x\") end G()";
+    for &v in VERSIONS {
+        let out = lua_rs()
+            .env("LUA_RS_VERSION", v)
+            .arg("-e")
+            .arg(PROG)
+            .output()
+            .expect("spawn lua-rs -e");
+        let norm = normalize(&out.stderr, "");
+        if v == "5.5" {
+            assert!(
+                norm.contains("[C]: in global 'error'"),
+                "[namewhat/5.5] expected `[C]: in global 'error'`:\n{norm}"
+            );
+            assert!(
+                norm.contains("in global 'G'"),
+                "[namewhat/5.5] expected `in global 'G'`:\n{norm}"
+            );
+            assert!(
+                !norm.contains("in function 'error'") && !norm.contains("in function 'G'"),
+                "[namewhat/5.5] must not use the 5.4 `in function` rendering:\n{norm}"
+            );
+        } else {
+            assert!(
+                norm.contains("[C]: in function 'error'"),
+                "[namewhat/{v}] expected `[C]: in function 'error'`:\n{norm}"
+            );
+            assert!(
+                norm.contains("in function 'G'"),
+                "[namewhat/{v}] expected `in function 'G'`:\n{norm}"
+            );
+        }
+
+        // When the reference binary is present, the whole traceback body must
+        // match (this is the differential oracle, baked into the CLI test).
+        if let Some(refbin) = reference_binary(v) {
+            let rout = Command::new(&refbin)
+                .arg("-e")
+                .arg(PROG)
+                .output()
+                .expect("spawn reference");
+            let refnorm = normalize(&rout.stderr, "");
+            let our_tb = norm.split_once("stack traceback:").map(|x| x.1);
+            let ref_tb = refnorm.split_once("stack traceback:").map(|x| x.1);
+            assert_eq!(
+                our_tb, ref_tb,
+                "[namewhat/{v}] traceback body must match reference"
+            );
+        }
+    }
+}
+
+/// Lua 5.5's `luaG_errormsg` converts a nil error object to
+/// `"<no error object>"`, but the standalone CLI message handler (`lua.c`)
+/// still renders the top-level message as `(error object is a nil value)`
+/// for an uncaught `error(nil)`. Pin that the message-handler path is
+/// unchanged by the nil-conversion fix, for every version.
+#[test]
+fn top_level_error_nil_message_unchanged() {
+    for &v in VERSIONS {
+        let out = lua_rs()
+            .env("LUA_RS_VERSION", v)
+            .arg("-e")
+            .arg("error(nil)")
+            .output()
+            .expect("spawn lua-rs -e");
+        let norm = normalize(&out.stderr, "");
+        assert!(
+            norm.contains("(error object is a nil value)"),
+            "[error-nil/{v}] top-level error(nil) must print `(error object is a nil value)`:\n{norm}"
+        );
+        assert!(
+            !norm.contains("<no error object>"),
+            "[error-nil/{v}] CLI message handler path must not leak `<no error object>`:\n{norm}"
+        );
+        assert_traceback_tail(&norm, &format!("error-nil/{v}"));
+    }
+}
+
 #[test]
 fn v55_global_already_defined_traceback_matches_reference() {
     const GUARD_SCRIPT: &str = "global print\nglobal x = 1\nglobal x = 2\nprint(x)\n";

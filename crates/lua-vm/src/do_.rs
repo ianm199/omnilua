@@ -1406,6 +1406,25 @@ where
         }
     };
 
+    // Lua 5.5's `luaG_errormsg` (ldebug.c), after running the message handler,
+    // converts a nil error object into the literal `"<no error object>"` before
+    // the throw propagates. 5.3/5.4 leave it nil. This runs on the settled error
+    // object (the handler result, if any) and before it is copied to `old_top`.
+    // Syntax errors are thrown directly via `luaX_syntaxerror`/`luaD_throw` and
+    // never reach `luaG_errormsg`, so they are excluded (and carry strings,
+    // never nil, regardless).
+    if status != LuaStatus::Ok
+        && status != LuaStatus::ErrSyntax
+        && state.global().lua_version == lua_types::LuaVersion::V55
+    {
+        let top = state.top_idx();
+        if matches!(state.get_at(top - 1), LuaValue::Nil) {
+            if let Ok(s) = state.intern_str(b"<no error object>") {
+                state.set_at(top - 1, LuaValue::Str(s));
+            }
+        }
+    }
+
     if status != LuaStatus::Ok {
         state.ci = old_ci;
         state.allowhook = old_allowhook;

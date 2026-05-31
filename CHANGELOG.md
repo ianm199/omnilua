@@ -4,6 +4,31 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.21] - 2026-05-31
+
+### Added — Lua 5.3 fidelity (toward #19)
+
+The clear-cut Lua 5.3 long tail surfaced by the multi-version oracle sweep,
+each fix verified against the upstream `lua5.3.6` reference binary and guarded
+in `tests/multiversion_oracle.rs` (now 29 cases):
+
+- **`LUA_COMPAT_MATHLIB` roster.** `math.atan2/cosh/sinh/tanh/pow/log10` are now
+  present on 5.3 and 5.4, and `math.frexp/ldexp` on 5.3/5.4/5.5 — matching the
+  default reference builds. (This also closed a latent 5.4 gap: those six
+  functions were previously absent on 5.4, where the reference exposes them.)
+- **String→integer coercion in core bitwise ops.** On 5.3, numeric strings
+  coerce in `& | ~ << >>` (e.g. `"0xff" & 0xf0` → `240`); 5.4/5.5 keep raising.
+  Non-integral numeric strings still report "number has no integer
+  representation". This made the official `bitwise.lua` and `constructs.lua`
+  byte-identical to the reference.
+- **5.3-specific error wording.** Arithmetic on a non-coercible string now
+  reports `attempt to perform arithmetic on a <type> value (<varinfo>)` with the
+  correct `local`/`global`/`constant` qualifier; a non-number `for` bound reports
+  `'for' <what> must be a number`. 5.4/5.5 wording is unchanged.
+
+5.4 and 5.5 behavior is unaffected (`check.sh` 5.4=7/0, 5.5=10/0); the
+compat-math roster, bitwise coercion, and error wording are all version-gated.
+
 ## [0.0.20] - 2026-05-31
 
 ### Fixed — reference-fidelity bugs surfaced by the multi-version oracle

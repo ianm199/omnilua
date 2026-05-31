@@ -659,3 +659,87 @@ fn v_table_concat_invalid_value_type_name() {
         assert!(!e.contains("116, 97"), "v{v:?} concat leaked byte-array: {e}");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5.5 stdlib roster deltas (utf8.offset arity, collectgarbage option set + param)
+// specs/followup/5.5-stdlib-err.md items 1, 2, 3.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v55_utf8_offset_returns_end_position() {
+    // 5.5 returns (start, end) byte positions; the end is inclusive.
+    eq(LuaVersion::V55,
+        "local a,b = utf8.offset('aébc', 2); return a .. ',' .. b", "2,3");
+    eq(LuaVersion::V55,
+        "local a,b = utf8.offset('héllo', 3); return a .. ',' .. b", "4,4");
+    // arity is 2 on the success branch.
+    eq(LuaVersion::V55,
+        "return select('#', utf8.offset('héllo', 3))", "2");
+    // one-byte char: end == start.
+    eq(LuaVersion::V55,
+        "local a,b = utf8.offset('abc', 2); return a .. ',' .. b", "2,2");
+    // not-found / out-of-range: arity stays 1 (only nil).
+    eq(LuaVersion::V55,
+        "return select('#', utf8.offset('abc', 99))", "1");
+}
+
+#[test]
+fn v54_utf8_offset_arity_unchanged() {
+    // Regression guard: 5.4/5.3 return only the start position (arity 1).
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        eq(v, "return select('#', utf8.offset('aébc', 2))", "1");
+        eq(v, "return utf8.offset('aébc', 2)", "2");
+    }
+}
+
+#[test]
+fn v55_collectgarbage_drops_setpause_setstepmul() {
+    // 5.5 removed setpause/setstepmul; they are now invalid options.
+    err_contains(LuaVersion::V55,
+        "return collectgarbage('setpause', 100)", "invalid option");
+    err_contains(LuaVersion::V55,
+        "return collectgarbage('setstepmul', 100)", "invalid option");
+}
+
+#[test]
+fn v54_collectgarbage_keeps_setpause_setstepmul() {
+    // Regression guard: 5.4/5.3 still accept setpause/setstepmul.
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        eq(v, "local ok = pcall(collectgarbage, 'setpause', 100); return ok", "true");
+        eq(v, "local ok = pcall(collectgarbage, 'setstepmul', 100); return ok", "true");
+    }
+}
+
+#[test]
+fn v55_collectgarbage_param_surface() {
+    // param read returns an integer.
+    eq(LuaVersion::V55,
+        "return math.type(collectgarbage('param', 'pause'))", "integer");
+    // invalid param name errors via luaL_checkoption.
+    err_contains(LuaVersion::V55,
+        "return collectgarbage('param', 'bogus')", "invalid option");
+    // write returns the OLD value, then read returns the value just written
+    // (round-trip on the faithful-shape backing store).
+    eq(LuaVersion::V55,
+        "collectgarbage('param', 'stepmul', 333); return collectgarbage('param', 'stepmul')",
+        "333");
+    // arity is 1.
+    eq(LuaVersion::V55,
+        "return select('#', collectgarbage('param', 'pause'))", "1");
+}
+
+#[test]
+fn v54_collectgarbage_param_not_an_option() {
+    // Regression guard: 'param' is NOT a valid collectgarbage option on 5.4/5.3.
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        err_contains(v,
+            "return collectgarbage('param', 'pause')", "invalid option");
+    }
+}
+
+#[test]
+fn v55_version_string() {
+    eq(LuaVersion::V55, "return _VERSION", "Lua 5.5");
+    eq(LuaVersion::V54, "return _VERSION", "Lua 5.4");
+    eq(LuaVersion::V53, "return _VERSION", "Lua 5.3");
+}

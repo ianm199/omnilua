@@ -171,6 +171,7 @@ pub trait LuaStateStubExt {
     fn gc_is_running(&mut self) -> Result<bool, LuaError> { todo!("phase-b-reconcile: gc_is_running") }
     fn gc_gen(&mut self, minor_mul: i32, major_mul: i32) -> Result<i32, LuaError> { todo!("phase-b-reconcile: gc_gen") }
     fn gc_inc(&mut self, pause: i32, step_mul: i32, step_size: i32) -> Result<i32, LuaError> { todo!("phase-b-reconcile: gc_inc") }
+    fn gc_param(&mut self, param: usize, value: i64) -> Result<i64, LuaError> { todo!("phase-b-reconcile: gc_param") }
 
     fn call(&mut self, nargs: i32, nresults: i32) -> Result<(), LuaError> { todo!("phase-b-reconcile: call") }
     fn call_k(
@@ -1172,6 +1173,10 @@ impl LuaStateStubExt for LuaState {
             self,
             lua_vm::api::GcArgs::Inc { pause, stepmul: step_mul, stepsize: step_size },
         ))
+    }
+
+    fn gc_param(&mut self, param: usize, value: i64) -> Result<i64, LuaError> {
+        Ok(lua_vm::api::gc(self, lua_vm::api::GcArgs::Param { param, value }) as i64)
     }
 
     fn get_meta_field(&mut self, idx: i32, name: &[u8]) -> Result<bool, LuaError> {

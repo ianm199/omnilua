@@ -1859,9 +1859,18 @@ pub enum GcArgs {
     IsRunning,
     Gen { minormul: i32, majormul: i32 },
     Inc { pause: i32, stepmul: i32, stepsize: i32 },
+    /// Lua 5.5 `collectgarbage("param", name [, value])`. `param` is the
+    /// 0-based param index; `value < 0` means "read only".
+    Param { param: usize, value: i64 },
 }
 
 pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
+    // Lua 5.5 `collectgarbage("param", ...)` reads/writes a param and is not
+    // gated by the finalizer (gc-stopped-internally) guard. Handled first so a
+    // param read is never clobbered by the -1 sentinel.
+    if let GcArgs::Param { param, value } = &args {
+        return state.global_mut().gc55_param(*param, *value) as i32;
+    }
     if state.global().is_gc_stopped_internally() {
         return -1;
     }
@@ -2032,6 +2041,7 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             state.gc().change_mode(crate::state::GcKind::Incremental);
             return old_mode;
         }
+        GcArgs::Param { .. } => unreachable!("Param handled before the finalizer guard"),
     }
     0
 }

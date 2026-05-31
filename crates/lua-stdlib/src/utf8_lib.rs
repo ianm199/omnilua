@@ -400,12 +400,37 @@ fn byte_offset(state: &mut LuaState) -> Result<usize, LuaError> {
         }
     }
 
-    if count == 0 {
-        state.push(LuaValue::Int(posi + 1)); // 0-based → 1-based
-    } else {
+    if count != 0 {
         state.push(LuaValue::Nil); // luaL_pushfail: character not found
+        return Ok(1);
     }
-    Ok(1)
+
+    state.push(LuaValue::Int(posi + 1)); // 0-based → 1-based (initial position)
+
+    // Lua 5.5 additionally returns the byte position where the character ends
+    // (inclusive). 5.3/5.4 return only the start.
+    if state.global().lua_version != lua_types::LuaVersion::V55 {
+        return Ok(1);
+    }
+
+    // Multi-byte character? (high bit set on the leading byte)
+    if s.get(posi as usize).is_some_and(|&b| b & 0x80 != 0) {
+        // A continuation byte at the start means the position is mid-character;
+        // mirror the C guard. (Practically unreachable on the success branch.)
+        if is_cont_at(&s, posi) {
+            return Err(LuaError::runtime(format_args!(
+                "initial position is a continuation byte"
+            )));
+        }
+        // Skip forward over trailing continuation bytes to land on the last
+        // byte of this character.
+        while is_cont_at(&s, posi + 1) {
+            posi += 1;
+        }
+    }
+    // One-byte character: final position equals the initial position.
+    state.push(LuaValue::Int(posi + 1)); // 0-based → 1-based (final position)
+    Ok(2)
 }
 
 /// Internal iterator body shared by `iter_aux_strict` and `iter_aux_lax`.

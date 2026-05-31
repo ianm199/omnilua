@@ -46,6 +46,7 @@ enum GcOp {
     IsRunning  = 9,
     Gen        = 10,
     Inc        = 11,
+    Param      = 12,
 }
 
 // ── LuaState forward declaration ─────────────────────────────────────────────
@@ -387,18 +388,37 @@ pub(crate) fn rawset_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// In Rust we model this with an explicit early-return to the pushfail path
 /// using a boolean flag, avoiding labeled blocks.
 pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError> {
-    static OPTS: &[&[u8]] = &[
+    // The option set is version-gated. 5.4/5.3 expose `setpause`/`setstepmul`;
+    // 5.5 removed both and added `param` (lbaselib.c). The version that owns
+    // the running state decides which list/mapping applies.
+    let is_v55 = state.global().lua_version == lua_types::LuaVersion::V55;
+    static OPTS_54: &[&[u8]] = &[
         b"stop", b"restart", b"collect",
         b"count", b"step", b"setpause", b"setstepmul",
         b"isrunning", b"generational", b"incremental",
     ];
-    static OPTS_NUM: &[GcOp] = &[
+    static OPTS_NUM_54: &[GcOp] = &[
         GcOp::Stop, GcOp::Restart, GcOp::Collect,
         GcOp::Count, GcOp::Step, GcOp::SetPause, GcOp::SetStepMul,
         GcOp::IsRunning, GcOp::Gen, GcOp::Inc,
     ];
-    let idx = state.check_arg_option(1, Some(b"collect"), OPTS)?;
-    let op = OPTS_NUM[idx];
+    static OPTS_55: &[&[u8]] = &[
+        b"stop", b"restart", b"collect",
+        b"count", b"step", b"isrunning",
+        b"generational", b"incremental", b"param",
+    ];
+    static OPTS_NUM_55: &[GcOp] = &[
+        GcOp::Stop, GcOp::Restart, GcOp::Collect,
+        GcOp::Count, GcOp::Step, GcOp::IsRunning,
+        GcOp::Gen, GcOp::Inc, GcOp::Param,
+    ];
+    let (opts, opts_num): (&[&[u8]], &[GcOp]) = if is_v55 {
+        (OPTS_55, OPTS_NUM_55)
+    } else {
+        (OPTS_54, OPTS_NUM_54)
+    };
+    let idx = state.check_arg_option(1, Some(b"collect"), opts)?;
+    let op = opts_num[idx];
 
     // Each arm either returns early on success, or evaluates to `false`
     // (meaning checkvalres fired — fall through to pushfail).
@@ -455,6 +475,20 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
             // TODO(port): gc_inc is a stub in Phase A.
             let oldmode = state.gc_inc(pause, stepmul, stepsize)?;
             return push_mode(state, oldmode);
+        }
+        GcOp::Param => {
+            // 5.5 collectgarbage("param", name [, value]): read or write a GC
+            // parameter, always returning the OLD integer value. arg2 selects
+            // the param; arg3 (default -1 = read-only) is the new value.
+            static PARAMS: &[&[u8]] = &[
+                b"minormul", b"majorminor", b"minormajor",
+                b"pause", b"stepmul", b"stepsize",
+            ];
+            let pidx = state.check_arg_option(2, None, PARAMS)?;
+            let value = state.opt_arg_integer(3, -1)?;
+            let old = state.gc_param(pidx, value)?;
+            state.push(LuaValue::Int(old));
+            return Ok(1);
         }
         _ => {
             // TODO(port): gc_control_simple is a stub in Phase A.

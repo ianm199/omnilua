@@ -1166,6 +1166,16 @@ pub struct GlobalState {
 
     pub gcstepsize: u8,
 
+    /// Lua 5.5 `collectgarbage("param", name [, value])` storage, indexed by
+    /// [`Gc55Param`]: `[minormul, majorminor, minormajor, pause, stepmul,
+    /// stepsize]`. The 5.5 GC parameters use a wider value range than the
+    /// packed `u8` fields above, so they get their own storage. This is a
+    /// faithful-shape backing store: it preserves the read-current /
+    /// write-returns-old contract and the upstream default values, without
+    /// claiming to retune the incremental collector. Initialized to the
+    /// values observed on the reference `lua5.5.0` binary.
+    pub gc55_params: [i64; 6],
+
     // Phase-D NOTE: the C-Lua intrusive GC lists (allgc, sweepgc, finobj,
     // gray, grayagain, weak, ephemeron, allweak) were declared here as
     // `Vec<GcRef<dyn Collectable>>` during Phase A but never populated or
@@ -1478,6 +1488,16 @@ impl GlobalState {
     pub fn gc_stepmul_param(&self) -> u8 { self.gcstepmul }
     pub fn set_gc_stepmul_param(&mut self, p: u8) { self.gcstepmul = p; }
     pub fn set_gc_genmajormul(&mut self, p: u8) { self.genmajormul = p; }
+    /// Lua 5.5 `collectgarbage("param", name [, value])`. `idx` is the 0-based
+    /// param index (`minormul=0 .. stepsize=5`). When `value >= 0` the param is
+    /// set; the previous value is always returned.
+    pub fn gc55_param(&mut self, idx: usize, value: i64) -> i64 {
+        let old = self.gc55_params[idx];
+        if value >= 0 {
+            self.gc55_params[idx] = value;
+        }
+        old
+    }
     pub fn gc_stop_flags(&self) -> u8 { self.gcstp }
     pub fn set_gc_stop_flags(&mut self, f: u8) { self.gcstp = f; }
     pub fn stop_gc_internal(&mut self) -> u8 {
@@ -4577,6 +4597,9 @@ pub fn new_state() -> Option<LuaState> {
         gcpause: (LUAI_GCPAUSE / 4) as u8,
         gcstepmul: (LUAI_GCMUL / 4) as u8,
         gcstepsize: LUAI_GCSTEPSIZE,
+        // Lua 5.5 collectgarbage("param") defaults, observed on lua5.5.0:
+        // [minormul, majorminor, minormajor, pause, stepmul, stepsize].
+        gc55_params: [20, 50, 68, 250, 200, 9600],
         sweepgc_cursor: 0,
         weak_tables_registry: Vec::new(),
         gc_tracked_long_strings: Vec::new(),

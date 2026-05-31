@@ -401,6 +401,69 @@ fn call_bin_tm(
     Ok(true)
 }
 
+/// Lua 5.3 core string→integer coercion for bitwise ops.
+///
+/// Returns:
+/// - `Some(Ok(()))` — both operands coerced to integers; the op was computed
+///   and written to `res`.
+/// - `Some(Err(..))` — an operand is a numeric-but-non-integral string
+///   (e.g. `"3.5"`, `"0xff..ff.0"`); raises "number has no integer
+///   representation" (`luaG_tointerror`), matching lua5.3.6.
+/// - `None` — coercion is impossible (an operand is a non-numeric string such
+///   as `"abc"`); the caller falls through to its normal error path, which
+///   raises "perform bitwise operation on".
+///
+/// The 5.3-only gate and the bitwise-event filter are applied by the caller.
+fn try_bitwise_strconv_53(
+    state: &mut LuaState,
+    p1: &LuaValue,
+    p1_idx: Option<StackIdx>,
+    p2: &LuaValue,
+    p2_idx: Option<StackIdx>,
+    res: StackIdx,
+    event: TagMethod,
+) -> Option<Result<(), LuaError>> {
+    // Both operands must be number-ish (integer, float, or a string that
+    // parses as a number). If either is genuinely non-numeric, bail to the
+    // caller's "perform bitwise operation on" path.
+    let n1 = p1.to_number_with_strconv();
+    let n2 = p2.to_number_with_strconv();
+    if n1.is_none() || n2.is_none() {
+        return None;
+    }
+    // Both are number-ish. Now require integer representations. If a number-ish
+    // operand has no integer representation (non-integral numeric string or
+    // float), 5.3 raises "number has no integer representation".
+    let i1 = p1.to_integer_with_strconv();
+    let i2 = p2.to_integer_with_strconv();
+    let (i1, i2) = match (i1, i2) {
+        (Some(a), Some(b)) => (a, b),
+        _ => {
+            let p1_idx = p1_idx.unwrap_or(StackIdx(0));
+            let p2_idx = p2_idx.unwrap_or(StackIdx(0));
+            return Some(Err(crate::debug::to_int_error(
+                state,
+                p1,
+                Some(p1_idx),
+                p2,
+                Some(p2_idx),
+            )));
+        }
+    };
+    let result = match event {
+        TagMethod::BAnd => i1 & i2,
+        TagMethod::BOr => i1 | i2,
+        TagMethod::BXor => i1 ^ i2,
+        TagMethod::Shl => crate::vm::shiftl(i1, i2),
+        TagMethod::Shr => crate::vm::shiftl(i1, i2.wrapping_neg()),
+        // Unary `~x` arrives here as a binary event with p1 == p2; `~i1`.
+        TagMethod::BNot => !i1,
+        _ => return None,
+    };
+    state.set_at(res, LuaValue::Int(result));
+    Some(Ok(()))
+}
+
 // ── luaT_trybinTM ────────────────────────────────────────────────────────────
 
 //                         StkId res, TMS event)
@@ -423,7 +486,101 @@ pub(crate) fn try_bin_tm(
     res: StackIdx,
     event: TagMethod,
 ) -> Result<(), LuaError> {
+    // Lua 5.3 arith error wording with string operands. In the shared (5.4)
+    // model arithmetic metamethods (`__add`/`__sub`/…) are installed on the
+    // string metatable, so a failed arith fast path that has a string operand
+    // dispatches to the string-library `trymt`, which raises `attempt to <op> a
+    // '<t>' with a '<t>'`, adds a spurious `[C]: in metamethod '<op>'` frame, and
+    // cannot produce operand varinfo (it runs as a C function with no access to
+    // the calling bytecode registers). 5.3 instead owns arithmetic string
+    // coercion in the core: when the operation cannot succeed it raises `attempt
+    // to perform arithmetic on a <type> value (<varinfo>)`, blaming the operand
+    // that does not coerce to a number.
+    //
+    // The intercept is narrow: it fires ONLY when a string operand cannot be
+    // coerced to a number AND the other operand carries no genuine arith
+    // metamethod of its own. So `t + "5"` (t has `__add`) still dispatches to
+    // t's metamethod via `call_bin_tm`, and the coercible success path
+    // (`"3" + 2`) still flows through the string metamethod below, preserving
+    // 5.3 float-promotion semantics. See specs/followup/5.3-coerce-err.md.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V53)
+        && matches!(
+            event,
+            TagMethod::Add
+                | TagMethod::Sub
+                | TagMethod::Mul
+                | TagMethod::Mod
+                | TagMethod::Pow
+                | TagMethod::Div
+                | TagMethod::IDiv
+                | TagMethod::Unm
+        )
+        && (matches!(p1, LuaValue::Str(_)) || matches!(p2, LuaValue::Str(_)))
+    {
+        use crate::state::LuaValueExt;
+        let p1_num = p1.to_number_with_strconv().is_some();
+        let p2_num = p2.to_number_with_strconv().is_some();
+        if !(p1_num && p2_num) {
+            // A string operand did not coerce. Only raise the core error here if
+            // the non-string operand has no genuine arith metamethod; otherwise
+            // fall through so `call_bin_tm` dispatches to that real metamethod
+            // (the string metatable's synthetic arith mm is ignored for this
+            // decision — it never produces a useful result for a non-coercible
+            // pairing, it only raises the wrong-version wording).
+            //
+            // Unary minus arrives as a binary event with `p1 == p2`, so there is
+            // no genuine "other operand" — the only metamethod available is the
+            // synthetic string one. Treat it as absent so `-"x"` takes the core
+            // path.
+            let unary = matches!(event, TagMethod::Unm);
+            let other_has_mm = !unary
+                && if matches!(p1, LuaValue::Str(_)) {
+                    !get_tm_by_obj(state, p2, event).is_nil()
+                } else {
+                    !get_tm_by_obj(state, p1, event).is_nil()
+                };
+            if !other_has_mm {
+                // Point varinfo at the operand that does not coerce, matching C
+                // `luaG_opinterror`. A coercible numeric string counts as a
+                // number, so `'2' * nil` blames `nil`, not `'2'`.
+                let (bad, bad_idx) = if !p1_num {
+                    (p1, p1_idx.unwrap_or(StackIdx(0)))
+                } else {
+                    (p2, p2_idx.unwrap_or(StackIdx(0)))
+                };
+                return Err(crate::debug::type_error(
+                    state, bad, bad_idx, b"perform arithmetic on",
+                ));
+            }
+        }
+    }
     if !call_bin_tm(state, p1, p2, res, event)? {
+        // Lua 5.3 coerces numeric strings to integers in the *core* bitwise
+        // ops (`& | ~ << >>` and unary `~`), where 5.4/5.5 require a real
+        // number operand and delegate string handling to a (non-existent)
+        // string metamethod. On the 5.3 path, after the metamethod lookup
+        // fails, retry the operation with string→integer coercion before
+        // raising. The boundary semantics (non-integral numeric string →
+        // "no integer representation"; non-numeric string → "perform bitwise
+        // operation") fall out of `to_integer_with_strconv` /
+        // `to_number_with_strconv`. See specs/followup/5.3-coerce-err.md.
+        if matches!(state.global().lua_version, lua_types::LuaVersion::V53)
+            && matches!(
+                event,
+                TagMethod::BAnd
+                    | TagMethod::BOr
+                    | TagMethod::BXor
+                    | TagMethod::Shl
+                    | TagMethod::Shr
+                    | TagMethod::BNot
+            )
+            && (matches!(p1, LuaValue::Str(_)) || matches!(p2, LuaValue::Str(_)))
+        {
+            if let Some(result) = try_bitwise_strconv_53(state, p1, p1_idx, p2, p2_idx, res, event)
+            {
+                return result;
+            }
+        }
         //   case TM_BAND: case TM_BOR: case TM_BXOR:
         //   case TM_SHL: case TM_SHR: case TM_BNOT: {
         //     if (ttisnumber(p1) && ttisnumber(p2))

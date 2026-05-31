@@ -7,8 +7,10 @@
 //! Rust always has `u64`, so only the 64-bit path is kept.
 //!
 //! Deprecated compat functions guarded by `LUA_COMPAT_MATHLIB` (cosh, sinh,
-//! tanh, pow, frexp, ldexp, log10, atan2) are omitted; we target Lua 5.4
-//! semantics only. See PORTING.md §13.
+//! tanh, pow, frexp, ldexp, log10, atan2) ship in the default lua5.3.6 build
+//! and are registered only under the 5.3 backend (`luaopen_math` gates them on
+//! `LuaVersion::V53`); they remain absent in 5.4/5.5. `atan2` is an alias of
+//! the existing `math_atan`. See `specs/followup/5.3-math.md`.
 
 // PORT NOTE: All imports below will be unresolved until Phase B lands the
 // lua-types crate. Expected Phase-A errors: E0432, E0412, E0433, E0425.
@@ -230,6 +232,130 @@ fn math_atan(state: &mut LuaState) -> Result<usize, LuaError> {
     let x = state.opt_number(2, 1.0)?;
     state.push(LuaValue::Float(y.atan2(x)));
     Ok(1)
+}
+
+/// `math.cosh(x)` — hyperbolic cosine. Deprecated `LUA_COMPAT_MATHLIB`
+/// function, registered only under the 5.3 backend.
+///
+fn math_cosh(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    state.push(LuaValue::Float(x.cosh()));
+    Ok(1)
+}
+
+/// `math.sinh(x)` — hyperbolic sine. Deprecated `LUA_COMPAT_MATHLIB`
+/// function, registered only under the 5.3 backend.
+///
+fn math_sinh(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    state.push(LuaValue::Float(x.sinh()));
+    Ok(1)
+}
+
+/// `math.tanh(x)` — hyperbolic tangent. Deprecated `LUA_COMPAT_MATHLIB`
+/// function, registered only under the 5.3 backend.
+///
+fn math_tanh(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    state.push(LuaValue::Float(x.tanh()));
+    Ok(1)
+}
+
+/// `math.pow(x, y)` — x raised to the power y, always returning a float.
+/// Deprecated `LUA_COMPAT_MATHLIB` function, registered only under the 5.3
+/// backend. Mirrors C `pow(luaL_checknumber, luaL_checknumber)`.
+///
+fn math_pow(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    let y = state.check_number(2)?;
+    state.push(LuaValue::Float(x.powf(y)));
+    Ok(1)
+}
+
+/// `math.log10(x)` — base-10 logarithm. Deprecated `LUA_COMPAT_MATHLIB`
+/// function, registered only under the 5.3 backend.
+///
+fn math_log10(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    state.push(LuaValue::Float(x.log10()));
+    Ok(1)
+}
+
+/// `math.ldexp(x, e)` — `x * 2^e`. Deprecated `LUA_COMPAT_MATHLIB` function,
+/// registered only under the 5.3 backend. The exponent is an integer argument
+/// truncated to C `int` range, matching `ldexp(x, (int)luaL_checkinteger)`.
+///
+fn math_ldexp(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    let e = state.check_integer(2)? as i32;
+    state.push(LuaValue::Float(ldexp(x, e)));
+    Ok(1)
+}
+
+/// Pure `ldexp`: returns `x * 2^exp` with C `ldexp` semantics.
+///
+/// A naive `x * 2f64.powi(exp)` underflows (or overflows) the intermediate
+/// `2^exp` for large-magnitude exponents, losing subnormal results such as
+/// `ldexp(1.0, -1074) == 5e-324`. The scaling is therefore applied in bounded
+/// steps so no intermediate factor under/overflows: each step multiplies by a
+/// power of two whose magnitude stays inside the normal `f64` range.
+fn ldexp(x: f64, exp: i32) -> f64 {
+    if x == 0.0 || !x.is_finite() {
+        return x;
+    }
+    let mut result = x;
+    let mut e = exp;
+    // 2^1023 is the largest power of two representable as a normal f64; chunk
+    // the exponent so each `from_bits` factor is always finite and nonzero.
+    while e > 1023 {
+        result *= f64::from_bits(0x7feu64 << 52); // 2^1023
+        e -= 1023;
+    }
+    while e < -1022 {
+        result *= f64::from_bits(0x001u64 << 52); // 2^-1022 (smallest normal)
+        e += 1022;
+    }
+    result * f64::from_bits(((e + 1023) as u64) << 52)
+}
+
+/// `math.frexp(x)` — split x into a normalized mantissa and an exponent such
+/// that `x == mantissa * 2^exponent` with `0.5 <= |mantissa| < 1`. Returns the
+/// float mantissa followed by the **integer** exponent, matching C
+/// `frexp` + `lua_pushinteger`. Deprecated `LUA_COMPAT_MATHLIB` function,
+/// registered only under the 5.3 backend.
+///
+/// Rust std has no `frexp`; this replicates C `frexp` via `f64` bit
+/// manipulation, including the `frexp(0.0) == (0.0, 0)` special case (and the
+/// matching `-0.0`, infinity, and NaN cases, which C leaves unchanged with a
+/// zero exponent).
+fn math_frexp(state: &mut LuaState) -> Result<usize, LuaError> {
+    let x = state.check_number(1)?;
+    let (mantissa, exponent) = frexp(x);
+    state.push(LuaValue::Float(mantissa));
+    state.push(LuaValue::Int(exponent as i64));
+    Ok(2)
+}
+
+/// Pure `frexp`: returns `(mantissa, exponent)` with `x == mantissa * 2^exp`.
+///
+/// Replicates C `frexp` semantics for f64. Zero, infinity, and NaN are
+/// returned unchanged with a zero exponent.
+fn frexp(x: f64) -> (f64, i32) {
+    if x == 0.0 || !x.is_finite() {
+        return (x, 0);
+    }
+    let bits = x.to_bits();
+    let raw_exp = ((bits >> 52) & 0x7ff) as i32;
+    if raw_exp == 0 {
+        // Subnormal: scale up by 2^54 to normalize, then correct the exponent.
+        let (m, e) = frexp(x * (1u64 << 54) as f64);
+        return (m, e - 54);
+    }
+    // Bias the exponent so the mantissa lands in [0.5, 1): set the stored
+    // exponent field to 0x3fe (unbiased -1).
+    let exponent = raw_exp - 1022;
+    let mantissa_bits = (bits & !(0x7ffu64 << 52)) | (0x3feu64 << 52);
+    (f64::from_bits(mantissa_bits), exponent)
 }
 
 /// `math.tointeger(x)` — convert x to an integer or return false.
@@ -634,6 +760,13 @@ static MATHLIB_FUNCS: &[(&[u8], LuaCFunction)] = &[
     (b"sqrt",       math_sqrt),
     (b"tan",        math_tan),
     (b"type",       math_type),
+    // `frexp`/`ldexp` are registered unconditionally in lua5.4.7 and lua5.5.0
+    // (their `lmathlib.c` places these two outside the `LUA_COMPAT_MATHLIB`
+    // `#if`) and are part of the 5.3 compat roster too. Verified against all
+    // three reference binaries: `type(math.frexp)`/`type(math.ldexp)` ==
+    // "function" on 5.3.6, 5.4.7, and 5.5.0.
+    (b"frexp",      math_frexp),
+    (b"ldexp",      math_ldexp),
 ];
 
 // ── Module entry point ────────────────────────────────────────────────────
@@ -646,6 +779,31 @@ static MATHLIB_FUNCS: &[(&[u8], LuaCFunction)] = &[
 pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
     // Creates a new table and registers all non-None entries from MATHLIB.
     state.new_lib(MATHLIB_FUNCS)?;
+
+    // Per-version roster delta: the `LUA_COMPAT_MATHLIB`-gated functions
+    // (`atan2` as an alias of `math_atan`, plus cosh/sinh/tanh/pow/log10) ship
+    // in the default lua5.3.6 build (`LUA_COMPAT_MATHLIB` on) AND the default
+    // lua5.4.7 build (its `LUA_COMPAT_5_3` umbrella turns `LUA_COMPAT_MATHLIB`
+    // on), but were dropped in lua5.5.0 (macro commented out). Verified by
+    // probing all three reference binaries directly. `frexp`/`ldexp` are NOT in
+    // this set — they survive into 5.5 and live in the agnostic roster above.
+    // `new_lib` leaves the new table on the stack top, so we register into it
+    // directly. See `specs/followup/5.3-math.md` (whose 5.4/5.5-absence claim
+    // is corrected here against the binaries, the binding oracle).
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V53 | lua_types::LuaVersion::V54
+    ) {
+        const COMPAT_MATH_FUNCS: &[(&[u8], LuaCFunction)] = &[
+            (b"atan2",  math_atan),
+            (b"cosh",   math_cosh),
+            (b"sinh",   math_sinh),
+            (b"tanh",   math_tanh),
+            (b"pow",    math_pow),
+            (b"log10",  math_log10),
+        ];
+        state.set_funcs_with_upvalues(COMPAT_MATH_FUNCS, 0)?;
+    }
 
     state.push(LuaValue::Float(PI));
     state.set_field(-2, b"pi")?;
@@ -682,8 +840,12 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
 //                  apply_random_seed, apply_set_seed, and set_rand_func all
 //                  carry TODO(port) stubs where typed userdata + interior
 //                  mutability (RefCell) is required to avoid borrow conflicts.
-//                  Deprecated LUA_COMPAT_MATHLIB functions are omitted per
-//                  PORTING.md §13. state.new_lib, state.set_field,
+//                  Deprecated LUA_COMPAT_MATHLIB functions (cosh, sinh, tanh,
+//                  pow, log10, ldexp, frexp, atan2) are registered only under
+//                  the 5.3 backend per specs/followup/5.3-math.md; absent in
+//                  5.4/5.5. atan2 reuses math_atan; frexp is implemented via
+//                  f64 bit manipulation (no Rust std frexp).
+//                  state.new_lib, state.set_field,
 //                  state.compare_lt, state.push_value, state.opt_number,
 //                  state.opt_integer, state.check_integer, state.check_number,
 //                  state.check_any, state.to_integer_opt, state.get_top,

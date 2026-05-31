@@ -159,6 +159,139 @@ fn v53_string_coercion_is_float() {
     eq(LuaVersion::V54, "return math.type('0x10' + 0)", "integer");
 }
 
+/// 5.3 coerces numeric strings to integers in the *core* bitwise ops
+/// (`& | ~ << >>` and unary `~`), where 5.4/5.5 require number operands and
+/// raise. Boundary cases: a numeric-but-non-integral string yields "no integer
+/// representation"; a non-numeric string yields "perform bitwise operation".
+/// All values captured from lua5.3.6 (see `specs/followup/5.3-coerce-err.md`).
+#[test]
+fn v53_bitwise_string_coercion() {
+    eq(LuaVersion::V53, r#"return "3" & 5"#, "1");
+    eq(LuaVersion::V53, r#"return "0xff" | 0"#, "255");
+    eq(LuaVersion::V53, r#"return ~"5""#, "-6");
+    eq(LuaVersion::V53, r#"return "8" >> "1""#, "4");
+    eq(LuaVersion::V53, r#"return "8" << 1"#, "16");
+    eq(LuaVersion::V53, r#"return 5 & "3""#, "1");
+    eq(LuaVersion::V53, r#"return " 0x10 " & 255"#, "16");
+    eq(LuaVersion::V53, r#"return "3.0" & 1"#, "1");
+    eq(LuaVersion::V53, r#"return "0xffffffffffffffff" | 0"#, "-1");
+    eq(LuaVersion::V53, r#"return "0xfffffffffffffffe" & "-1""#, "-2");
+    eq(LuaVersion::V53, r#"return "   \n  -45  \t " >> "  -2  ""#, "-180");
+    // Boundaries that MUST still error on 5.3:
+    err_contains(LuaVersion::V53, r#"return "3.5" & 1"#, "no integer representation");
+    err_contains(LuaVersion::V53, r#"return "0xffffffffffffffff.0" | 0"#, "no integer representation");
+    err_contains(LuaVersion::V53, r#"return "abc" & 1"#, "perform bitwise operation on a string value");
+}
+
+/// Cross-version non-regression: 5.4/5.5 do NOT coerce strings in bitwise ops
+/// and keep raising "perform bitwise operation on a string value".
+#[test]
+fn v54_v55_bitwise_no_string_coercion() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, r#"return "3" & 5"#, "perform bitwise operation on a string value");
+        err_contains(v, r#"return ~"5""#, "perform bitwise operation on a string value");
+        err_contains(v, r#"return "8" >> "1""#, "perform bitwise operation on a string value");
+    }
+}
+
+/// 5.3 arith-on-non-coercible-string error wording. In the shared (5.4) model
+/// arithmetic metamethods live on the string metatable and the failure message
+/// is `attempt to <op> a '<t>' with a '<t>'` (no operand varinfo). 5.3 owns the
+/// coercion in the core and raises `attempt to perform arithmetic on a <type>
+/// value (<varinfo>)`, blaming the operand that is not a number. All wordings
+/// captured from lua5.3.6 (see `specs/followup/5.3-coerce-err.md`).
+#[test]
+fn v53_arith_string_error_wording() {
+    err_contains(
+        LuaVersion::V53,
+        r#"return "abc" + 1"#,
+        "attempt to perform arithmetic on a string value",
+    );
+    err_contains(
+        LuaVersion::V53,
+        r#"return "abc" * 2"#,
+        "attempt to perform arithmetic on a string value",
+    );
+    err_contains(
+        LuaVersion::V53,
+        r#"return -"x""#,
+        "attempt to perform arithmetic on a string value",
+    );
+    // Varinfo comes from the VM call site (local/global/constant).
+    err_contains(LuaVersion::V53, r#"local x="a"; return x+1"#, "(local 'x')");
+    err_contains(LuaVersion::V53, r#"aaa="z"; return aaa+1"#, "(global 'aaa')");
+    // A coercible string paired with a genuine non-number blames the
+    // non-number operand, matching `luaG_opinterror` (errors.lua:102).
+    err_contains(
+        LuaVersion::V53,
+        r#"aaa="2"; b=nil; return aaa*b"#,
+        "attempt to perform arithmetic on a nil value (global 'b')",
+    );
+    // 5.3 successful string→number arith coercion still works (guard against
+    // the fix accidentally stealing the success path). 5.1–5.3 always promote a
+    // string operand to float in arithmetic, so the result type is `float` even
+    // for integer-looking strings (verified vs lua5.3.6).
+    eq(LuaVersion::V53, r#"return math.type("1"+"2")"#, "float");
+    eq(LuaVersion::V53, r#"return math.type("1.0"+"2")"#, "float");
+    eq(LuaVersion::V53, r#"return "3" + 2"#, "5.0");
+    // Regression: a non-coercible string paired with a value that carries a
+    // genuine arith metamethod must dispatch to that metamethod, NOT raise the
+    // 5.3 core error. The 5.3 intercept fires only when the other operand has
+    // no real metamethod. Both operand orders. (events.lua:139 — `b+'5'` where
+    // `b` has `__add` — regressed before this guard was made metamethod-aware.)
+    eq(
+        LuaVersion::V53,
+        r#"local t=setmetatable({},{__add=function() return 42 end}); return t+"5""#,
+        "42",
+    );
+    eq(
+        LuaVersion::V53,
+        r#"local t=setmetatable({},{__add=function() return 42 end}); return "5"+t"#,
+        "42",
+    );
+    // The same dispatch holds on 5.4/5.5 (the string-metatable path is never
+    // consulted when the other operand has its own metamethod).
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            r#"local t=setmetatable({},{__add=function() return 42 end}); return "5"+t"#,
+            "42",
+        );
+    }
+}
+
+/// Cross-version non-regression: 5.4/5.5 keep the string-metamethod arith
+/// wording (`attempt to add a 'string' with a 'number'`) and must NOT switch to
+/// the 5.3 core wording.
+#[test]
+fn v54_v55_arith_string_wording_unchanged() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, r#"return "abc" + 1"#, "attempt to add a 'string' with a 'number'");
+        err_contains(v, r#"aaa="2"; b=nil; return aaa*b"#, "attempt to mul a 'string' with a 'nil'");
+    }
+}
+
+/// 5.3 `for`-loop non-number bound wording is the older `'for' <what> must be a
+/// number`; 5.4/5.5 reworded it to `bad 'for' <what> (number expected, got
+/// <type>)`. Captured from lua5.3.6 / lua5.4.7 / lua5.5.0.
+#[test]
+fn v53_for_loop_error_wording() {
+    err_contains(LuaVersion::V53, "for i=1,'a' do end", "'for' limit must be a number");
+    err_contains(LuaVersion::V53, "for i='a',10 do end", "'for' initial value must be a number");
+    err_contains(LuaVersion::V53, "for i=1,10,'a' do end", "'for' step must be a number");
+}
+
+/// Cross-version non-regression: 5.4/5.5 keep the `bad 'for' <what> (number
+/// expected, got <type>)` wording.
+#[test]
+fn v54_v55_for_loop_error_wording_unchanged() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "for i=1,'a' do end", "bad 'for' limit (number expected, got string)");
+        err_contains(v, "for i='a',10 do end", "bad 'for' initial value (number expected, got string)");
+        err_contains(v, "for i=1,10,'a' do end", "bad 'for' step (number expected, got string)");
+    }
+}
+
 #[test]
 fn v53_removed_builtins_absent() {
     eq(LuaVersion::V53, "return type(warn)", "nil");
@@ -171,6 +304,67 @@ fn v53_removed_builtins_absent() {
 #[test]
 fn v53_rejects_attribute_syntax() {
     err_contains(LuaVersion::V53, "local x <const> = 1; return x", "unexpected symbol");
+}
+
+/// `LUA_COMPAT_MATHLIB` roster (issue #19; `specs/followup/5.3-math.md`).
+///
+/// Per-version presence verified directly against the reference binaries:
+/// `atan2/cosh/sinh/tanh/pow/log10` are in the default lua5.3.6 AND lua5.4.7
+/// builds (5.4's `LUA_COMPAT_5_3` umbrella enables `LUA_COMPAT_MATHLIB`) but
+/// gone in lua5.5.0; `frexp`/`ldexp` survive into 5.5 (registered outside the
+/// compat `#if` in lua5.5.0's `lmathlib.c`). Values are `%.14g` tostring,
+/// captured from the oracle.
+#[test]
+fn v53_compat_math_present_and_correct() {
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        for name in ["atan2", "cosh", "sinh", "tanh", "pow", "log10", "frexp", "ldexp"] {
+            eq(v, &format!("return type(math.{name})"), "function");
+        }
+    }
+    // Exact values (5.3; identical on 5.4 — same C wrappers).
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        eq(v, "return math.cosh(1)", "1.5430806348152");
+        eq(v, "return math.sinh(1)", "1.1752011936438");
+        eq(v, "return math.tanh(1)", "0.76159415595576");
+        eq(v, "return math.pow(2, 0.5)", "1.4142135623731");
+        // pow always returns a float, even with integer-valued result.
+        eq(v, "return math.pow(2, 3)", "8.0");
+        eq(v, "return math.type(math.pow(2, 3))", "float");
+        eq(v, "return math.log10(1000)", "3.0");
+        eq(v, "return math.ldexp(0.5, 3)", "4.0");
+        eq(v, "return math.ldexp(1.0, -1)", "0.5");
+        // ldexp must reach subnormals (naive x*2^e underflows the factor).
+        eq(v, "return math.ldexp(1.0, -1074)", "4.9406564584125e-324");
+        // frexp returns (float mantissa, integer exponent).
+        eq(v, "local m, e = math.frexp(8.0); return m", "0.5");
+        eq(v, "local m, e = math.frexp(8.0); return e", "4");
+        eq(v, "local m, e = math.frexp(8.0); return math.type(m)", "float");
+        eq(v, "local m, e = math.frexp(8.0); return math.type(e)", "integer");
+        eq(v, "local m, e = math.frexp(0.0); return tostring(m) .. ',' .. tostring(e)", "0.0,0");
+        // atan2 is the math_atan alias (two-arg form).
+        eq(v, "return math.atan2(1, 1) == math.atan(1, 1)", "true");
+        eq(v, "return math.atan2(1, 0) == math.atan(1, 0)", "true");
+        // Arg errors name the function.
+        err_contains(v, "return math.cosh('x')", "bad argument #1 to 'cosh'");
+        err_contains(v, "return math.pow(2)", "bad argument #2 to 'pow'");
+    }
+}
+
+/// No-cross-version-regression guard for the compat-math roster.
+///
+/// In lua5.5.0 the six `LUA_COMPAT_MATHLIB` functions are gone, but `frexp`
+/// and `ldexp` remain (moved outside the compat `#if`). All values verified
+/// against lua5.5.0.
+#[test]
+fn v55_compat_math_partition() {
+    for name in ["atan2", "cosh", "sinh", "tanh", "pow", "log10"] {
+        eq(LuaVersion::V55, &format!("return type(math.{name})"), "nil");
+    }
+    for name in ["frexp", "ldexp"] {
+        eq(LuaVersion::V55, &format!("return type(math.{name})"), "function");
+    }
+    eq(LuaVersion::V55, "return math.ldexp(0.5, 3)", "4.0");
+    eq(LuaVersion::V55, "local m, e = math.frexp(8.0); return tostring(m) .. ',' .. tostring(e)", "0.5,4");
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -1385,6 +1385,19 @@ pub(crate) fn call_error(state: &LuaState, val: &LuaValue, val_idx: StackIdx) ->
 /// Raises a "bad 'for' <what>" error.
 ///
 pub(crate) fn for_error(state: &mut LuaState, val: &LuaValue, what: &[u8]) -> LuaError {
+    // Lua 5.3 (and 5.1/5.2) use the older wording `'for' <what> must be a
+    // number`; 5.4 reworded it to `bad 'for' <what> (number expected, got
+    // <type>)` (`forerror` / `luaG_forerror`). Match each version's reference.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    ) {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(b"'for' ");
+        msg.extend_from_slice(what);
+        msg.extend_from_slice(b" must be a number");
+        return prefixed_runtime(state, msg);
+    }
     let t = crate::tagmethods::obj_type_name(state, val)
         .unwrap_or_else(|_| crate::tagmethods::type_name(val.base_type()).to_vec());
     let mut msg = Vec::new();

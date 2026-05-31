@@ -165,6 +165,87 @@ fn v55_global_is_a_valid_identifier() {
 }
 
 #[test]
+fn v55_global_prefixed_const_namelist() {
+    // 5.5 `global <const> a, b` — a leading attribute applies to the whole name
+    // list (it is NOT tied to `*`). Each name may still carry its own attribute.
+    // Captured from lua5.5.0.
+    eq(LuaVersion::V55, "global<const> a, b = 1, 2; return a + b", "3");
+    eq(LuaVersion::V55, "global <const> a = 5; return a", "5");
+    err_contains(
+        LuaVersion::V55,
+        "global <const> a = 1; a = 2",
+        "attempt to assign to const variable 'a'",
+    );
+}
+
+#[test]
+fn v55_global_function_form() {
+    // 5.5 `global function NAME body` (lparser.c globalfunc). Captured from
+    // lua5.5.0.
+    eq(
+        LuaVersion::V55,
+        "global function f() return 7 end; return f()",
+        "7",
+    );
+    eq(
+        LuaVersion::V55,
+        "global function fact(x) if x==0 then return 1 else return x*fact(x-1) end end; return fact(5)",
+        "120",
+    );
+    err_contains(
+        LuaVersion::V55,
+        "global function f() end; global function f() end",
+        "global 'f' already defined",
+    );
+}
+
+#[test]
+fn v55_global_wildcard_coexists_with_named_decl() {
+    // 5.5 `global *` enables global-by-default for the scope; a later
+    // `global name` does NOT void it (the `*` declaration coexists). Without
+    // this, `assert` below would be "not declared". Captured from lua5.5.0.
+    eq(
+        LuaVersion::V55,
+        "global *\nglobal fact = false\nfact = 3\nreturn assert(fact)",
+        "3",
+    );
+}
+
+#[test]
+fn v55_local_prefixed_attribute() {
+    // 5.5 allows a PREFIXED attribute on a local: `local <const> a, b`.
+    // 5.4 rejects the prefix form (attribute only postfix). Captured from
+    // lua5.5.0 / lua5.4.7.
+    eq(LuaVersion::V55, "local <const> a, b = 1, 2; return a + b", "3");
+    eq(LuaVersion::V55, "local<const> x = 5; return x", "5");
+    err_contains(
+        LuaVersion::V55,
+        "local <const> x = 5; x = 6",
+        "attempt to assign to const variable 'x'",
+    );
+    // 5.4: prefixed attribute is a syntax error (postfix only).
+    err_contains(LuaVersion::V54, "local <const> x = 5", "<name> expected");
+}
+
+#[test]
+fn v55_attribute_message_text() {
+    // Div.3 / Div.4 message text, captured from lua5.5.0 (and the local form is
+    // shared with 5.4). Location prefix present, no spurious `near`.
+    err_contains(LuaVersion::V55, "local x <foo> = 1", "unknown attribute 'foo'");
+    err_contains(LuaVersion::V54, "local x <foo> = 1", "unknown attribute 'foo'");
+    err_contains(
+        LuaVersion::V55,
+        "global x <foo> = 1",
+        "unknown attribute 'foo'",
+    );
+    err_contains(
+        LuaVersion::V55,
+        "global x <close> = setmetatable({},{})",
+        "global variables cannot be to-be-closed",
+    );
+}
+
+#[test]
 fn v55_for_control_var_readonly() {
     // F3: numeric and first-generic for vars are read-only.
     err_contains(LuaVersion::V55, "for i = 1, 3 do i = 10 end", "attempt to assign to const variable 'i'");

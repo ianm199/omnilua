@@ -557,6 +557,18 @@ pub fn syntax_error(ls: &mut LexState, msg: &[u8]) -> LuaError {
     lex_error(ls, msg, token)
 }
 
+/// Report a semantic error at the current line WITHOUT the `near <token>`
+/// suffix.
+///
+/// Mirrors upstream `luaK_semerror` (`lcode.c`), which sets
+/// `ls->t.token = 0` before calling `luaX_syntaxerror` so the `near` clause is
+/// suppressed. Used for attribute errors (`unknown attribute '<name>'`,
+/// `global variables cannot be to-be-closed`) where the offending construct is
+/// the attribute itself, not the current lookahead token.
+pub fn sem_error(ls: &mut LexState, msg: &[u8]) -> LuaError {
+    lex_error(ls, msg, 0)
+}
+
 /// Produce a human-readable representation of `token` for error messages.
 ///
 /// For `TK_NAME`, `TK_STRING`, `TK_FLT`, `TK_INT`: formats the current

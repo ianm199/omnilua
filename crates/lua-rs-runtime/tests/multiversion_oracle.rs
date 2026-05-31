@@ -269,6 +269,35 @@ fn issue77_string_find_no_spurious_capture() {
     }
 }
 
+/// #78 (R-C): `a <= b` with only `__lt` defined derives `not (b < a)` in the
+/// default 5.1–5.4 reference builds (LUA_COMPAT_LT_LE, on by default) and is
+/// removed in 5.5 (raises). Version-gated to match each reference exactly.
+#[test]
+fn issue78_le_derived_from_lt() {
+    // __lt returns false → a<=b == not(b<a) == not(false) == true (5.3/5.4).
+    let only_lt =
+        "local m = {__lt = function() return false end}; \
+         local a = setmetatable({}, m); local b = setmetatable({}, m); return a <= b";
+    eq(LuaVersion::V53, only_lt, "true");
+    eq(LuaVersion::V54, only_lt, "true");
+    // 5.5 removed the fallback: comparing with no __le raises.
+    err_contains(LuaVersion::V55, only_lt, "attempt to compare two table values");
+    // >= also routes through __le (with swap) and derives on 5.4.
+    eq(
+        LuaVersion::V54,
+        "local m = {__lt = function() return false end}; \
+         local a = setmetatable({}, m); local b = setmetatable({}, m); return a >= b",
+        "true",
+    );
+    // explicit __le is unaffected by the fallback on every version.
+    let with_le =
+        "local m = {__le = function() return true end, __lt = function() return false end}; \
+         local a = setmetatable({}, m); return a <= a";
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, with_le, "true");
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // #79 error-message fidelity (R-D/E/F/G). Shared-core: must match every
 // version reference (5.3/5.4/5.5). Sub-item (d) — the `[C]: in ?` traceback

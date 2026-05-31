@@ -554,8 +554,11 @@ pub(crate) fn try_bini_tm(
 /// Returns `true` if the metamethod returned a truthy value.
 /// Raises `LuaError::order_error` if neither operand has the metamethod.
 ///
-/// PORT NOTE: The `LUA_COMPAT_LT_LE` block (which falls back from `__le` to
-/// `!(p2 < p1)`) is omitted per PORTING.md §13 — no compatibility shims.
+/// PORT NOTE: `LUA_COMPAT_LT_LE` (deriving `__le` from `__lt`) is ON by default
+/// in the reference `make macosx` builds of 5.1–5.4 and removed in 5.5. We match
+/// the default-built reference (the pinned oracle, per specs/oracle/CONTRACT.md),
+/// so the fallback is implemented and version-gated: derive for 5.1–5.4, raise
+/// for 5.5.
 pub(crate) fn call_order_tm(
     state: &mut LuaState,
     p1: &LuaValue,
@@ -583,7 +586,24 @@ pub(crate) fn call_order_tm(
         return Ok(!matches!(result, LuaValue::Nil | LuaValue::Bool(false)));
     }
 
-    // PORT NOTE: LUA_COMPAT_LT_LE block skipped (see above).
+    // LUA_COMPAT_LT_LE: in 5.1–5.4 a missing `__le` falls back to `not (b < a)`
+    // via `__lt` with the operands swapped; 5.5 removed this and raises.
+    if event == TagMethod::Le
+        && matches!(
+            state.global().lua_version,
+            lua_types::LuaVersion::V51
+                | lua_types::LuaVersion::V52
+                | lua_types::LuaVersion::V53
+                | lua_types::LuaVersion::V54
+        )
+    {
+        let res_idx = state.top_idx();
+        if call_bin_tm(state, p2, p1, res_idx, TagMethod::Lt)? {
+            // l_isfalse(result): a <= b  ==  not (b < a)
+            let result = state.get_at(res_idx).clone();
+            return Ok(matches!(result, LuaValue::Nil | LuaValue::Bool(false)));
+        }
+    }
 
     Err(crate::debug::order_error(state, p1, p2))
 }

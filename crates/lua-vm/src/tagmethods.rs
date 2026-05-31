@@ -486,25 +486,23 @@ pub(crate) fn try_bin_tm(
     res: StackIdx,
     event: TagMethod,
 ) -> Result<(), LuaError> {
-    // Lua 5.3 arith error wording. In the shared (5.4) model, arithmetic
-    // metamethods (`__add`/`__sub`/…) are installed on the string metatable, so
-    // a failed arithmetic fast path that has a string operand dispatches to the
-    // string-library `trymt`, which raises `attempt to <op> a '<t>' with a
-    // '<t>'` and a spurious `[C]: in metamethod '<op>'` frame, and cannot
-    // produce operand varinfo (it runs as a C function with no access to the
-    // calling bytecode's registers). 5.3 instead owns arithmetic string
-    // coercion in the core: when the operation cannot succeed it raises
-    // `attempt to perform arithmetic on a <type> value (<varinfo>)`, pointing at
-    // the operand that is not a number, from the core path.
+    // Lua 5.3 arith error wording with string operands. In the shared (5.4)
+    // model arithmetic metamethods (`__add`/`__sub`/…) are installed on the
+    // string metatable, so a failed arith fast path that has a string operand
+    // dispatches to the string-library `trymt`, which raises `attempt to <op> a
+    // '<t>' with a '<t>'`, adds a spurious `[C]: in metamethod '<op>'` frame, and
+    // cannot produce operand varinfo (it runs as a C function with no access to
+    // the calling bytecode registers). 5.3 instead owns arithmetic string
+    // coercion in the core: when the operation cannot succeed it raises `attempt
+    // to perform arithmetic on a <type> value (<varinfo>)`, blaming the operand
+    // that does not coerce to a number.
     //
-    // On the 5.3 path, the string metamethod is only reached when an operand is
-    // a string. If the operation cannot succeed (some operand does not coerce to
-    // a number — a non-numeric string like `"abc"`, or a genuine non-number such
-    // as `nil`/table paired with a coercible string), raise the core error here
-    // (which has the operand registers for varinfo), bypassing the string
-    // metamethod. The coercible success path (`"3" + 2`) still flows through the
-    // metamethod below, preserving 5.3 float-promotion semantics.
-    // See specs/followup/5.3-coerce-err.md.
+    // The intercept is narrow: it fires ONLY when a string operand cannot be
+    // coerced to a number AND the other operand carries no genuine arith
+    // metamethod of its own. So `t + "5"` (t has `__add`) still dispatches to
+    // t's metamethod via `call_bin_tm`, and the coercible success path
+    // (`"3" + 2`) still flows through the string metamethod below, preserving
+    // 5.3 float-promotion semantics. See specs/followup/5.3-coerce-err.md.
     if matches!(state.global().lua_version, lua_types::LuaVersion::V53)
         && matches!(
             event,
@@ -523,18 +521,37 @@ pub(crate) fn try_bin_tm(
         let p1_num = p1.to_number_with_strconv().is_some();
         let p2_num = p2.to_number_with_strconv().is_some();
         if !(p1_num && p2_num) {
-            // Point varinfo at the operand that does not coerce to a number,
-            // matching C `luaG_opinterror` (which tests `ttisnumber` after the
-            // 5.3 in-core string→number coercion). A coercible numeric string
-            // counts as a number here, so `'2' * nil` blames `nil`, not `'2'`.
-            let (bad, bad_idx) = if !p1_num {
-                (p1, p1_idx.unwrap_or(StackIdx(0)))
-            } else {
-                (p2, p2_idx.unwrap_or(StackIdx(0)))
-            };
-            return Err(crate::debug::type_error(
-                state, bad, bad_idx, b"perform arithmetic on",
-            ));
+            // A string operand did not coerce. Only raise the core error here if
+            // the non-string operand has no genuine arith metamethod; otherwise
+            // fall through so `call_bin_tm` dispatches to that real metamethod
+            // (the string metatable's synthetic arith mm is ignored for this
+            // decision — it never produces a useful result for a non-coercible
+            // pairing, it only raises the wrong-version wording).
+            //
+            // Unary minus arrives as a binary event with `p1 == p2`, so there is
+            // no genuine "other operand" — the only metamethod available is the
+            // synthetic string one. Treat it as absent so `-"x"` takes the core
+            // path.
+            let unary = matches!(event, TagMethod::Unm);
+            let other_has_mm = !unary
+                && if matches!(p1, LuaValue::Str(_)) {
+                    !get_tm_by_obj(state, p2, event).is_nil()
+                } else {
+                    !get_tm_by_obj(state, p1, event).is_nil()
+                };
+            if !other_has_mm {
+                // Point varinfo at the operand that does not coerce, matching C
+                // `luaG_opinterror`. A coercible numeric string counts as a
+                // number, so `'2' * nil` blames `nil`, not `'2'`.
+                let (bad, bad_idx) = if !p1_num {
+                    (p1, p1_idx.unwrap_or(StackIdx(0)))
+                } else {
+                    (p2, p2_idx.unwrap_or(StackIdx(0)))
+                };
+                return Err(crate::debug::type_error(
+                    state, bad, bad_idx, b"perform arithmetic on",
+                ));
+            }
         }
     }
     if !call_bin_tm(state, p1, p2, res, event)? {

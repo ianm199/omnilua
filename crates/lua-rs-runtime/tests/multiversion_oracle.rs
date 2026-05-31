@@ -234,6 +234,30 @@ fn v53_arith_string_error_wording() {
     eq(LuaVersion::V53, r#"return math.type("1"+"2")"#, "float");
     eq(LuaVersion::V53, r#"return math.type("1.0"+"2")"#, "float");
     eq(LuaVersion::V53, r#"return "3" + 2"#, "5.0");
+    // Regression: a non-coercible string paired with a value that carries a
+    // genuine arith metamethod must dispatch to that metamethod, NOT raise the
+    // 5.3 core error. The 5.3 intercept fires only when the other operand has
+    // no real metamethod. Both operand orders. (events.lua:139 — `b+'5'` where
+    // `b` has `__add` — regressed before this guard was made metamethod-aware.)
+    eq(
+        LuaVersion::V53,
+        r#"local t=setmetatable({},{__add=function() return 42 end}); return t+"5""#,
+        "42",
+    );
+    eq(
+        LuaVersion::V53,
+        r#"local t=setmetatable({},{__add=function() return 42 end}); return "5"+t"#,
+        "42",
+    );
+    // The same dispatch holds on 5.4/5.5 (the string-metatable path is never
+    // consulted when the other operand has its own metamethod).
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            r#"local t=setmetatable({},{__add=function() return 42 end}); return "5"+t"#,
+            "42",
+        );
+    }
 }
 
 /// Cross-version non-regression: 5.4/5.5 keep the string-metamethod arith

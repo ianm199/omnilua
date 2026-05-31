@@ -4107,6 +4107,7 @@ fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     // `global attnamelist ['=' explist]` — the name-list form. Record each
     // declared name (with its `<const>`-ness) and switch the scope into strict
     // mode so subsequent free names must be declared (manual §2.2).
+    let mut names: Vec<GcRef<LuaString>> = Vec::new();
     loop {
         let name = str_check_name(ls, state)?;
         let mut is_const = false;
@@ -4130,18 +4131,47 @@ fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
                 }
             }
         }
-        ls.declared_globals.push((name, is_const));
+        ls.declared_globals.push((name.clone(), is_const));
+        names.push(name);
         if !test_next(ls, state, b',' as TokenKind)? {
             break;
         }
     }
-    // PRELIMINARY: an `= explist` initializer is parsed but its values are not
-    // yet stored to the globals (the declare / enforce / const core is what the
-    // multi-version gates exercise; storing initializers needs the global-store
-    // codegen path and is tracked as follow-up).
+    // `= explist` initializer: assign the values to the declared globals, i.e.
+    // `_ENV.name = value`. Mirrors `restassign`'s multiple-assignment codegen —
+    // build an `_ENV[name]` lvalue per declared name (these are IndexUp, no
+    // register cost), evaluate the RHS, adjust to the variable count, then store
+    // each target from the top register down. (Initializers were previously
+    // parsed and dropped.)
     if test_next(ls, state, b'=' as TokenKind)? {
+        let mut targets: Vec<ExprDesc> = Vec::with_capacity(names.len());
+        for name in &names {
+            let envn = ls.envn.clone().expect("envn must be set when resolving globals");
+            let mut env_var = ExprDesc::default();
+            let mut fs_box = ls.fs.take();
+            let r = singlevaraux(ls, fs_box.as_deref_mut(), &envn, &mut env_var, true);
+            ls.fs = fs_box;
+            r?;
+            let line = ls.lastline;
+            let fs = ls.fs.as_mut().unwrap();
+            cg_exp_to_any_reg_up(fs, line, &mut env_var)?;
+            let mut key = ExprDesc::default();
+            codestring(&mut key, name.clone());
+            cg_indexed(fs, line, &mut env_var, &mut key)?;
+            targets.push(env_var);
+        }
+        let nvars = targets.len() as i32;
         let mut e = ExprDesc::default();
-        explist(ls, state, &mut e)?;
+        let nexps = explist(ls, state, &mut e)?;
+        adjust_assign(ls, state, nvars, nexps, &mut e)?;
+        for target in targets.iter().rev() {
+            let line = ls.lastline;
+            let fs = ls.fs.as_mut().unwrap();
+            let freereg = fs.freereg as i32 - 1;
+            let mut v = ExprDesc::default();
+            init_exp(&mut v, ExprKind::NonReloc, freereg);
+            cg_storevar(fs, line, target, &mut v)?;
+        }
     }
     ls.global_strict = true;
     Ok(())

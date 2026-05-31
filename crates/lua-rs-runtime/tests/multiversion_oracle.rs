@@ -91,6 +91,64 @@ fn v55_global_initializer_stored() {
 }
 
 #[test]
+fn v55_global_already_defined_guard() {
+    // Div.1: `global name = expr` raises `global '<name>' already defined` at
+    // runtime when the global currently holds a non-nil value. Pinned against
+    // lua5.5.0 (specs/followup/5.5-lang.md).
+
+    // Re-declare-with-initializer when already non-nil → error.
+    err_contains(
+        LuaVersion::V55,
+        "global x = 1; global x = 2",
+        "global 'x' already defined",
+    );
+    // The non-nil value can arrive via a plain assignment, not just an init.
+    err_contains(
+        LuaVersion::V55,
+        "global x; x = 5; global x = 9",
+        "global 'x' already defined",
+    );
+    // `false` is non-nil, so it also triggers the guard (strict nil check).
+    err_contains(
+        LuaVersion::V55,
+        "global x = false; global x = 1",
+        "global 'x' already defined",
+    );
+    // A nested-block re-init still checks the live value.
+    err_contains(
+        LuaVersion::V55,
+        "global x = 1; do global x = 2 end",
+        "global 'x' already defined",
+    );
+    // In a multi-name decl, the guard fires for whichever name is already
+    // defined (checked top-down, matching upstream `initglobal`).
+    err_contains(
+        LuaVersion::V55,
+        "global a = 1; global b = 2; global a, b = 3, 4",
+        "global 'b' already defined",
+    );
+
+    // Nil'd out first → the re-init is allowed (proves it is a live-value
+    // check, not compile-time redeclaration tracking).
+    eq(LuaVersion::V55, "global x = 1; x = nil; global x = 2; return x", "2");
+    // A no-initializer re-declaration never checks.
+    eq(LuaVersion::V55, "global x; global x; return x", "nil");
+    // Plain assignments after the first init never check.
+    eq(LuaVersion::V55, "global x = 1; x = 2; x = 3; return x", "3");
+    // The RHS is evaluated before the guard fires (upstream order); the value
+    // here keeps the global nil, so the second init is fine.
+    eq(LuaVersion::V55, "global x = nil; global x = 2; return x", "2");
+}
+
+#[test]
+fn v55_global_guard_inert_pre_55() {
+    // `global` is a plain identifier on 5.4/5.3, so none of the guard paths
+    // exist there — repeated assignment to a `global`-named variable is fine.
+    eq(LuaVersion::V54, "global = 1; global = 2; return global", "2");
+    eq(LuaVersion::V53, "global = 1; global = 2; return global", "2");
+}
+
+#[test]
 fn v55_const_global_rejects_assignment() {
     err_contains(
         LuaVersion::V55,

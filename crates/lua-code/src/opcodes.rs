@@ -86,7 +86,7 @@ pub use lua_vm::vm::OpCode;
 
 /// Total number of opcodes.
 ///
-pub const NUM_OPCODES: usize = OpCode::ExtraArg as usize + 1;
+pub const NUM_OPCODES: usize = OpCode::ErrNNil as usize + 1;
 
 
 // ─── opmode_byte helper ───────────────────────────────────────────────────────
@@ -207,6 +207,7 @@ pub(crate) const OP_MODES: [u8; NUM_OPCODES] = [
     opmode_byte(0, 1, 0, 0, 1, M_ABC),
     opmode_byte(0, 0, 1, 0, 1, M_ABC),
     opmode_byte(0, 0, 0, 0, 0, M_AX),
+    opmode_byte(0, 0, 0, 0, 0, M_ABX),
 ];
 
 // ─── OP_MODES accessors ───────────────────────────────────────────────────────
@@ -507,8 +508,9 @@ mod tests {
 
     #[test]
     fn num_opcodes_matches_enum() {
-        assert_eq!(NUM_OPCODES, 83);
+        assert_eq!(NUM_OPCODES, 84);
         assert_eq!(OpCode::ExtraArg as usize, 82);
+        assert_eq!(OpCode::ErrNNil as usize, 83);
     }
 
     #[test]
@@ -532,7 +534,7 @@ mod tests {
             let op = OpCode::from_u32(i as u32).expect("valid opcode");
             assert_eq!(op as usize, i);
         }
-        assert!(OpCode::from_u32(83).is_none());
+        assert!(OpCode::from_u32(84).is_none());
     }
 
     #[test]

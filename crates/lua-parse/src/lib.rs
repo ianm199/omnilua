@@ -1747,6 +1747,43 @@ fn cg_free_reg_if_temp(fs: &mut FuncState, reg: i32) {
 /// free any temp held by `e`, reserve the next register, then call
 /// `cg_exp_to_reg` to place the value (handling `Jmp` and pending
 /// `e.t` / `e.f` jump-lists through the shared `exp2reg` path).
+/// Emit the Lua 5.5 `global name = expr` already-defined guard for one global.
+///
+/// Mirrors upstream `checkglobal`/`luaK_codecheckglobal` (`lcode.c`): read the
+/// global's current value into a temporary register and emit `OP_ERRNNIL`,
+/// which raises `global '<name>' already defined` at runtime if that value is
+/// non-nil. `target` is the `_ENV[name]` lvalue; it is cloned so the caller's
+/// copy is left intact for the subsequent store. The temporary is freed
+/// immediately so the store's `freereg - 1` source slot is undisturbed.
+///
+/// Bx encodes the name like upstream: `0` means the name index is unavailable
+/// (renders as `?`), otherwise `Bx - 1` is the constant-table index of the
+/// name string. The error reports `line`, the initializer's line number.
+fn cg_check_global(
+    fs: &mut FuncState,
+    line: i32,
+    target: &ExprDesc,
+    name: GcRef<LuaString>,
+) -> Result<(), LuaError> {
+    let k = add_k_string(fs, name);
+    let bx = if (k as u32) >= lua_code::opcodes::MAXARG_BX {
+        0
+    } else {
+        (k + 1) as u32
+    };
+    let mut probe = target.clone();
+    cg_exp_to_next_reg(fs, line, &mut probe)?;
+    let reg = probe.u.info;
+    let inst = lua_code::opcodes::Instruction::abx(
+        lua_code::opcodes::OpCode::ErrNNil,
+        reg as u32,
+        bx,
+    );
+    emit_inst(fs, line, inst);
+    cg_free_reg(fs, reg);
+    Ok(())
+}
+
 fn cg_exp_to_next_reg(
     fs: &mut FuncState,
     line: i32,
@@ -4144,6 +4181,9 @@ fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     // each target from the top register down. (Initializers were previously
     // parsed and dropped.)
     if test_next(ls, state, b'=' as TokenKind)? {
+        // The Lua 5.5 already-defined guard reports the error at the line of the
+        // initializer (upstream `globalnames` passes `ls->linenumber` here).
+        let init_line = ls.linenumber;
         let mut targets: Vec<ExprDesc> = Vec::with_capacity(names.len());
         for name in &names {
             let envn = ls.envn.clone().expect("envn must be set when resolving globals");
@@ -4164,7 +4204,17 @@ fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         let mut e = ExprDesc::default();
         let nexps = explist(ls, state, &mut e)?;
         adjust_assign(ls, state, nvars, nexps, &mut e)?;
-        for target in targets.iter().rev() {
+        // Mirror upstream `initglobal`: after the RHS is evaluated, for each
+        // declared name emit `checkglobal` (the `OP_ERRNNIL` guard) immediately
+        // before its store. The guard reads the global's *current* runtime value
+        // and raises `global '<name>' already defined` if it is non-nil. Only
+        // Lua 5.5 declares `global`; pre-5.5 never reaches this path.
+        for (i, target) in targets.iter().enumerate().rev() {
+            let name = names[i].clone();
+            {
+                let fs = ls.fs.as_mut().unwrap();
+                cg_check_global(fs, init_line, target, name)?;
+            }
             let line = ls.lastline;
             let fs = ls.fs.as_mut().unwrap();
             let freereg = fs.freereg as i32 - 1;

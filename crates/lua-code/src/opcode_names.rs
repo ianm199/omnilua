@@ -13,7 +13,7 @@
 
 /// Total number of opcodes. Must equal `OpCode::Count as usize` once the
 /// enum lands; trailer-required hook checks this constant exists.
-pub const OP_COUNT: usize = 83;
+pub const OP_COUNT: usize = 84;
 
 /// Opcode names, indexed by `OpCode as usize`. ORDER OP — must match the
 /// `OpCode` enum order in `lopcodes.h` exactly.
@@ -29,7 +29,7 @@ pub const OPNAMES: [&str; OP_COUNT] = [
     "EQI", "LTI", "LEI", "GTI", "GEI", "TEST", "TESTSET", "CALL",
     "TAILCALL", "RETURN", "RETURN0", "RETURN1", "FORLOOP", "FORPREP",
     "TFORPREP", "TFORCALL", "TFORLOOP", "SETLIST", "CLOSURE", "VARARG",
-    "VARARGPREP", "EXTRAARG",
+    "VARARGPREP", "EXTRAARG", "ERRNNIL",
 ];
 
 #[cfg(test)]
@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn first_and_last_opcodes() {
         assert_eq!(OPNAMES[0], "MOVE");
-        assert_eq!(OPNAMES[OP_COUNT - 1], "EXTRAARG");
+        assert_eq!(OPNAMES[OP_COUNT - 1], "ERRNNIL");
     }
 }
 

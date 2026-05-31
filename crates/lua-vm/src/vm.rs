@@ -140,13 +140,20 @@ pub enum OpCode {
     VarArg = 80,
     VarArgPrep = 81,
     ExtraArg = 82,
+    /// Lua 5.5 `global name = expr` guard. Reads register A (the current value
+    /// of the global), and if it is non-nil raises `global '<name>' already
+    /// defined`. Bx encodes the name: 0 means "?", otherwise Bx-1 is the index
+    /// into the constant table of the name string. Mirrors upstream
+    /// `OP_ERRNNIL` (`ldebug.c:luaG_errnnil`). 5.5-only; no other version emits
+    /// it. Appended after `ExtraArg` so existing opcode indices are unchanged.
+    ErrNNil = 83,
 }
 
 /// Number of distinct opcodes (matches C-Lua's `NUM_OPCODES`). Held for
 /// downstream debug/dump callers that count opcodes by name; the dispatch
 /// hot path in `InstructionExt::opcode` does its own per-arm match.
 #[allow(dead_code)]
-const NUM_OPCODES: u8 = 83;
+const NUM_OPCODES: u8 = 84;
 
 impl OpCode {
     /// Legacy alias retained because the prior duplicate enum variant
@@ -250,6 +257,7 @@ impl OpCode {
             80 => Some(Self::VarArg),
             81 => Some(Self::VarArgPrep),
             82 => Some(Self::ExtraArg),
+            83 => Some(Self::ErrNNil),
             _ => None,
         }
     }
@@ -371,6 +379,7 @@ impl InstructionExt for Instruction {
             80 => OpCode::VarArg,
             81 => OpCode::VarArgPrep,
             82 => OpCode::ExtraArg,
+            83 => OpCode::ErrNNil,
             _ => OpCode::ExtraArg,
         }
     }
@@ -499,6 +508,7 @@ const OP_MODE_BYTES: [u8; NUM_OPCODES as usize] = [
     0x48, // VarArg
     0x28, // VarArgPrep
     0x03, // ExtraArg
+    0x01, // ErrNNil (iABx, no A-write, no test)
 ];
 
 #[inline(always)]
@@ -2751,6 +2761,30 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     // ── OP_EXTRAARG ────────────────────────────────────────────
                     OpCode::ExtraArg => {
                         debug_assert!(false, "OP_EXTRAARG executed directly");
+                    }
+                    // ── OP_ERRNNIL (Lua 5.5 global-already-defined guard) ──────
+                    //    luaG_errnnil: if the global's current value is non-nil,
+                    //    raise `global '<name>' already defined`. Bx == 0 → "?",
+                    //    else Bx-1 indexes the constant table for the name.
+                    OpCode::ErrNNil => {
+                        let ra = base + i.arg_a();
+                        if !matches!(state.get_at(ra), LuaValue::Nil) {
+                            let bx = i.arg_bx();
+                            let name: Vec<u8> = if bx == 0 {
+                                b"?".to_vec()
+                            } else {
+                                match state.proto_const(&cl, (bx - 1) as usize) {
+                                    LuaValue::Str(s) => s.as_bytes().to_vec(),
+                                    _ => b"?".to_vec(),
+                                }
+                            };
+                            let mut msg = Vec::with_capacity(name.len() + 24);
+                            msg.extend_from_slice(b"global '");
+                            msg.extend_from_slice(&name);
+                            msg.extend_from_slice(b"' already defined");
+                            state.set_ci_savedpc(ci, pc);
+                            return Err(crate::debug::prefixed_runtime_pub(state, msg));
+                        }
                     }
                 } // end match opcode
             } // end 'dispatch loop

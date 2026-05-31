@@ -56,6 +56,14 @@ impl LuaVersion {
         }
     }
 
+    /// Whether this version has a real backend. The modern family (5.3/5.4/5.5)
+    /// is implemented; 5.1/5.2 (the float-only legacy family) are not yet, so
+    /// they must REFUSE rather than silently run as 5.4 (which would expose
+    /// integers, `//`, `goto`, etc. that 5.1 lacks — a misleading masquerade).
+    pub fn is_supported(self) -> bool {
+        matches!(self, LuaVersion::V53 | LuaVersion::V54 | LuaVersion::V55)
+    }
+
     /// The `_VERSION` global string for this version (e.g. `"Lua 5.4"`).
     pub fn version_str(self) -> &'static str {
         match self {

@@ -853,6 +853,12 @@ fn main() -> ExitCode {
                 "5.5" | "55" => lua_types::LuaVersion::V55,
                 other => return Err(format!("unknown LUA_RS_VERSION: {other}")),
             };
+            if !lv.is_supported() {
+                return Err(format!(
+                    "{} is not yet supported (supported: 5.3, 5.4, 5.5)",
+                    lv.version_str()
+                ));
+            }
             state.global_mut().lua_version = lv;
         }
         state.global_mut().parser_hook = Some(parser_hook);

@@ -778,6 +778,14 @@ impl Lua {
     /// Create a Lua runtime with the supplied host capabilities for a specific
     /// language version.
     pub fn with_hooks_versioned(hooks: HostHooks, version: LuaVersion) -> Result<Self> {
+        if !version.is_supported() {
+            // Refuse rather than masquerade as 5.4: 5.1/5.2 (the float-only
+            // legacy family) have no backend yet. See specs/LUA_5_1_PLAN.md.
+            return Err(LuaError::runtime(format_args!(
+                "{} is not yet supported by lua-rs (supported: 5.3, 5.4, 5.5)",
+                version.version_str()
+            )));
+        }
         let mut state = new_state().ok_or(LuaError::Memory)?;
         state.global_mut().lua_version = version;
         install_parser_hook(&mut state);

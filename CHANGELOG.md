@@ -4,6 +4,37 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.19] - 2026-05-31
+
+### Added — multi-version support: Lua 5.3 and 5.5 (alpha)
+
+A single embedding API can now run Lua **5.3** and **5.5** alongside the stable
+**5.4**, selected per instance:
+
+```rust
+let lua = Lua::new_versioned(LuaVersion::V53); // or V55, or V54 (default)
+```
+
+Both share 5.4's mature core (VM, GC, number model, metatables, most of stdlib)
+with version-specific behavior confined to a few cold-path seams; the bytecode
+dispatch loop carries no per-version cost, so compute-bound code runs
+identically across versions. The CLI selects a version with
+`LUA_RS_VERSION=5.3|5.4|5.5`.
+
+- **5.5**: contextual `global` (`LUA_COMPAT_GLOBAL`), block-scoped `global`
+  declarations with strict undeclared-name checking, `<const>` globals,
+  read-only numeric/generic for control variables, stored `global` initializers,
+  round-trip float `tostring`, `table.create`.
+- **5.3**: `bit32` library, string-in-arithmetic coercion to float, `warn` and
+  `coroutine.close` absent, `<const>`/`<close>` attribute syntax rejected.
+
+**Alpha caveat.** 5.3 and 5.5 are preliminary. Their headline features are
+verified against the upstream reference binaries (`tests/multiversion_oracle.rs`),
+but each has a documented long tail (e.g. 5.3 compat-math and error wording; 5.5
+named varargs and the "global already defined" guard) — see `specs/`. Use 5.4
+for production and treat 5.3/5.5 as experimental. Lua 5.1/5.2 are not yet
+supported and refuse construction rather than masquerade as 5.4.
+
 ## [0.0.18] - 2026-05-30
 
 ### Added — sandboxing for untrusted Lua

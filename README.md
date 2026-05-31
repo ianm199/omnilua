@@ -52,6 +52,20 @@ integration:
 [bevy-lua-rs-starter](https://github.com/ianm199/bevy-lua-rs-starter)
 ([live demo](https://ianm199.github.io/bevy-lua-rs-starter/)).
 
+## Multiple Lua versions (alpha)
+
+Beyond the stable 5.4, the same API runs Lua **5.3** and **5.5** — one binary,
+selected per instance:
+
+```rust
+let lua = Lua::new_versioned(LuaVersion::V53); // or V55; Lua::new() is 5.4
+```
+
+The CLI selects with `LUA_RS_VERSION=5.3|5.4|5.5`. **Alpha:** 5.3/5.5 share 5.4's
+core and their headline features are verified against the upstream reference
+binaries, but each is incomplete — use 5.4 for production. See the
+[changelog](CHANGELOG.md) for what's covered. 5.1/5.2 are not yet supported.
+
 ## Running untrusted Lua
 
 Bound CPU and memory and strip host access, so a buggy or hostile script can't

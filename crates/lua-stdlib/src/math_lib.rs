@@ -656,6 +656,19 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
     state.push(LuaValue::Int(i64::MIN));
     state.set_field(-2, b"mininteger")?;
 
+    // Lua 5.1/5.2 are float-only: the integer-subtype helpers (`math.type`,
+    // `math.tointeger`) and the integer bounds (`math.maxinteger`/`mininteger`)
+    // are 5.3 additions and are absent there.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    ) {
+        for field in [&b"type"[..], &b"tointeger"[..], &b"maxinteger"[..], &b"mininteger"[..]] {
+            state.push(LuaValue::Nil);
+            state.set_field(-2, field)?;
+        }
+    }
+
     // Registers math.random and math.randomseed as upvalue-bearing closures.
     set_rand_func(state)?;
 

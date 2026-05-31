@@ -61,7 +61,14 @@ impl LuaVersion {
     /// they must REFUSE rather than silently run as 5.4 (which would expose
     /// integers, `//`, `goto`, etc. that 5.1 lacks — a misleading masquerade).
     pub fn is_supported(self) -> bool {
-        matches!(self, LuaVersion::V53 | LuaVersion::V54 | LuaVersion::V55)
+        // NOTE: on the `lua-5.1-spike` branch V51 is enabled to exercise the
+        // legacy-family seam (float-formatting + roster). It is a PARTIAL spike
+        // (no fenv globals, no syntax gates yet — see specs/LUA_5_1_PLAN.md);
+        // on the 5.3/5.5 PR branch V51/V52 refuse.
+        matches!(
+            self,
+            LuaVersion::V51 | LuaVersion::V53 | LuaVersion::V54 | LuaVersion::V55
+        )
     }
 
     /// The `_VERSION` global string for this version (e.g. `"Lua 5.4"`).

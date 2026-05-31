@@ -178,6 +178,26 @@ fn v53_rejects_attribute_syntax() {
 // required to leave 5.4 byte-identical to lua5.4.7 on these).
 // ─────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────
+// 5.1 — PARTIAL spike (lua-5.1-spike branch only). Covers the float-only
+// observable number behavior and the math roster; the fenv globals subsystem
+// and syntax gates are not done yet (specs/LUA_5_1_PLAN.md).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_float_only_observable_behavior() {
+    // Float-only: integer-valued floats print without ".0" (vs 5.3+).
+    eq(LuaVersion::V51, "return 10/2", "5");
+    eq(LuaVersion::V51, "return 2^2", "4");
+    eq(LuaVersion::V51, "return 1.5", "1.5");
+    eq(LuaVersion::V51, "return math.floor(3.7)", "3");
+    // The 5.3+ integer-subtype math members are absent.
+    eq(LuaVersion::V51, "return type(math.type)", "nil");
+    eq(LuaVersion::V51, "return type(math.tointeger)", "nil");
+    eq(LuaVersion::V51, "return type(math.maxinteger)", "nil");
+    eq(LuaVersion::V51, "return _VERSION", "Lua 5.1");
+}
+
 #[test]
 fn v54_unchanged() {
     eq(LuaVersion::V54, "return 1/3", "0.33333333333333"); // %.14g

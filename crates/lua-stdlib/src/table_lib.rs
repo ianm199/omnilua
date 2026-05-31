@@ -346,12 +346,13 @@ pub fn tmove(state: &mut LuaState) -> Result<usize, LuaError> {
 fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), LuaError> {
     state.table_get_i(1, idx)?;
     if !matches!(state.type_at(-1), LuaType::String | LuaType::Number) {
-        // TODO(port): state.type_name_str_at(-1) returns &'static str for the base type name
         let type_name = state.type_name_str_at(-1);
-        return Err(LuaError::runtime(format_args!(
-            "invalid value ({:?}) at index {} in table for 'concat'",
-            type_name, idx
-        )));
+        let msg = format!(
+            "invalid value ({}) at index {} in table for 'concat'",
+            String::from_utf8_lossy(type_name),
+            idx
+        );
+        return crate::auxlib::lua_error(state, msg.as_bytes()).map(|_| ());
     }
     // TODO(port): state.to_bytes_at(-1) converts via Lua's tostring coercion; verify method name
     let bytes = state.to_bytes_at(-1).ok_or_else(|| LuaError::runtime(format_args!("invalid value at index {}", idx)))?;

@@ -507,7 +507,11 @@ impl LuaState {
             Some(s) => Ok(s.as_bytes().to_vec()),
             None => {
                 let got = index_to_value(self, arg);
-                let got_name = crate::tagmethods::obj_type_name(self, &got)?;
+                let got_name = if lua_type_at(self, arg) == LuaType::None {
+                    b"no value".to_vec()
+                } else {
+                    crate::tagmethods::obj_type_name(self, &got)?
+                };
                 let extramsg = format!(
                     "string expected, got {}",
                     String::from_utf8_lossy(&got_name)
@@ -539,7 +543,11 @@ impl LuaState {
                     ))
                 } else {
                     let got = index_to_value(self, arg);
-                    let got_name = crate::tagmethods::obj_type_name(self, &got)?;
+                    let got_name = if lua_type_at(self, arg) == LuaType::None {
+                        b"no value".to_vec()
+                    } else {
+                        crate::tagmethods::obj_type_name(self, &got)?
+                    };
                     let extramsg = format!(
                         "number expected, got {}",
                         String::from_utf8_lossy(&got_name)
@@ -564,7 +572,11 @@ impl LuaState {
             Some(d) => Ok(d),
             None => {
                 let got = index_to_value(self, arg);
-                let got_name = crate::tagmethods::obj_type_name(self, &got)?;
+                let got_name = if lua_type_at(self, arg) == LuaType::None {
+                    b"no value".to_vec()
+                } else {
+                    crate::tagmethods::obj_type_name(self, &got)?
+                };
                 let extramsg = format!(
                     "number expected, got {}",
                     String::from_utf8_lossy(&got_name)

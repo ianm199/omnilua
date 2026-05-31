@@ -104,4 +104,16 @@ jobs:
       - name: verify registry install
         if: ${{ !inputs.dry_run }}
         working-directory: packages/lua-rs-wasm
-        run: npm run test:registry
+        # Retry with backoff: a just-published version can take a short while to
+        # propagate across the npm registry/CDN, and a single immediate install
+        # would otherwise fail an already-successful publish (issue #80).
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if npm run test:registry; then
+              exit 0
+            fi
+            echo "registry install attempt $attempt failed (likely propagation lag); retrying in $((attempt * 15))s" >&2
+            sleep $((attempt * 15))
+          done
+          echo "registry install still failing after retries" >&2
+          exit 1

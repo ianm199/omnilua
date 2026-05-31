@@ -420,7 +420,7 @@ pub fn str_char(state: &mut LuaState) -> Result<usize, LuaError> {
     for i in 1..=n {
         let c = state.check_arg_integer(i)? as u64;
         if c > u8::MAX as u64 {
-            return Err(LuaError::arg_error(i, "value out of range"));
+            return crate::auxlib::arg_error(state, i, b"value out of range");
         }
         buf.push(c as u8);
     }
@@ -496,17 +496,21 @@ fn trymt(state: &mut LuaState, mtname: &[u8]) -> Result<(), LuaError> {
     // would wipe the call frame's arguments. `lua_settop` is frame-relative
     // — keep the first two args of the current C function.
     lua_vm::api::set_top(state, 2)?;
-    //        luaL_error(...)
     let t2_is_string = state.type_at(2) == LuaType::String;
-    let has_mm = state.get_meta_field(2, mtname)?;
-    if t2_is_string || !has_mm {
+    // C: `if (lua_type(L,2)==LUA_TSTRING || !luaL_getmetafield(L,2,mtname))`.
+    // The `||` short-circuits: when arg2 is a string, `get_meta_field` is never
+    // called, so the stack stays `[arg1, arg2]` for the error formatter. Calling
+    // it unconditionally would push the string metatable's own metamethod and
+    // shift the operands read by `type_name_at(-2)/(-1)`.
+    if t2_is_string || !state.get_meta_field(2, mtname)? {
         let op = &mtname[2..]; // skip "__"
-        return Err(LuaError::runtime(format_args!(
+        let msg = format!(
             "attempt to {} a '{}' with a '{}'",
             op.escape_ascii(),
             state.type_name_at(-2).escape_ascii(),
             state.type_name_at(-1).escape_ascii(),
-        )));
+        );
+        return crate::auxlib::lua_error(state, msg.as_bytes()).map(|_| ());
     }
     state.insert(-3)?;
     state.call(2, 1)?;
@@ -1055,17 +1059,25 @@ fn get_one_capture<'a>(
     Ok(CaptureInfo::Bytes(&ms.src[cap.init..cap.init + len]))
 }
 
-/// Push all captures (or whole match if none) onto the stack.
-/// Returns the number of values pushed.
+/// Push all captures onto the stack, returning the number of values pushed.
+///
+/// `span` mirrors upstream's `const char *s` argument: `Some((s, e))` means a
+/// whole-match span is available (so a zero-capture pattern pushes the whole
+/// match), while `None` mirrors a `NULL s` and pushes nothing when there are no
+/// explicit captures. Upstream guard: `nlevels = (ms->level == 0 && s) ? 1 : ms->level`.
 ///
 fn push_captures(
     state: &mut LuaState,
     ms: &MatchState,
-    s: usize,
-    e: usize,
+    span: Option<(usize, usize)>,
 ) -> Result<usize, LuaError> {
-    let nlevels = if ms.level == 0 { 1 } else { ms.level as usize };
+    let nlevels = if ms.level == 0 && span.is_some() {
+        1
+    } else {
+        ms.level as usize
+    };
     state.ensure_stack(nlevels as i32, "too many captures")?;
+    let (s, e) = span.unwrap_or((0, 0));
     for i in 0..nlevels {
         match get_one_capture(ms, i, s, e)? {
             CaptureInfo::Position(n) => state.push(LuaValue::Int(n)),
@@ -1145,10 +1157,10 @@ fn str_find_aux(state: &mut LuaState, find: bool) -> Result<usize, LuaError> {
             if find {
                 state.push(LuaValue::Int((s1 + 1) as i64));
                 state.push(LuaValue::Int(res as i64));
-                let nc = push_captures(state, &ms, 0, 0)?;
+                let nc = push_captures(state, &ms, None)?;
                 return Ok(nc + 2);
             } else {
-                return push_captures(state, &ms, s1, res);
+                return push_captures(state, &ms, Some((s1, res)));
             }
         }
     }
@@ -1251,7 +1263,7 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
         let e_val = LuaValue::Int((e + 1) as i64);
         tbl.raw_set_int(state, 3, e_val.clone())?;
         tbl.raw_set_int(state, 4, e_val)?;
-        return push_captures(state, &ms, src, e);
+        return push_captures(state, &ms, Some((src, e)));
     }
 
     Ok(0)
@@ -1365,7 +1377,7 @@ fn add_value(
     match tr {
         LuaType::Function => {
             state.push_value_at(3)?;
-            let n = push_captures(state, ms, s, e)?;
+            let n = push_captures(state, ms, Some((s, e)))?;
             state.call(n as i32, 1)?;
         }
         LuaType::Table => {

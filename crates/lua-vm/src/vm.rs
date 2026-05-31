@@ -1268,7 +1268,7 @@ pub(crate) fn concat(state: &mut LuaState, total: i32) -> Result<(), LuaError> {
 // ─── Object length ───────────────────────────────────────────────────────────
 
 /// Main implementation of the `#` operator.
-pub(crate) fn obj_len(state: &mut LuaState, ra: StackIdx, rb: LuaValue) -> Result<(), LuaError> {
+pub(crate) fn obj_len(state: &mut LuaState, ra: StackIdx, rb: LuaValue, rb_idx: StackIdx) -> Result<(), LuaError> {
     match &rb {
         LuaValue::Table(_) => {
             //    if (tm) break; else setivalue(s2v(ra), luaH_getn(h));
@@ -1292,7 +1292,7 @@ pub(crate) fn obj_len(state: &mut LuaState, ra: StackIdx, rb: LuaValue) -> Resul
             //    if (notm(tm)) luaG_typeerror(L, rb, "get length of");
             let tm = state.get_tm_by_obj(other, TagMethod::Len);
             if matches!(tm, LuaValue::Nil) {
-                return Err(LuaError::type_error(other, "get length of"));
+                return Err(crate::debug::type_error(state, other, rb_idx, b"get length of"));
             }
             state.call_tm_res(tm, &rb, &rb, ra)?;
         }
@@ -2207,10 +2207,11 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     // ── OP_LEN ───────────────────────────────────────────────
                     OpCode::Len => {
                         let ra = base + i.arg_a();
-                        let rb_v = state.get_at(base + i.arg_b());
+                        let rb_idx = base + i.arg_b();
+                        let rb_v = state.get_at(rb_idx);
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
-                        obj_len(state, ra, rb_v)?;
+                        obj_len(state, ra, rb_v, rb_idx)?;
                         trap = state.ci_trap(ci);
                     }
                     // ── OP_CONCAT ─────────────────────────────────────────────

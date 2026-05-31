@@ -290,7 +290,7 @@ fn get_utf_char_bytes(state: &mut LuaState, arg: i32) -> Result<Vec<u8>, LuaErro
     let code = state.check_arg_integer(arg)? as u64;
 
     if code > MAX_UTF as u64 {
-        return Err(LuaError::arg_error(arg, "value out of range"));
+        return crate::auxlib::arg_error(state, arg, b"value out of range").map(|_| Vec::new());
     }
 
     Ok(encode_utf8_codepoint(code as u32))

@@ -467,7 +467,11 @@ impl LuaStateStubExt for LuaState {
                 LuaType::UserData => "userdata",
                 LuaType::Thread => "thread",
             };
-            let got_name = self.full_type_name(&got)?;
+            let got_name = if lua_vm::api::lua_type_at(self, arg) == LuaType::None {
+                b"no value".to_vec()
+            } else {
+                self.full_type_name(&got)?
+            };
             let extramsg = format!(
                 "{} expected, got {}",
                 expected, String::from_utf8_lossy(&got_name)
@@ -533,7 +537,11 @@ impl LuaStateStubExt for LuaState {
                     ))
                 } else {
                     let got = self.value_at(arg);
-                    let got_name = self.full_type_name(&got)?;
+                    let got_name = if lua_vm::api::lua_type_at(self, arg) == LuaType::None {
+                        b"no value".to_vec()
+                    } else {
+                        self.full_type_name(&got)?
+                    };
                     let extramsg = format!(
                         "number expected, got {}",
                         String::from_utf8_lossy(&got_name)
@@ -549,7 +557,11 @@ impl LuaStateStubExt for LuaState {
             Some(s) => Ok(s.as_bytes().to_vec()),
             None => {
                 let got = self.value_at(arg);
-                let got_name = self.full_type_name(&got)?;
+                let got_name = if lua_vm::api::lua_type_at(self, arg) == LuaType::None {
+                    b"no value".to_vec()
+                } else {
+                    self.full_type_name(&got)?
+                };
                 let extramsg = format!(
                     "string expected, got {}",
                     String::from_utf8_lossy(&got_name)
@@ -564,7 +576,11 @@ impl LuaStateStubExt for LuaState {
             Some(d) => Ok(d),
             None => {
                 let got = self.value_at(arg);
-                let got_name = self.full_type_name(&got)?;
+                let got_name = if lua_vm::api::lua_type_at(self, arg) == LuaType::None {
+                    b"no value".to_vec()
+                } else {
+                    self.full_type_name(&got)?
+                };
                 let extramsg = format!(
                     "number expected, got {}",
                     String::from_utf8_lossy(&got_name)

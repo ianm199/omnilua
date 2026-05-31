@@ -2816,7 +2816,10 @@ impl LuaState {
             other => {
                 let tm = crate::tagmethods::get_tm_by_obj(self, other, crate::tagmethods::TagMethod::Len);
                 if matches!(tm, LuaValue::Nil) {
-                    return Err(LuaError::type_error(other, "get length of"));
+                    let mut msg = b"attempt to get length of a ".to_vec();
+                    msg.extend_from_slice(&self.obj_type_name(other));
+                    msg.extend_from_slice(b" value");
+                    return Err(crate::debug::prefixed_runtime_pub(self, msg));
                 }
                 self.push(LuaValue::Nil);
                 let slot = StackIdx(self.top.0 - 1);

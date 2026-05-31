@@ -193,3 +193,187 @@ fn v54_unchanged() {
     // for-loop var is assignable on 5.4.
     eq(LuaVersion::V54, "for i = 1, 1 do i = 10 end; return 'ok'", "ok");
 }
+
+/// #76: math.type / math.tointeger return `nil` (not `false`) on failure.
+/// luaL_pushfail = lua_pushnil in the default 5.3/5.4/5.5 builds (oracle
+/// contract pins LUA_FAILISFALSE off). Pre-existing 5.4 port bug.
+#[test]
+fn issue76_math_fail_returns_nil() {
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return math.type('x')", "nil");
+        eq(v, "return math.type(true)", "nil");
+        eq(v, "return math.tointeger(3.5)", "nil");
+        eq(v, "return math.tointeger(2^63)", "nil");
+        // guard the success paths still work (regression fence):
+        eq(v, "return math.tointeger('7')", "7");
+        eq(v, "return math.type(1)", "integer");
+        eq(v, "return math.type(1.0)", "float");
+        // truthiness fence — lock the semantic intent, not just tostring:
+        eq(v, "return math.type('x') == nil", "true");
+        eq(
+            v,
+            "if math.tointeger(3.5) then return 'truthy' else return 'falsey' end",
+            "falsey",
+        );
+    }
+}
+
+/// #77 (R-A): `string.find` on the pattern-matching path with zero explicit
+/// captures must return exactly `start, end` — no spurious trailing empty
+/// string. Upstream's `push_captures` uses `nlevels = (ms->level==0 && s) ? 1
+/// : ms->level`; the `&& s` guard means *find* (s == NULL) pushes nothing when
+/// there are no captures, while *match*/*gmatch*/*gsub* (s != NULL) still push
+/// the whole match. Pre-existing 5.4 port bug, cross-version.
+#[test]
+fn issue77_string_find_no_spurious_capture() {
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        // bug: find with magic-char pattern, no captures → arity 2 (was 3).
+        eq(v, "return select('#', string.find('hello','l+'))", "2");
+        eq(
+            v,
+            "local a,b,c = string.find('hello','l+'); \
+             return tostring(a)..','..tostring(b)..','..tostring(c)",
+            "3,4,nil",
+        );
+        // anchored magic pattern, no captures → still arity 2.
+        eq(v, "return select('#', string.find('hello','^h+'))", "2");
+
+        // regression fences — these were already correct, lock them in:
+        // explicit capture → arity 3, capture present.
+        eq(v, "return select('#', string.find('hello','(l+)'))", "3");
+        eq(
+            v,
+            "local a,b,c = string.find('hello','(l+)'); \
+             return tostring(a)..','..tostring(b)..','..tostring(c)",
+            "3,4,ll",
+        );
+        // match still returns the whole match (s != NULL path).
+        eq(v, "return string.match('hello','l+')", "ll");
+        // plain/literal path is unaffected → arity 2.
+        eq(v, "return select('#', string.find('hello','ll'))", "2");
+        // gsub count unaffected.
+        eq(v, "return ({string.gsub('hello','l+','L')})[2]", "1");
+        // gsub function-replacement: whole match still passed (s != NULL path).
+        eq(
+            v,
+            "return (string.gsub('hello','l+',function(w) return '['..w..']' end))",
+            "he[ll]o",
+        );
+        // gmatch with no captures still yields the whole match each step.
+        eq(
+            v,
+            "local t={}; for w in string.gmatch('a,b,c','%a+') do t[#t+1]=w end; \
+             return table.concat(t,'|')",
+            "a|b|c",
+        );
+    }
+}
+
+/// #78 (R-C): `a <= b` with only `__lt` defined derives `not (b < a)` in the
+/// default 5.1–5.4 reference builds (LUA_COMPAT_LT_LE, on by default) and is
+/// removed in 5.5 (raises). Version-gated to match each reference exactly.
+#[test]
+fn issue78_le_derived_from_lt() {
+    // __lt returns false → a<=b == not(b<a) == not(false) == true (5.3/5.4).
+    let only_lt =
+        "local m = {__lt = function() return false end}; \
+         local a = setmetatable({}, m); local b = setmetatable({}, m); return a <= b";
+    eq(LuaVersion::V53, only_lt, "true");
+    eq(LuaVersion::V54, only_lt, "true");
+    // 5.5 removed the fallback: comparing with no __le raises.
+    err_contains(LuaVersion::V55, only_lt, "attempt to compare two table values");
+    // >= also routes through __le (with swap) and derives on 5.4.
+    eq(
+        LuaVersion::V54,
+        "local m = {__lt = function() return false end}; \
+         local a = setmetatable({}, m); local b = setmetatable({}, m); return a >= b",
+        "true",
+    );
+    // explicit __le is unaffected by the fallback on every version.
+    let with_le =
+        "local m = {__le = function() return true end, __lt = function() return false end}; \
+         local a = setmetatable({}, m); return a <= a";
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, with_le, "true");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #79 error-message fidelity (R-D/E/F/G). Shared-core: must match every
+// version reference (5.3/5.4/5.5). Sub-item (d) — the `[C]: in ?` traceback
+// tail — is deferred (architectural) and not asserted here.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v_argerror_to_fnname() {
+    // (a1) bad-argument carries the resolved function name `to '<fn>'`.
+    // The harness invokes these as inline field-access calls
+    // (`string.char(...)`), so the name resolves from the call instruction to
+    // the bare field `'char'` (exactly like the C reference for the inline
+    // form); the `pcall(string.char, ...)` global-lookup form resolves to the
+    // dotted `'string.char'`. Either way the `to '<fn>'` qualifier — the #79
+    // defect — must be present.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return string.char(256)", "to 'char'");
+        err_contains(v, "return string.char(256)", "value out of range");
+        err_contains(v, "return utf8.char(0x80000000)", "to 'char'");
+        err_contains(v, "return utf8.char(0x80000000)", "value out of range");
+    }
+}
+
+#[test]
+fn v_argerror_no_value() {
+    // (a2) absent argument => `got no value`, not `got nil`.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return string.sub()", "got no value");
+        err_contains(v, "return string.rep('x')", "got no value");
+    }
+}
+
+#[test]
+fn v_length_concat_location_prefix() {
+    // (b) `#` and `..` carry the chunk-location prefix and the message body.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return #nil", "attempt to get length of a nil value");
+        err_contains(v, "return ({})..({})", "attempt to concatenate a table value");
+        // a `:<line>:` prefix appears before the message.
+        let e = run(v, "return #nil").unwrap_err();
+        let at = e.find("attempt").expect("message body present");
+        assert!(e[..at].contains(':'), "v{v:?} #nil missing location prefix: {e}");
+        let e = run(v, "return ({})..({})").unwrap_err();
+        let at = e.find("attempt").expect("message body present");
+        assert!(e[..at].contains(':'), "v{v:?} concat missing location prefix: {e}");
+    }
+}
+
+#[test]
+fn v54_v55_string_arith_coercion_failure() {
+    // (b)+(c) string-arith failure: prefix present, operands labeled correctly.
+    // 5.4/5.5 share the string arithmetic metamethods and the
+    // `<op> a 'X' with a 'Y'` wording. (5.3 has no string-arith metamethods and
+    // uses the legacy `perform arithmetic on a <type> value` wording from a
+    // different VM path — version-gating that registration is out of #79 scope.)
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return ({}) - 'y'", "attempt to sub a 'table' with a 'string'");
+        err_contains(v, "return -'x'", "attempt to unm a 'string' with a 'string'");
+        // location prefix present on the string-arith path.
+        let e = run(v, "return ({}) - 'y'").unwrap_err();
+        let at = e.find("attempt").expect("message body present");
+        assert!(e[..at].contains(':'), "v{v:?} string-arith missing prefix: {e}");
+    }
+}
+
+#[test]
+fn v_table_concat_invalid_value_type_name() {
+    // (e) plain type name, no internal byte-array leak.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return table.concat({ {} })",
+            "invalid value (table) at index 1 in table for 'concat'");
+        // negative guard: the internal byte-array repr (e.g. `[116, 97, ...]`)
+        // must NOT appear. (The chunk-name prefix `[string "..."]` legitimately
+        // contains brackets, so look specifically for the comma-separated digit
+        // list that the old `{:?}` Debug-format on `&[u8]` produced.)
+        let e = run(v, "return table.concat({ {} })").unwrap_err();
+        assert!(!e.contains("116, 97"), "v{v:?} concat leaked byte-array: {e}");
+    }
+}

@@ -242,8 +242,10 @@ fn math_toint(state: &mut LuaState) -> Result<usize, LuaError> {
         state.push(LuaValue::Int(n));
     } else {
         state.check_any(1)?;
-        // PORT NOTE: luaL_pushfail in Lua 5.4 pushes false (not nil).
-        state.push(LuaValue::Bool(false));
+        // luaL_pushfail expands to lua_pushnil in the default 5.3/5.4/5.5
+        // builds; only a LUA_FAILISFALSE build pushes false, which the oracle
+        // contract pins off.
+        state.push(LuaValue::Nil);
     }
     Ok(1)
 }
@@ -415,7 +417,7 @@ fn math_max(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-/// `math.type(x)` — return `"integer"`, `"float"`, or false for non-numbers.
+/// `math.type(x)` — return `"integer"`, `"float"`, or nil for non-numbers.
 ///
 fn math_type(state: &mut LuaState) -> Result<usize, LuaError> {
     if matches!(state.type_at(1), LuaType::Number) {
@@ -426,8 +428,10 @@ fn math_type(state: &mut LuaState) -> Result<usize, LuaError> {
         }
     } else {
         state.check_any(1)?;
-        // PORT NOTE: luaL_pushfail pushes false in Lua 5.4.4+.
-        state.push(LuaValue::Bool(false));
+        // luaL_pushfail expands to lua_pushnil in the default 5.3/5.4/5.5
+        // builds; only a LUA_FAILISFALSE build pushes false, which the oracle
+        // contract pins off.
+        state.push(LuaValue::Nil);
     }
     Ok(1)
 }

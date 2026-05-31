@@ -389,6 +389,8 @@ pub fn type_error_arg(
         bytes
     } else if state.type_at(arg) == LuaType::LightUserData {
         b"light userdata".to_vec()
+    } else if state.type_at(arg) == LuaType::None {
+        b"no value".to_vec()
     } else {
         state.type_name_at(arg).to_vec()
     };

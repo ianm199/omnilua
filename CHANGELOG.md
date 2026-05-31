@@ -4,6 +4,32 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.20] - 2026-05-31
+
+### Fixed — reference-fidelity bugs surfaced by the multi-version oracle
+
+Cross-version bugs found by diffing against the upstream reference binaries
+(present before the multi-version work; they affected 5.3/5.4/5.5):
+
+- `math.type` / `math.tointeger` now return `nil` (a `fail`), not `false`, so
+  `== nil` guards and truthiness behave as the manual specifies (#76).
+- `string.find` with a magic-character pattern and no explicit captures no
+  longer returns a spurious trailing empty value — arity matches the reference
+  (#77).
+- `__le` is derived from `__lt` (`a <= b` ⇒ `not (b < a)`) on 5.1–5.4 (matching
+  the default `LUA_COMPAT_LT_LE` reference builds) and raises on 5.5 (#78).
+- Error-message fidelity: `bad argument` errors carry the `to '<fn>'` qualifier
+  and `got no value` for absent args; length/concat/string-arithmetic errors
+  carry the `(command line):N:` location prefix; arithmetic metamethod-failure
+  messages report the correct operand types; `table.concat` reports `(table)`
+  instead of leaking an internal byte-array (#79).
+
+### Changed
+
+- CI: the release workflow's npm `verify registry install` step now retries with
+  backoff so registry propagation lag no longer fails an otherwise-successful
+  publish (#80).
+
 ## [0.0.19] - 2026-05-31
 
 ### Added — multi-version support: Lua 5.3 and 5.5 (alpha)

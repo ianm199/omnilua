@@ -173,6 +173,67 @@ fn v53_rejects_attribute_syntax() {
     err_contains(LuaVersion::V53, "local x <const> = 1; return x", "unexpected symbol");
 }
 
+/// `LUA_COMPAT_MATHLIB` roster (issue #19; `specs/followup/5.3-math.md`).
+///
+/// Per-version presence verified directly against the reference binaries:
+/// `atan2/cosh/sinh/tanh/pow/log10` are in the default lua5.3.6 AND lua5.4.7
+/// builds (5.4's `LUA_COMPAT_5_3` umbrella enables `LUA_COMPAT_MATHLIB`) but
+/// gone in lua5.5.0; `frexp`/`ldexp` survive into 5.5 (registered outside the
+/// compat `#if` in lua5.5.0's `lmathlib.c`). Values are `%.14g` tostring,
+/// captured from the oracle.
+#[test]
+fn v53_compat_math_present_and_correct() {
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        for name in ["atan2", "cosh", "sinh", "tanh", "pow", "log10", "frexp", "ldexp"] {
+            eq(v, &format!("return type(math.{name})"), "function");
+        }
+    }
+    // Exact values (5.3; identical on 5.4 — same C wrappers).
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        eq(v, "return math.cosh(1)", "1.5430806348152");
+        eq(v, "return math.sinh(1)", "1.1752011936438");
+        eq(v, "return math.tanh(1)", "0.76159415595576");
+        eq(v, "return math.pow(2, 0.5)", "1.4142135623731");
+        // pow always returns a float, even with integer-valued result.
+        eq(v, "return math.pow(2, 3)", "8.0");
+        eq(v, "return math.type(math.pow(2, 3))", "float");
+        eq(v, "return math.log10(1000)", "3.0");
+        eq(v, "return math.ldexp(0.5, 3)", "4.0");
+        eq(v, "return math.ldexp(1.0, -1)", "0.5");
+        // ldexp must reach subnormals (naive x*2^e underflows the factor).
+        eq(v, "return math.ldexp(1.0, -1074)", "4.9406564584125e-324");
+        // frexp returns (float mantissa, integer exponent).
+        eq(v, "local m, e = math.frexp(8.0); return m", "0.5");
+        eq(v, "local m, e = math.frexp(8.0); return e", "4");
+        eq(v, "local m, e = math.frexp(8.0); return math.type(m)", "float");
+        eq(v, "local m, e = math.frexp(8.0); return math.type(e)", "integer");
+        eq(v, "local m, e = math.frexp(0.0); return tostring(m) .. ',' .. tostring(e)", "0.0,0");
+        // atan2 is the math_atan alias (two-arg form).
+        eq(v, "return math.atan2(1, 1) == math.atan(1, 1)", "true");
+        eq(v, "return math.atan2(1, 0) == math.atan(1, 0)", "true");
+        // Arg errors name the function.
+        err_contains(v, "return math.cosh('x')", "bad argument #1 to 'cosh'");
+        err_contains(v, "return math.pow(2)", "bad argument #2 to 'pow'");
+    }
+}
+
+/// No-cross-version-regression guard for the compat-math roster.
+///
+/// In lua5.5.0 the six `LUA_COMPAT_MATHLIB` functions are gone, but `frexp`
+/// and `ldexp` remain (moved outside the compat `#if`). All values verified
+/// against lua5.5.0.
+#[test]
+fn v55_compat_math_partition() {
+    for name in ["atan2", "cosh", "sinh", "tanh", "pow", "log10"] {
+        eq(LuaVersion::V55, &format!("return type(math.{name})"), "nil");
+    }
+    for name in ["frexp", "ldexp"] {
+        eq(LuaVersion::V55, &format!("return type(math.{name})"), "function");
+    }
+    eq(LuaVersion::V55, "return math.ldexp(0.5, 3)", "4.0");
+    eq(LuaVersion::V55, "local m, e = math.frexp(8.0); return tostring(m) .. ',' .. tostring(e)", "0.5,4");
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 5.4 regression guard — these must NOT drift (the multiversion work is
 // required to leave 5.4 byte-identical to lua5.4.7 on these).

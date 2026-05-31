@@ -171,13 +171,18 @@ enum KOption {
 struct Header {
     is_little: bool,
     max_align: usize,
+    /// 5.5 widened `c`/`s`-size parsing from `int` (5.3/5.4) to `size_t`, so
+    /// `c<huge>` numerals that overflowed `int` (and tripped "invalid format
+    /// option '<digit>'") are now accepted up to `LUA_MAXINTEGER`.
+    wide_size: bool,
 }
 
 impl Header {
-    fn new() -> Self {
+    fn new(wide_size: bool) -> Self {
         Header {
             is_little: cfg!(target_endian = "little"),
             max_align: 1,
+            wide_size,
         }
     }
 }
@@ -2057,6 +2062,17 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
         while i < fmt_bytes.len() && b"-+#0 ".contains(&fmt_bytes[i]) {
             i += 1;
         }
+        // Lua 5.3 `scanformat`: the flags buffer is `FLAGS = "-+ #0"`, so a flags
+        // run of `sizeof(FLAGS) == 6` or more characters is "repeated flags".
+        // 5.4/5.5 fold this into the single "(too long)" check below.
+        if state.global().lua_version == lua_types::LuaVersion::V53
+            && i - (spec_start + 1) >= 6
+        {
+            return Err(lua_vm::debug::c_api_runtime(
+                state,
+                b"invalid format (repeated flags)".to_vec(),
+            ));
+        }
         // Skip width digits
         if i < fmt_bytes.len() && fmt_bytes[i] != b'0' {
             while i < fmt_bytes.len() && fmt_bytes[i].is_ascii_digit() {
@@ -2237,15 +2253,21 @@ fn is_digit(c: u8) -> bool {
 
 /// Read an optional integer from the format string, returning `df` if absent.
 ///
-fn getnum(fmt: &[u8], pos: &mut usize, df: i32) -> i32 {
+/// `wide` selects the accumulator width: 5.3/5.4 used `int` (cap `i32::MAX`);
+/// 5.5 uses `size_t` (cap the host pointer width). The reference stops consuming
+/// digits once another `*10 + 9` would overflow, leaving the rest to be read as
+/// the next option — which is why `c<int-overflow>` yields "invalid format
+/// option '<digit>'" on 5.3/5.4 but parses cleanly on 5.5.
+fn getnum(fmt: &[u8], pos: &mut usize, df: i64, wide: bool) -> i64 {
     if *pos >= fmt.len() || !is_digit(fmt[*pos]) {
         return df;
     }
-    let mut a = 0i32;
+    let cap: i64 = if wide { i64::MAX } else { i32::MAX as i64 };
+    let mut a = 0i64;
     while *pos < fmt.len() && is_digit(fmt[*pos]) {
-        a = a * 10 + (fmt[*pos] - b'0') as i32;
+        a = a * 10 + (fmt[*pos] - b'0') as i64;
         *pos += 1;
-        if a > (i32::MAX - 9) / 10 {
+        if a > (cap - 9) / 10 {
             break;
         }
     }
@@ -2254,9 +2276,9 @@ fn getnum(fmt: &[u8], pos: &mut usize, df: i32) -> i32 {
 
 /// Read an integer from the format string, error if out of `[1, MAXINTSIZE]`.
 ///
-fn getnumlimit(fmt: &[u8], pos: &mut usize, df: i32) -> Result<usize, LuaError> {
-    let sz = getnum(fmt, pos, df);
-    if sz > MAX_INT_SIZE as i32 || sz <= 0 {
+fn getnumlimit(fmt: &[u8], pos: &mut usize, df: i64) -> Result<usize, LuaError> {
+    let sz = getnum(fmt, pos, df, false);
+    if sz > MAX_INT_SIZE as i64 || sz <= 0 {
         return Err(LuaError::runtime(format_args!(
             "integral size ({}) out of limits [1,{}]",
             sz, MAX_INT_SIZE
@@ -2293,9 +2315,9 @@ fn getoption(h: &mut Header, fmt: &[u8], pos: &mut usize, size: &mut usize) -> R
         b'd' => { *size = 8; Ok(KOption::Double) }  // sizeof(double) = 8
         b'i' => { *size = getnumlimit(fmt, pos, 4)?; Ok(KOption::Int) }
         b'I' => { *size = getnumlimit(fmt, pos, 4)?; Ok(KOption::Uint) }
-        b's' => { *size = getnumlimit(fmt, pos, std::mem::size_of::<usize>()  as i32)?; Ok(KOption::Kstring) }
+        b's' => { *size = getnumlimit(fmt, pos, std::mem::size_of::<usize>()  as i64)?; Ok(KOption::Kstring) }
         b'c' => {
-            let n = getnum(fmt, pos, -1);
+            let n = getnum(fmt, pos, -1, h.wide_size);
             if n == -1 {
                 return Err(LuaError::runtime(format_args!("missing size for format option 'c'")));
             }
@@ -2310,7 +2332,7 @@ fn getoption(h: &mut Header, fmt: &[u8], pos: &mut usize, size: &mut usize) -> R
         b'>' => { h.is_little = false; Ok(KOption::Nop) }
         b'=' => { h.is_little = cfg!(target_endian = "little"); Ok(KOption::Nop) }
         b'!' => {
-            let n = getnum(fmt, pos, NATIVE_MAX_ALIGN as i32);
+            let n = getnum(fmt, pos, NATIVE_MAX_ALIGN as i64, false);
             h.max_align = getnumlimit(fmt, pos, n)?;
             Ok(KOption::Nop)
         }
@@ -2425,7 +2447,7 @@ fn unpackint(_state: &LuaState, data: &[u8], is_little: bool, size: usize, is_si
 pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
     let fmt_bytes = state.check_arg_string(1)?.to_vec();
     let fmt = &fmt_bytes[..];
-    let mut h = Header::new();
+    let mut h = Header::new(state.global().lua_version == lua_types::LuaVersion::V55);
     let mut arg = 1i32;
     let mut total_size = 0usize;
     let mut buf: Vec<u8> = Vec::new();
@@ -2435,6 +2457,15 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
         let mut size = 0usize;
         let mut ntoalign = 0usize;
         let opt = getdetails(state, &mut h, total_size, fmt, &mut pos, &mut size, &mut ntoalign)?;
+        // 5.5 `str_pack` rejects an oversized running total ("result too long")
+        // BEFORE consuming the value argument; 5.3/5.4 have no such check (their
+        // `int` sizes cannot reach the limit). MAX_SIZE is the host pointer width.
+        if h.wide_size {
+            let space = ntoalign + size;
+            if space > (i64::MAX as usize) || total_size > (i64::MAX as usize) - space {
+                return Err(lua_vm::debug::arg_error_impl(state, arg, b"result too long"));
+            }
+        }
         total_size += ntoalign + size;
         for _ in 0..ntoalign {
             buf.push(PACK_PAD_BYTE);
@@ -2529,7 +2560,7 @@ pub fn str_pack(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn str_packsize(state: &mut LuaState) -> Result<usize, LuaError> {
     let fmt_bytes = state.check_arg_string(1)?.to_vec();
     let fmt = &fmt_bytes[..];
-    let mut h = Header::new();
+    let mut h = Header::new(state.global().lua_version == lua_types::LuaVersion::V55);
     let mut total_size = 0usize;
     let mut pos = 0usize;
 
@@ -2541,7 +2572,12 @@ pub fn str_packsize(state: &mut LuaState) -> Result<usize, LuaError> {
             return Err(lua_vm::debug::arg_error_impl(state, 1, b"variable-length format"));
         }
         let space = ntoalign + size;
-        if total_size > PACK_MAXSIZE - space {
+        let max_total: usize = if h.wide_size {
+            i64::MAX as usize
+        } else {
+            PACK_MAXSIZE
+        };
+        if space > max_total || total_size > max_total - space {
             return Err(lua_vm::debug::arg_error_impl(state, 1, b"format result too large"));
         }
         total_size += space;
@@ -2569,7 +2605,7 @@ pub fn str_unpack(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let fmt = &fmt_bytes[..];
     let data = &data_bytes[..];
-    let mut h = Header::new();
+    let mut h = Header::new(state.global().lua_version == lua_types::LuaVersion::V55);
     let mut fmt_pos = 0usize;
     let mut n = 0usize;
 

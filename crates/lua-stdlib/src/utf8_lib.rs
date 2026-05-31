@@ -306,7 +306,12 @@ fn codepoint(state: &mut LuaState) -> Result<usize, LuaError> {
 fn get_utf_char_bytes(state: &mut LuaState, arg: i32) -> Result<Vec<u8>, LuaError> {
     let code = state.check_arg_integer(arg)? as u64;
 
-    if code > MAX_UTF as u64 {
+    let max_code: u64 = if state.global().lua_version == lua_types::LuaVersion::V53 {
+        0x10FFFF
+    } else {
+        MAX_UTF as u64
+    };
+    if code > max_code {
         return crate::auxlib::arg_error(state, arg, b"value out of range").map(|_| Vec::new());
     }
 

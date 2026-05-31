@@ -1161,3 +1161,147 @@ fn v54_v55_print_ignores_global_tostring() {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `utf8.char` codepoint ceiling is version-split. 5.3 rejects
+// codepoints above 0x10FFFF ("value out of range"); 5.4/5.5 widened the encoder
+// to accept up to 0x7FFFFFFF (the lax extended-UTF-8 range), rejecting only
+// above that. Distinct from the *lexer* `\u{}` ceiling (item D). Reproduced
+// against the reference binaries via `specs/oracle/diff_one.sh`; blocks the
+// `utf8.lua:151` `checkerror("value out of range", ...)` on 5.3.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_utf8_char_caps_at_10ffff() {
+    eq(LuaVersion::V53, "return #utf8.char(0x10FFFF)", "4");
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(utf8.char, 0x110000); error(e, 0)",
+        "value out of range",
+    );
+}
+
+#[test]
+fn v54_v55_utf8_char_caps_at_7fffffff() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return #utf8.char(0x110000)", "4");
+        eq(v, "return #utf8.char(0x7FFFFFFF)", "6");
+        err_contains(
+            v,
+            "local ok, e = pcall(utf8.char, 0x80000000); error(e, 0)",
+            "value out of range",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `string.format` spec-scanner error wording is version-split.
+// 5.3 `scanformat` raises "invalid format (repeated flags)" when the flag run
+// reaches `sizeof(FLAGS) == 6` characters; 5.4/5.5 `getformat` fold this into a
+// single "invalid format (too long)". Blocks `strings.lua:303`. Captured from
+// the reference binaries.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_format_repeated_flags() {
+    err_contains(
+        LuaVersion::V53,
+        "local aux = string.rep('0', 600); local ok, e = pcall(string.format, '%'..aux..'d', 10); error(e, 0)",
+        "invalid format (repeated flags)",
+    );
+}
+
+#[test]
+fn v54_v55_format_too_long() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(
+            v,
+            "local aux = string.rep('0', 600); local ok, e = pcall(string.format, '%'..aux..'d', 10); error(e, 0)",
+            "invalid format (too long)",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `string.pack`/`packsize` `c<n>` size parsing is version-split.
+// 5.3/5.4 read the size into a C `int`; a huge numeral overflows it and the
+// trailing digit is mis-read as a new option ("invalid format option '<d>'").
+// 5.5 widened `getnum` to `size_t`, so `c<near-maxinteger>` parses cleanly and
+// is bounded by the running-total checks ("format result too large" for
+// `packsize`, "result too long" for `pack`). Blocks `tpack.lua` on 5.5.
+// Captured from the reference binaries.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_v54_pack_csize_overflows_int() {
+    for v in [LuaVersion::V53, LuaVersion::V54] {
+        err_contains(
+            v,
+            "local f = string.format('c%d', math.maxinteger - 9); local ok, e = pcall(string.packsize, f); error(e, 0)",
+            "invalid format option '6'",
+        );
+    }
+}
+
+#[test]
+fn v55_pack_csize_wide() {
+    // The near-maxinteger size parses and packsize returns it.
+    eq(
+        LuaVersion::V55,
+        "return string.packsize(string.format('c%d', math.maxinteger - 9))",
+        "9223372036854775798",
+    );
+    // packsize running total overflow.
+    err_contains(
+        LuaVersion::V55,
+        "local f = string.format('c%dc10', math.maxinteger - 9); local ok, e = pcall(string.packsize, f); error(e, 0)",
+        "format result too large",
+    );
+    // pack running total overflow ("result too long"), reported on arg #1.
+    err_contains(
+        LuaVersion::V55,
+        "local f = string.format('xxxxxxxxxx c%d', math.maxinteger - 9); local ok, e = pcall(string.pack, f); error(e, 0)",
+        "result too long",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared-core: `math.random` argument handling is version-split. 5.3 treats
+// `random(N)` as `[1, N]` (so `random(0)` is the empty `[1, 0]`) and rejects
+// intervals whose width overflows a signed integer
+// (`low >= 0 || up <= LUA_MAXINTEGER + low` else "interval too large"). 5.4/5.5
+// rewrote the generator around a `project` bit-mask: `random(0)` returns a
+// full-range integer and any interval is accepted. Blocks `math.lua` on 5.3.
+// Captured from the reference binaries.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v53_random_interval_guards() {
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, 0); error(e, 0)",
+        "interval is empty",
+    );
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, math.mininteger, 0); error(e, 0)",
+        "interval too large",
+    );
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, -1, math.maxinteger); error(e, 0)",
+        "interval too large",
+    );
+    // A normal interval still works.
+    eq(LuaVersion::V53, "local r = math.random(1, 6); return r >= 1 and r <= 6", "true");
+}
+
+#[test]
+fn v54_v55_random_zero_and_full_range() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        // random(0) returns a full-range integer (no error).
+        eq(v, "return math.type(math.random(0))", "integer");
+        // Full integer range is accepted.
+        eq(v, "return math.type(math.random(math.mininteger, math.maxinteger))", "integer");
+    }
+}

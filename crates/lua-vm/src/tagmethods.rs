@@ -486,6 +486,57 @@ pub(crate) fn try_bin_tm(
     res: StackIdx,
     event: TagMethod,
 ) -> Result<(), LuaError> {
+    // Lua 5.3 arith error wording. In the shared (5.4) model, arithmetic
+    // metamethods (`__add`/`__sub`/…) are installed on the string metatable, so
+    // a failed arithmetic fast path that has a string operand dispatches to the
+    // string-library `trymt`, which raises `attempt to <op> a '<t>' with a
+    // '<t>'` and a spurious `[C]: in metamethod '<op>'` frame, and cannot
+    // produce operand varinfo (it runs as a C function with no access to the
+    // calling bytecode's registers). 5.3 instead owns arithmetic string
+    // coercion in the core: when the operation cannot succeed it raises
+    // `attempt to perform arithmetic on a <type> value (<varinfo>)`, pointing at
+    // the operand that is not a number, from the core path.
+    //
+    // On the 5.3 path, the string metamethod is only reached when an operand is
+    // a string. If the operation cannot succeed (some operand does not coerce to
+    // a number — a non-numeric string like `"abc"`, or a genuine non-number such
+    // as `nil`/table paired with a coercible string), raise the core error here
+    // (which has the operand registers for varinfo), bypassing the string
+    // metamethod. The coercible success path (`"3" + 2`) still flows through the
+    // metamethod below, preserving 5.3 float-promotion semantics.
+    // See specs/followup/5.3-coerce-err.md.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V53)
+        && matches!(
+            event,
+            TagMethod::Add
+                | TagMethod::Sub
+                | TagMethod::Mul
+                | TagMethod::Mod
+                | TagMethod::Pow
+                | TagMethod::Div
+                | TagMethod::IDiv
+                | TagMethod::Unm
+        )
+        && (matches!(p1, LuaValue::Str(_)) || matches!(p2, LuaValue::Str(_)))
+    {
+        use crate::state::LuaValueExt;
+        let p1_num = p1.to_number_with_strconv().is_some();
+        let p2_num = p2.to_number_with_strconv().is_some();
+        if !(p1_num && p2_num) {
+            // Point varinfo at the operand that does not coerce to a number,
+            // matching C `luaG_opinterror` (which tests `ttisnumber` after the
+            // 5.3 in-core string→number coercion). A coercible numeric string
+            // counts as a number here, so `'2' * nil` blames `nil`, not `'2'`.
+            let (bad, bad_idx) = if !p1_num {
+                (p1, p1_idx.unwrap_or(StackIdx(0)))
+            } else {
+                (p2, p2_idx.unwrap_or(StackIdx(0)))
+            };
+            return Err(crate::debug::type_error(
+                state, bad, bad_idx, b"perform arithmetic on",
+            ));
+        }
+    }
     if !call_bin_tm(state, p1, p2, res, event)? {
         // Lua 5.3 coerces numeric strings to integers in the *core* bitwise
         // ops (`& | ~ << >>` and unary `~`), where 5.4/5.5 require a real

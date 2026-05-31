@@ -194,6 +194,80 @@ fn v54_v55_bitwise_no_string_coercion() {
     }
 }
 
+/// 5.3 arith-on-non-coercible-string error wording. In the shared (5.4) model
+/// arithmetic metamethods live on the string metatable and the failure message
+/// is `attempt to <op> a '<t>' with a '<t>'` (no operand varinfo). 5.3 owns the
+/// coercion in the core and raises `attempt to perform arithmetic on a <type>
+/// value (<varinfo>)`, blaming the operand that is not a number. All wordings
+/// captured from lua5.3.6 (see `specs/followup/5.3-coerce-err.md`).
+#[test]
+fn v53_arith_string_error_wording() {
+    err_contains(
+        LuaVersion::V53,
+        r#"return "abc" + 1"#,
+        "attempt to perform arithmetic on a string value",
+    );
+    err_contains(
+        LuaVersion::V53,
+        r#"return "abc" * 2"#,
+        "attempt to perform arithmetic on a string value",
+    );
+    err_contains(
+        LuaVersion::V53,
+        r#"return -"x""#,
+        "attempt to perform arithmetic on a string value",
+    );
+    // Varinfo comes from the VM call site (local/global/constant).
+    err_contains(LuaVersion::V53, r#"local x="a"; return x+1"#, "(local 'x')");
+    err_contains(LuaVersion::V53, r#"aaa="z"; return aaa+1"#, "(global 'aaa')");
+    // A coercible string paired with a genuine non-number blames the
+    // non-number operand, matching `luaG_opinterror` (errors.lua:102).
+    err_contains(
+        LuaVersion::V53,
+        r#"aaa="2"; b=nil; return aaa*b"#,
+        "attempt to perform arithmetic on a nil value (global 'b')",
+    );
+    // 5.3 successful string→number arith coercion still works (guard against
+    // the fix accidentally stealing the success path). 5.1–5.3 always promote a
+    // string operand to float in arithmetic, so the result type is `float` even
+    // for integer-looking strings (verified vs lua5.3.6).
+    eq(LuaVersion::V53, r#"return math.type("1"+"2")"#, "float");
+    eq(LuaVersion::V53, r#"return math.type("1.0"+"2")"#, "float");
+    eq(LuaVersion::V53, r#"return "3" + 2"#, "5.0");
+}
+
+/// Cross-version non-regression: 5.4/5.5 keep the string-metamethod arith
+/// wording (`attempt to add a 'string' with a 'number'`) and must NOT switch to
+/// the 5.3 core wording.
+#[test]
+fn v54_v55_arith_string_wording_unchanged() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, r#"return "abc" + 1"#, "attempt to add a 'string' with a 'number'");
+        err_contains(v, r#"aaa="2"; b=nil; return aaa*b"#, "attempt to mul a 'string' with a 'nil'");
+    }
+}
+
+/// 5.3 `for`-loop non-number bound wording is the older `'for' <what> must be a
+/// number`; 5.4/5.5 reworded it to `bad 'for' <what> (number expected, got
+/// <type>)`. Captured from lua5.3.6 / lua5.4.7 / lua5.5.0.
+#[test]
+fn v53_for_loop_error_wording() {
+    err_contains(LuaVersion::V53, "for i=1,'a' do end", "'for' limit must be a number");
+    err_contains(LuaVersion::V53, "for i='a',10 do end", "'for' initial value must be a number");
+    err_contains(LuaVersion::V53, "for i=1,10,'a' do end", "'for' step must be a number");
+}
+
+/// Cross-version non-regression: 5.4/5.5 keep the `bad 'for' <what> (number
+/// expected, got <type>)` wording.
+#[test]
+fn v54_v55_for_loop_error_wording_unchanged() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "for i=1,'a' do end", "bad 'for' limit (number expected, got string)");
+        err_contains(v, "for i='a',10 do end", "bad 'for' initial value (number expected, got string)");
+        err_contains(v, "for i=1,10,'a' do end", "bad 'for' step (number expected, got string)");
+    }
+}
+
 #[test]
 fn v53_removed_builtins_absent() {
     eq(LuaVersion::V53, "return type(warn)", "nil");

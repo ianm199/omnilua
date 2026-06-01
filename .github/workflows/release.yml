@@ -31,9 +31,24 @@ jobs:
       - name: make test
         run: make test
 
+  windows-build:
+    name: build on windows (msvc)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Gate releases on a real Windows compile. The published crates must build
+      # on the MSVC target (issue #90: `os.date` local-offset used `localtime_r`
+      # /`tm_gmtoff`, both absent on Windows). Excludes the wasm-only crates,
+      # which are not published to crates.io and ship via the npm/wasm path.
+      - name: cargo build (workspace, windows)
+        run: cargo build --workspace --exclude lua-wasm --exclude lua-wasm-smoke
+
   publish-crates:
     name: publish to crates.io
-    needs: verify
+    needs: [verify, windows-build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

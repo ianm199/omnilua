@@ -376,10 +376,14 @@ fn cpu_clock_hook() -> f64 {
 }
 
 /// Returns the host's local timezone offset (seconds east of UTC) at instant
-/// `t`, matching C `os.date`/`os.time` local-time semantics. Reproduces
-/// `localtime_r` and reads `tm_gmtoff`, the broken-down time's UTC offset
-/// (already accounting for DST). On the rare platforms without `tm_gmtoff`
-/// (none we target) this would need a `timegm` round-trip instead.
+/// `t`, matching C `os.date`/`os.time` local-time semantics (DST included).
+///
+/// Unix reproduces C directly: `localtime_r` fills a `struct tm` whose
+/// `tm_gmtoff` field is the offset. Windows' MSVCRT `struct tm` has no
+/// `tm_gmtoff` (and libc exposes no `localtime_r`), so the Windows arm below
+/// derives the same value by decomposing `t` as both local and UTC and
+/// differencing the two wall clocks.
+#[cfg(not(windows))]
 fn local_offset_hook(t: i64) -> i64 {
     // SAFETY: `localtime_r` writes a fully-initialised `struct tm` into the
     // stack-allocated `tm` and returns a pointer to it (or null on failure).
@@ -394,6 +398,42 @@ fn local_offset_hook(t: i64) -> i64 {
         } else {
             tm.tm_gmtoff as i64
         }
+    }
+}
+
+/// Windows local timezone offset. MSVCRT's libc exposes neither `localtime_r`
+/// nor a `tm_gmtoff` field nor `mktime`, so we cannot read the offset directly.
+/// Instead we decompose the same instant `t` two ways — `localtime_s` (local
+/// wall clock) and `gmtime_s` (UTC wall clock) — and return their difference in
+/// seconds. A timezone offset is always within ±24h, so the day component is at
+/// most ±1 day and is recovered from `tm_yday` (with a year-boundary correction
+/// when the two decompositions fall on either side of Jan 1).
+#[cfg(windows)]
+fn local_offset_hook(t: i64) -> i64 {
+    // SAFETY: `localtime_s`/`gmtime_s` each write a fully-initialised `struct
+    // tm` into the stack-allocated slot and return 0 on success. We pass valid
+    // pointers; nothing escapes the calls. On any error return we report offset
+    // 0 (UTC), the safe degenerate matching the no-hook path.
+    unsafe {
+        let tt = t as libc::time_t;
+        let mut loc: libc::tm = std::mem::zeroed();
+        let mut utc: libc::tm = std::mem::zeroed();
+        if libc::localtime_s(&mut loc, &tt) != 0 || libc::gmtime_s(&mut utc, &tt) != 0 {
+            return 0;
+        }
+        let days = if loc.tm_year != utc.tm_year {
+            if loc.tm_year > utc.tm_year {
+                1
+            } else {
+                -1
+            }
+        } else {
+            (loc.tm_yday - utc.tm_yday) as i64
+        };
+        days * 86_400
+            + (loc.tm_hour - utc.tm_hour) as i64 * 3_600
+            + (loc.tm_min - utc.tm_min) as i64 * 60
+            + (loc.tm_sec - utc.tm_sec) as i64
     }
 }
 

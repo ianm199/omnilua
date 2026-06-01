@@ -593,24 +593,36 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
         return Ok(1);
     }
 
-    let is_v53 = state.global().lua_version == lua_types::LuaVersion::V53;
+    let version = state.global().lua_version;
+    let is_v53 = version == lua_types::LuaVersion::V53;
+    // 5.1/5.2 are float-only and use the C `rand()` contract: there is no
+    // `random(0)` full-range special case (that is a 5.4/5.5 addition), the
+    // empty-interval error for `random(m, n)` reports argument index 2 (the
+    // upper bound), and integer-valued results are pushed as `Float` to honour
+    // the never-construct-`Int` invariant under `FloatOnly`. See
+    // specs/followup/5.1-numbers-prng.md §"Impl seams".
+    let float_only = version.number_model() == lua_types::NumberModel::FloatOnly;
 
-    let (low, up) = match n_args {
+    let (low, up, empty_arg) = match n_args {
         1 => {
             let up = state.check_integer(1)?;
-            // 5.4/5.5 `random(0)` returns a full-range integer; 5.3 has no such
-            // special case — it is `[1, 0]`, an empty interval.
-            if up == 0 && !is_v53 {
+            // 5.4/5.5 `random(0)` returns a full-range integer; 5.1/5.2/5.3 have
+            // no such special case — it is `[1, 0]`, an empty interval.
+            if up == 0 && !is_v53 && !float_only {
                 // I2UInt(rv) = rv (trivial for u64)
                 state.push(LuaValue::Int(rv as i64));
                 return Ok(1);
             }
-            (1i64, up)
+            (1i64, up, 1)
         }
         2 => {
             let low = state.check_integer(1)?;
             let up = state.check_integer(2)?;
-            (low, up)
+            // 5.1's `luaL_checkint(L, 2)` for the upper bound means its
+            // empty-interval `luaL_argerror` reports argument #2; the modern
+            // bodies report #1.
+            let empty_arg = if float_only { 2 } else { 1 };
+            (low, up, empty_arg)
         }
         _ => {
             return Err(LuaError::runtime(format_args!(
@@ -620,7 +632,7 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
     };
 
     if low > up {
-        return Err(lua_vm::debug::arg_error_impl(state, 1, b"interval is empty"));
+        return Err(lua_vm::debug::arg_error_impl(state, empty_arg, b"interval is empty"));
     }
 
     // 5.3 `math_random` rejects intervals whose width overflows a signed integer
@@ -632,7 +644,12 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let range = (up as u64).wrapping_sub(low as u64);
     let p = project_from_upvalue(state, rv, range)?;
-    state.push(LuaValue::Int((p as u64).wrapping_add(low as u64) as i64));
+    let result = (p as u64).wrapping_add(low as u64) as i64;
+    if float_only {
+        state.push(LuaValue::Float(result as f64));
+    } else {
+        state.push(LuaValue::Int(result));
+    }
     Ok(1)
 }
 
@@ -640,12 +657,34 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 fn math_randomseed(state: &mut LuaState) -> Result<usize, LuaError> {
     // TODO(port): same upvalue userdata access issue as math_random.
+    //
+    // 5.1's `math.randomseed` is `l_srand((unsigned int)luaL_checknumber(L, 1))`:
+    // the seed argument is REQUIRED (no auto-seed when absent — a missing arg
+    // raises "number expected, got no value"), and the function returns **no**
+    // values (the seed-word push is a 5.4/5.5 behavior). 5.2 also requires the
+    // seed but its `luaL_checknumber` floors and likewise returns nothing; the
+    // modern (5.3+) bodies auto-seed when absent and return the two seed words.
+    // See specs/followup/5.1-numbers-prng.md.
+    let float_only =
+        state.global().lua_version.number_model() == lua_types::NumberModel::FloatOnly;
+
     if matches!(state.type_at(1), LuaType::None) {
+        if float_only {
+            // No auto-seed under 5.1/5.2; the missing arg is an error.
+            let n1 = state.check_integer(1)? as u64;
+            apply_set_seed_quiet(state, n1, 0);
+            return Ok(0);
+        }
         // randseed uses time(NULL) and address of L for entropy.
         apply_random_seed(state)?;
     } else {
         //    lua_Integer n2 = luaL_optinteger(L, 2, 0);
         let n1 = state.check_integer(1)? as u64;
+        if float_only {
+            // 5.1/5.2 take a single seed and return nothing.
+            apply_set_seed_quiet(state, n1, 0);
+            return Ok(0);
+        }
         let n2 = state.opt_integer(2, 0)? as u64;
         apply_set_seed(state, n1, n2)?;
     }
@@ -696,6 +735,14 @@ fn apply_set_seed(state: &mut LuaState, n1: u64, n2: u64) -> Result<(), LuaError
     state.push(LuaValue::Int(n1 as i64));
     state.push(LuaValue::Int(n2 as i64));
     Ok(())
+}
+
+/// Seed the PRNG without pushing the seed words onto the stack.
+///
+/// 5.1/5.2 `math.randomseed` returns no values, so its seeding path must not
+/// push (unlike the modern [`apply_set_seed`], which returns the two words).
+fn apply_set_seed_quiet(_state: &mut LuaState, n1: u64, n2: u64) {
+    RAN_STATE.with(|r| set_seed_words(&mut r.borrow_mut().s, n1, n2));
 }
 
 /// Register `math.random` and `math.randomseed` on the math library table at

@@ -1311,6 +1311,96 @@ fn v54_v55_random_zero_and_full_range() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// 5.1 `math.random`/`math.randomseed` PRNG contract (oracle = lua5.1.5).
+// 5.1 uses the C `rand()`/`srand()` model: NO `random(0)` full-range special
+// case (that empty interval errors), the `random(m, n)` empty-interval error
+// reports argument index 2 (the upper bound), `randomseed` REQUIRES its seed
+// argument (no auto-seed) and returns NO values, and integer-valued results
+// are plain `number`s (float-only, no `math.type`).
+//
+// The seeded random SEQUENCE is a KNOWN DOCUMENTED divergence: 5.1's host
+// `rand()` byte stream is platform-dependent and is not bit-matched here. Only
+// the contract — ranges, types, arg errors, return shapes — is asserted.
+// See specs/followup/5.1-numbers-prng.md.
+//
+// NOTE: 5.1 renders the function name as `'?'` for indirect (`pcall(fn,...)`)
+// calls where lua-rs renders the qualified name; that systematic indirect-call
+// name-recovery gap is tracked separately, so these assertions check the arg
+// INDEX and the error TEXT (which match), not the function-name token.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_random_contract() {
+    let v = LuaVersion::V51;
+    // random() ∈ [0, 1), is a number, and float-only (no math.type).
+    eq(v, "local r = math.random(); return type(r) .. ',' .. tostring(r >= 0 and r < 1)", "number,true");
+    eq(v, "return math.type", "nil");
+    // random(n) ∈ [1, n], integer-valued.
+    eq(v, "local r = math.random(10); return r >= 1 and r <= 10 and r == math.floor(r)", "true");
+    // random(m, n) ∈ [m, n].
+    eq(v, "local r = math.random(5, 8); return r >= 5 and r <= 8", "true");
+    // random(0) is an EMPTY interval [1, 0] — it errors (no 5.4 full-range case).
+    err_contains(v, "local ok, e = pcall(math.random, 0); error(e, 0)", "interval is empty");
+    // random(m, n) empty-interval error reports argument #2 (the upper bound).
+    err_contains(v, "local ok, e = pcall(math.random, 5, 2); error(e, 0)", "bad argument #2");
+    err_contains(v, "local ok, e = pcall(math.random, 5, 2); error(e, 0)", "interval is empty");
+    // Three args is "wrong number of arguments".
+    err_contains(v, "local ok, e = pcall(math.random, 1, 2, 3); error(e, 0)", "wrong number of arguments");
+}
+
+#[test]
+fn v51_randomseed_contract() {
+    let v = LuaVersion::V51;
+    // randomseed REQUIRES its seed argument — no auto-seed when absent.
+    err_contains(
+        v,
+        "local ok, e = pcall(math.randomseed); error(e, 0)",
+        "number expected, got no value",
+    );
+    err_contains(
+        v,
+        "local ok, e = pcall(math.randomseed, 'x'); error(e, 0)",
+        "number expected, got string",
+    );
+    err_contains(v, "local ok, e = pcall(math.randomseed); error(e, 0)", "bad argument #1");
+    // randomseed accepts a number and returns NO values.
+    eq(v, "return select('#', math.randomseed(42))", "0");
+    eq(v, "return select('#', math.randomseed(5))", "0");
+}
+
+#[test]
+fn v51_prng_non_regression_modern_unchanged() {
+    // The V51 gates must not alter the modern PRNG contract.
+    // 5.3: random(0) is empty-interval (no full-range), randomseed returns 2.
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, 0); error(e, 0)",
+        "interval is empty",
+    );
+    eq(LuaVersion::V53, "return select('#', math.randomseed(42))", "2");
+    // 5.4/5.5: random(0) is full-range integer; randomseed(N) returns 2 words;
+    // randomseed() auto-seeds (no required arg) and also returns 2.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return math.type(math.random(0))", "integer");
+        eq(v, "return select('#', math.randomseed(42))", "2");
+        eq(v, "return select('#', math.randomseed())", "2");
+    }
+    // 5.2 is float-only like 5.1: it shares the require-seed + void-return
+    // randomseed contract and the no-full-range random(0) error.
+    err_contains(
+        LuaVersion::V52,
+        "local ok, e = pcall(math.random, 0); error(e, 0)",
+        "interval is empty",
+    );
+    eq(LuaVersion::V52, "return select('#', math.randomseed(42))", "0");
+    err_contains(
+        LuaVersion::V52,
+        "local ok, e = pcall(math.randomseed); error(e, 0)",
+        "number expected, got no value",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 5.2 — the float-only + _ENV bridge to the legacy family. 5.2 reuses the
 // modern _ENV core but is FLOAT-ONLY (no integer subtype, no //, no bitwise
 // ops, no int-specific stdlib) and carries the 5.2 roster (bit32 present,

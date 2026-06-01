@@ -1,10 +1,11 @@
 # lua-rs-runtime
 
-Embed Lua 5.4 in a Rust program. `lua-rs-runtime` is the embedding API for
-[lua-rs](https://github.com/ianm199/lua-rs), a Lua 5.4 implementation written in
-safe Rust. Being pure Rust, it builds for `wasm32-unknown-unknown` and needs no
-C toolchain or `liblua`. It's young and it isn't LuaJIT, so if you need either,
-use `mlua`.
+Embed Lua in a Rust program. `lua-rs-runtime` is the embedding API for
+[lua-rs](https://github.com/ianm199/lua-rs), a pure-Rust Lua implementation that
+runs **Lua 5.1–5.5** from one API (`Lua::new()` is 5.4; `Lua::new_versioned`
+selects another). Being pure Rust, it builds for `wasm32-unknown-unknown` and
+needs no C toolchain or `liblua`. It's young and it isn't LuaJIT, so if you need
+either, use `mlua`.
 
 ```toml
 [dependencies]

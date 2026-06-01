@@ -1,8 +1,9 @@
 # lua-rs
 
-A Lua 5.4.7 interpreter written in Rust. Runs as a standalone binary with no C
-dependency, embeds in Rust programs and in the browser, and passes the full
-upstream PUC-Rio test suite (44/44).
+A pure-Rust Lua interpreter — one implementation that runs **Lua 5.1, 5.2, 5.3,
+5.4, and 5.5**, selected per instance. Runs as a standalone binary with no C
+dependency, embeds in Rust programs and in the browser. The stable 5.4 backend
+passes the full upstream PUC-Rio test suite (44/44).
 
 [![CI](https://github.com/ianm199/lua-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/ianm199/lua-rs/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/lua-cli.svg?label=crates.io%2Flua-cli)](https://crates.io/crates/lua-cli)
@@ -52,19 +53,35 @@ integration:
 [bevy-lua-rs-starter](https://github.com/ianm199/bevy-lua-rs-starter)
 ([live demo](https://ianm199.github.io/bevy-lua-rs-starter/)).
 
-## Multiple Lua versions (alpha)
+## Multiple Lua versions
 
-Beyond the stable 5.4, the same API runs Lua **5.3** and **5.5** — one binary,
-selected per instance:
+The same API and binary run **Lua 5.1 through 5.5**, selected per instance:
 
 ```rust
-let lua = Lua::new_versioned(LuaVersion::V53); // or V55; Lua::new() is 5.4
+let lua = Lua::new_versioned(LuaVersion::V51); // V51..V55; Lua::new() is 5.4
 ```
 
-The CLI selects with `LUA_RS_VERSION=5.3|5.4|5.5`. **Alpha:** 5.3/5.5 share 5.4's
-core and their headline features are verified against the upstream reference
-binaries, but each is incomplete — use 5.4 for production. See the
-[changelog](CHANGELOG.md) for what's covered. 5.1/5.2 are not yet supported.
+The CLI selects with `LUA_RS_VERSION=5.1|5.2|5.3|5.4|5.5`. All five share one
+core — the bytecode dispatch loop carries no per-version cost, so compute-bound
+code runs identically across versions; version differences (number model,
+globals model, stdlib roster, error wording) live in cold-path seams. Every
+version is verified against its unmodified upstream reference binary.
+
+Maturity, by version:
+
+- **5.4** — stable; passes the full upstream PUC-Rio suite (44/44).
+- **5.3 / 5.5** — beta; long tails closed (compat-math, error wording, `global`
+  declarations, named varargs, traceback fidelity), verified against the
+  reference. A few documented divergences remain (see the open issues).
+- **5.1 / 5.2** — supported, float-only number family (5.2 on the modern `_ENV`
+  globals model; 5.1 adds fenv globals). Verified against the reference binary
+  via a behavioral battery and the upstream example programs rather than a
+  bundled conformance suite, so treat them as the newest backends. `math.random`
+  sequences differ (host PRNG); see the [changelog](CHANGELOG.md).
+
+Use 5.4 for production; the others are good for running version-specific scripts
+and for the embedding use cases the [playbook](specs/MULTIVERSION_PLAYBOOK.md)
+describes.
 
 ## Running untrusted Lua
 

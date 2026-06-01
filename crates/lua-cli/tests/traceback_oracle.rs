@@ -742,3 +742,69 @@ fn gc_finalizer_error_disposition_via_cli() {
         }
     }
 }
+
+/// The warning subsystem (shared-core item 3, the 5.4/5.5 half). lua-rs
+/// previously never installed the default `warnf` chain, so neither the
+/// `warn()` builtin nor an erroring `__gc` finalizer emitted anything. This
+/// drives the `warnfoff`/`warnfon`/`warnfcont` state machine end-to-end
+/// through the spawned CLI and diffs stderr against the reference binary.
+///
+///   - `warn("@on")` then `warn(parts...)` prints `Lua warning: ...` lines.
+///   - `warn("@off")` suppresses subsequent warnings.
+///   - With warnings on, an erroring `__gc` emits `Lua warning: error in __gc
+///     (...)` while `pcall(collectgarbage)` still returns ok.
+/// 5.3 has no `warn`; this is a 5.4/5.5 contract.
+#[test]
+fn warn_subsystem_via_cli() {
+    const PROG: &str = "\
+        warn('@on')\n\
+        warn('hello')\n\
+        warn('a', 'b', 'c')\n\
+        warn('@off')\n\
+        warn('suppressed')\n\
+        warn('@on')\n\
+        do local x = setmetatable({}, {__gc = function() error('boom') end}); x = nil end\n\
+        local ok = pcall(collectgarbage)\n\
+        io.write('done|', tostring(ok), '\\n')\n";
+
+    for &v in VERSIONS {
+        if v == "5.3" {
+            continue;
+        }
+        let out = lua_rs()
+            .env("LUA_RS_VERSION", v)
+            .arg("-e")
+            .arg(PROG)
+            .output()
+            .expect("spawn lua-rs -e");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+
+        assert!(stdout.contains("done|true"), "[warn/{v}] stdout `{stdout}`");
+        assert!(
+            stderr.contains("Lua warning: hello")
+                && stderr.contains("Lua warning: abc")
+                && !stderr.contains("suppressed")
+                && stderr.contains("Lua warning: error in __gc ("),
+            "[warn/{v}] stderr did not match the expected warning sequence: `{stderr}`"
+        );
+
+        if let Some(refbin) = reference_binary(v) {
+            let rout = Command::new(&refbin)
+                .arg("-e")
+                .arg(PROG)
+                .output()
+                .expect("spawn reference");
+            assert_eq!(
+                stderr,
+                String::from_utf8_lossy(&rout.stderr),
+                "[warn/{v}] stderr must match reference"
+            );
+            assert_eq!(
+                stdout,
+                String::from_utf8_lossy(&rout.stdout),
+                "[warn/{v}] stdout must match reference"
+            );
+        }
+    }
+}

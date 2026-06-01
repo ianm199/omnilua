@@ -2859,16 +2859,21 @@ fn enter_block(ls: &mut LexState, isloop: bool) {
     });
 }
 
-fn undef_goto(ls: &LexState, gt_idx: usize) -> LuaError {
-    let gt = &ls.dyd.gt[gt_idx];
-    let line = gt.line;
-    let name_bytes: &[u8] = gt.name.as_ref().map(|n| n.as_bytes()).unwrap_or(b"");
-    if name_bytes == b"break" {
-        LuaError::syntax(format_args!("break outside loop at line {}", line))
+fn undef_goto(ls: &mut LexState, gt_idx: usize) -> LuaError {
+    let (line, name_bytes): (i32, Vec<u8>) = {
+        let gt = &ls.dyd.gt[gt_idx];
+        (
+            gt.line,
+            gt.name.as_ref().map(|n| n.as_bytes().to_vec()).unwrap_or_default(),
+        )
+    };
+    let msg = if name_bytes == b"break" {
+        format!("break outside loop at line {}", line)
     } else {
-        let name_str = String::from_utf8_lossy(name_bytes);
-        LuaError::syntax(format_args!("no visible label '{}' for <goto> at line {}", name_str, line))
-    }
+        let name_str = String::from_utf8_lossy(&name_bytes);
+        format!("no visible label '{}' for <goto> at line {}", name_str, line)
+    };
+    lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0)
 }
 
 /// Pops the innermost block scope, emitting CLOSE if needed.
@@ -3919,7 +3924,7 @@ fn breakstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
 /// `findlabel`, which scans the **whole function** (`fs->firstlabel`), making
 /// any repeated label name in the function an error. 5.1 has no `goto`/labels.
 fn checkrepeated(
-    ls: &LexState,
+    ls: &mut LexState,
     state: &LuaState,
     name: &GcRef<LuaString>,
 ) -> Result<(), LuaError> {
@@ -3937,14 +3942,18 @@ fn checkrepeated(
     } else {
         ls.fs.as_ref().unwrap().firstlabel as usize
     };
+    let mut dup_line: Option<i32> = None;
     for i in first..ls.dyd.label.len() {
         let lb = &ls.dyd.label[i];
         if lb.name.as_ref().map_or(false, |n| GcRef::ptr_eq(n, name)) {
-            let name_str = String::from_utf8_lossy(name.as_bytes());
-            return Err(LuaError::syntax(format_args!(
-                "label '{}' already defined on line {}", name_str, lb.line
-            )));
+            dup_line = Some(lb.line);
+            break;
         }
+    }
+    if let Some(line) = dup_line {
+        let name_str = String::from_utf8_lossy(name.as_bytes());
+        let msg = format!("label '{}' already defined on line {}", name_str, line);
+        return Err(lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0));
     }
     Ok(())
 }

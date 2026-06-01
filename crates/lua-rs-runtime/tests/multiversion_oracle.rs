@@ -1995,6 +1995,39 @@ fn v52_v53_backward_goto_to_enclosing_block_label() {
     eq(LuaVersion::V55, prog, "3");
 }
 
+#[test]
+fn goto_label_errors_carry_chunkname_line_prefix() {
+    // Upstream raises duplicate-label and undefined-goto errors through
+    // `luaK_semerror` -> `luaX_syntaxerror`, which prepends the
+    // `chunkname:line:` location (e.g. `(command line):1:`). lua-rs previously
+    // built these two messages without that prefix. Both must now carry a
+    // `<chunk>:<line>:` location ahead of the message body, on every version
+    // that has goto/labels (5.2+).
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        match run(v, "::l:: ::l:: print('x')") {
+            Ok(got) => panic!("expected duplicate-label error, got `{got}`"),
+            Err(e) => {
+                assert!(e.contains("label 'l' already defined"), "body missing: {e}");
+                assert!(
+                    e.find("]:").or_else(|| e.find("\":")).is_some()
+                        && e.find(": label 'l'").is_some(),
+                    "duplicate-label error `{e}` lacks a chunkname:line: prefix"
+                );
+            }
+        }
+        match run(v, "goto nowhere") {
+            Ok(got) => panic!("expected undefined-goto error, got `{got}`"),
+            Err(e) => {
+                assert!(e.contains("no visible label 'nowhere'"), "body missing: {e}");
+                assert!(
+                    e.find(": no visible label 'nowhere'").is_some(),
+                    "undefined-goto error `{e}` lacks a chunkname:line: prefix"
+                );
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // __gc finalizer error propagation (shared-core item 3).
 //

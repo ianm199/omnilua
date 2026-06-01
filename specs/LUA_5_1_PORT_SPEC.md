@@ -1,7 +1,11 @@
 # Implementation spec — Lua 5.1 (non-JIT) backend, with 5.2 as the bridge
 
-Status: planning / deferred ("dessert"). Audience: whoever implements the 5.1
-backend behind the unified embedding API.
+Status: **IMPLEMENTED in v0.0.22** — 5.2 via the 5.2-bridge phase, 5.1 via the
+5.1-legacy phase (fenv globals landed via Option B, as recommended below).
+Retained as the design record; for the as-built methodology see
+[`MULTIVERSION_PLAYBOOK.md`](MULTIVERSION_PLAYBOOK.md), and for shipped-vs-deferred
+see `specs/followup/PHASE_D_5.1_REPORT.md` / `PHASE_D_5.2_REPORT.md`. Audience:
+anyone touching the 5.1/5.2 backends.
 
 Inputs this spec is built on (read them first):
 - `specs/research/5.1-5.2-upstream.md` — the upstream delta map (number model,

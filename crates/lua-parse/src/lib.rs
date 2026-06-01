@@ -2859,7 +2859,7 @@ fn enter_block(ls: &mut LexState, isloop: bool) {
     });
 }
 
-fn undef_goto(ls: &mut LexState, gt_idx: usize) -> LuaError {
+fn undef_goto(ls: &mut LexState, version: lua_types::LuaVersion, gt_idx: usize) -> LuaError {
     let (line, name_bytes): (i32, Vec<u8>) = {
         let gt = &ls.dyd.gt[gt_idx];
         (
@@ -2868,7 +2868,13 @@ fn undef_goto(ls: &mut LexState, gt_idx: usize) -> LuaError {
         )
     };
     let msg = if name_bytes == b"break" {
-        format!("break outside loop at line {}", line)
+        // 5.2/5.3 word the deferred break-outside-loop error differently from
+        // 5.4. (5.1/5.5 raise eagerly in `breakstat` and never reach here.)
+        if matches!(version, lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53) {
+            format!("<break> at line {} not inside a loop", line)
+        } else {
+            format!("break outside loop at line {}", line)
+        }
     } else {
         let name_str = String::from_utf8_lossy(&name_bytes);
         format!("no visible label '{}' for <goto> at line {}", name_str, line)
@@ -2946,7 +2952,8 @@ fn leave_block(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> 
         movegotosout(ls, state, bl_firstgoto as usize, bl_nactvar, bl_upval)?;
     } else {
         if (bl_firstgoto as usize) < ls.dyd.gt.len() {
-            return Err(undef_goto(ls, bl_firstgoto as usize));
+            let version = state.global().lua_version;
+            return Err(undef_goto(ls, version, bl_firstgoto as usize));
         }
     }
     Ok(())
@@ -3906,9 +3913,36 @@ fn gotostat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     Ok(())
 }
 
+/// True if any enclosing block of the current function is a loop, i.e. `break`
+/// has somewhere to go.
+fn has_enclosing_loop(ls: &LexState) -> bool {
+    let mut bl = ls.fs.as_ref().unwrap().bl.as_deref();
+    while let Some(b) = bl {
+        if b.isloop {
+            return true;
+        }
+        bl = b.previous.as_deref();
+    }
+    false
+}
+
 fn breakstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
+    let version = state.global().lua_version;
     let line = ls.lastline;
+    // `break` outside a loop is reported in three different ways across versions
+    // (see also `undef_goto` for the 5.2-5.4 deferred forms):
+    //   5.5 raises eagerly while the current token is still `break`
+    //       → "break outside loop near 'break'".
+    //   5.1 raises eagerly after consuming `break`
+    //       → "no loop to break near '<next token>'".
+    //   5.2/5.3/5.4 defer to the goto machinery (resolved in `undef_goto`).
+    if version == lua_types::LuaVersion::V55 && !has_enclosing_loop(ls) {
+        return Err(lua_lex::syntax_error(&mut ls.lex, b"break outside loop"));
+    }
     lex_next(ls, state)?;
+    if version == lua_types::LuaVersion::V51 && !has_enclosing_loop(ls) {
+        return Err(lua_lex::syntax_error(&mut ls.lex, b"no loop to break"));
+    }
     let break_str = state.intern_str(b"break")?;
     let pc = cg_jump(ls.fs.as_mut().unwrap(), line);
     new_goto_entry(ls, state, break_str, line, pc)?;

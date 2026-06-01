@@ -69,6 +69,19 @@ deserves a committed, named guard even before the fix.
 
 ---
 
+## 3b. [significant] GC parity is softer than the green checkmark — see #104
+
+The 2026-06-01 GC-faithfulness audit found that `gc.lua`'s behavioral MATCH rests
+on **simulated** memory observables, not real accounting: `api.rs:2073` halves
+`totalbytes` after a cycle and `api.rs:2004` refills it to a 32 KB baseline,
+both explicitly to make `gcinfo() < x` assertions hold. The collector itself is a
+real tri-color mark-and-sweep, but write barriers are no-ops, finalizers run
+outside the collector, and generational mode is a flag with no engine. **Do not
+treat gc.lua's MATCH as evidence the GC is faithful.** Tracked as #104 (real byte
+accounting), which is a prerequisite for #93 (generational). This is the clearest
+case found of the "output matched but mechanism didn't" failure mode the harness
+philosophy warns about.
+
 ## 4. [cheap] Label taxonomy (done this pass — recorded for continuity)
 
 Created `5.1 5.2 5.3 5.4 5.5`, `priority: high|medium|low`, `architectural`.

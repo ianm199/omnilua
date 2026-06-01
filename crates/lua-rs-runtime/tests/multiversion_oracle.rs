@@ -1413,3 +1413,176 @@ fn v52_goto_and_basics() {
     eq(LuaVersion::V52, "return loadstring('return 7')()", "7");
     eq(LuaVersion::V52, "return ('10'+5)", "15");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5.1 — the legacy fenv-globals family. 5.1 reuses the float-only core (shared
+// with 5.2) but restores the per-function environment model: `getfenv`/
+// `setfenv` read/write a function's environment (its `_ENV` upvalue under the
+// reused modern core) or the running thread's global table for level 0.
+// Option B (specs/followup/5.1-fenv.md): no second VM ISA — the modern _ENV
+// upvalue IS the closure environment under V51. Every expected value captured
+// from /tmp/lua-refs/bin/lua5.1.5.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_getfenv_main_chunk_is_g() {
+    // In the main chunk getfenv() / getfenv(0) / getfenv(1) all return _G.
+    eq(LuaVersion::V51, "return getfenv() == _G", "true");
+    eq(LuaVersion::V51, "return getfenv(0) == _G", "true");
+    eq(LuaVersion::V51, "return getfenv(1) == _G", "true");
+    eq(LuaVersion::V51, "return getfenv(0) == getfenv(1)", "true");
+}
+
+#[test]
+fn v51_setfenv_per_closure_env() {
+    // A closure given its own env resolves free names there; the caller's
+    // globals are untouched (the env is PRIVATE, not the shared _ENV cell).
+    eq(
+        LuaVersion::V51,
+        "local function f() return x end \
+         local e = setmetatable({x=42},{__index=_G}) \
+         setfenv(f, e); return tostring(f()) .. ',' .. tostring(x)",
+        "42,nil",
+    );
+    // setfenv returns the function it set (even an empty-body closure).
+    eq(LuaVersion::V51, "local function f() end return setfenv(f, {}) == f", "true");
+}
+
+#[test]
+fn v51_new_closure_inherits_creator_env() {
+    // A closure created inside a function whose env was setfenv'd inherits that
+    // env (standard upvalue capture of _ENV).
+    eq(
+        LuaVersion::V51,
+        "local function outer() local function inner() return secret end return inner end \
+         local e = setmetatable({secret='hi'},{__index=_G}); setfenv(outer, e) \
+         local inner = outer(); return tostring(getfenv(inner)==e) .. ',' .. inner()",
+        "true,hi",
+    );
+}
+
+#[test]
+fn v51_setfenv_zero_thread_closure_split() {
+    // setfenv(0, t) sets the THREAD global table, observable via getfenv(0),
+    // but does NOT retroactively change the running closure's own _ENV upval:
+    // getfenv(1) != t and a free name set only in t reads back nil.
+    eq(
+        LuaVersion::V51,
+        "local e = setmetatable({z=99},{__index=_G}); setfenv(0, e) \
+         return tostring(getfenv(0)==e) .. ',' .. tostring(getfenv(1)==e) .. ',' .. tostring(z)",
+        "true,false,nil",
+    );
+}
+
+#[test]
+fn v51_loaded_chunk_takes_thread_env() {
+    // A chunk loaded AFTER setfenv(0, t) takes t as its environment (loaded
+    // chunks take the thread env, never the loader closure's env).
+    eq(
+        LuaVersion::V51,
+        "local e = setmetatable({secret='thr'},{__index=_G}); setfenv(0, e) \
+         local c = loadstring('return secret'); return tostring(getfenv(c)==e) .. ',' .. c()",
+        "true,thr",
+    );
+}
+
+#[test]
+fn v51_level_forms() {
+    // getfenv(2) from a callee returns the caller's env. (Parenthesized to
+    // avoid a tail call, which 5.1 itself refuses to introspect.)
+    eq(
+        LuaVersion::V51,
+        "local e = setmetatable({k=1},{__index=_G}) \
+         local function caller() local function callee() return (getfenv(2)) end return (callee()) end \
+         setfenv(caller, e); return caller() == e",
+        "true",
+    );
+    // setfenv(2, t) sets the caller's env (its free name then resolves in t).
+    eq(
+        LuaVersion::V51,
+        "local function caller() local function callee() setfenv(2, setmetatable({y=9},{__index=_G})) end \
+         callee(); return y end return caller()",
+        "9",
+    );
+    // A nested closure that captures BOTH a local and a global: setfenv must
+    // touch the _ENV upvalue, located by NAME (not position — the captured
+    // local is at upvalue 0 here), or the local would be corrupted.
+    eq(
+        LuaVersion::V51,
+        "local up = 7; local function f() return up + g end; g = 100 \
+         local e = setmetatable({g=5},{__index=_G}); setfenv(f, e); return f()",
+        "12",
+    );
+}
+
+#[test]
+fn v51_float_level_truncates() {
+    // Levels truncate toward zero (luaL_checkint cast): getfenv(1.9) is level 1.
+    eq(LuaVersion::V51, "return getfenv(1.9) == _G", "true");
+}
+
+#[test]
+fn v51_c_function_env_is_g() {
+    // C functions get the thread global table as their env (documented
+    // LUA_ENVIRONINDEX gap, specs/followup/5.1-fenv.md §4).
+    eq(LuaVersion::V51, "return getfenv(print) == _G", "true");
+}
+
+#[test]
+fn v51_fenv_error_cases() {
+    err_contains(LuaVersion::V51, "return getfenv(5)", "invalid level");
+    err_contains(LuaVersion::V51, "return getfenv(-1)", "level must be non-negative");
+    err_contains(LuaVersion::V51, "return getfenv('x')", "number expected, got string");
+    err_contains(
+        LuaVersion::V51,
+        "return setfenv(print, {})",
+        "'setfenv' cannot change environment of given object",
+    );
+    err_contains(LuaVersion::V51, "return setfenv(0, 'x')", "table expected, got string");
+    err_contains(LuaVersion::V51, "return setfenv(100, {})", "invalid level");
+}
+
+#[test]
+fn v51_len_on_table_ignores_metamethod() {
+    // THE #1 silent-failure trap: `#t` in 5.1 NEVER consults a table __len;
+    // table __len was added in 5.2. Primitive length always wins.
+    eq(
+        LuaVersion::V51,
+        "local t = setmetatable({1,2,3}, {__len = function() return 99 end}); return #t",
+        "3",
+    );
+    eq(LuaVersion::V51, "return #'hello'", "5");
+    eq(LuaVersion::V51, "return #({10, 20})", "2");
+}
+
+#[test]
+fn v51_fenv_roster_present() {
+    eq(LuaVersion::V51, "return type(getfenv)", "function");
+    eq(LuaVersion::V51, "return type(setfenv)", "function");
+    eq(LuaVersion::V51, "return _VERSION", "Lua 5.1");
+}
+
+#[test]
+fn v52_plus_no_fenv_globals() {
+    // Non-regression guard: getfenv/setfenv are 5.1-ONLY. They were removed in
+    // 5.2 (lexical _ENV) and must stay absent on 5.2/5.3/5.4/5.5. The 5.2+
+    // family also keeps consulting a table __len metamethod.
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return type(getfenv)", "nil");
+        eq(v, "return type(setfenv)", "nil");
+    }
+    // 5.2 keeps the float-only core but consults table __len (5.2+ behavior).
+    eq(
+        LuaVersion::V52,
+        "local t = setmetatable({1,2,3}, {__len = function() return 99 end}); return #t",
+        "99",
+    );
+    // The modern (dual-number) family also consults table __len.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local t = setmetatable({1,2,3}, {__len = function() return 99 end}); return #t",
+            "99",
+        );
+    }
+}

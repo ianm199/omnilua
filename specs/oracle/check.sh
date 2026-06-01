@@ -149,5 +149,75 @@ if [ "$ver" = "5.5" ]; then
   run "table.create fn"     'print(type(table.create))'
 fi
 
+if [ "$ver" = "5.1" ]; then
+  # Float-only number model (shared with 5.2): integer-valued floats print
+  # without ".0", and the int-subtype math members are absent.
+  run "10/2 (no .0)"        'print(10/2)'
+  run "2^2 (no .0)"         'print(2^2)'
+  run "tostring(1.0)"       'print(tostring(1.0))'
+  run "concat 1..2"         'print(1 .. 2)'
+  run "1.5 stays float"     'print(1.5)'
+  run "math.floor"          'print(math.floor(3.7))'
+  run "string.format %d"    "print(string.format('%d', 42))"
+  run "format %d trunc"     "print(string.format('%d', 3.5))"
+  run "math.type absent"    'print(type(math.type))'
+  run "big int literal"     'print(9007199254740993)'
+  run "_VERSION 5.1"        'print(_VERSION)'
+
+  # fenv globals — getfenv/setfenv (the 5.1 globals model). See
+  # specs/followup/5.1-fenv.md §3.
+  run "getfenv()==_G"       'print(getfenv() == _G, getfenv(0) == _G, getfenv(1) == _G)'
+  run "setfenv per-closure" 'local function f() return x end; local e=setmetatable({x=42},{__index=_G}); setfenv(f,e); print(f(), x)'
+  run "setfenv returns f"   'local function f() end; print(setfenv(f,{})==f)'
+  run "new closure inherits" 'local function outer() local function inner() return secret end return inner end; local e=setmetatable({secret="hi"},{__index=_G}); setfenv(outer,e); local inner=outer(); print(getfenv(inner)==e, inner())'
+  run "setfenv(0,t) split"  'local e=setmetatable({z=99},{__index=_G}); setfenv(0,e); print(getfenv(0)==e, getfenv(1)==e, z)'
+  run "loaded chunk threnv" 'local e=setmetatable({secret="thr"},{__index=_G}); setfenv(0,e); local c=loadstring("return secret"); print(getfenv(c)==e, c())'
+  run "getfenv level form"  'local e=setmetatable({k=1},{__index=_G}); local function caller() local function callee() return (getfenv(2)) end return (callee()) end; setfenv(caller,e); print(caller()==e)'
+  run "setfenv level form"  'local function caller() local function callee() setfenv(2, setmetatable({y=9},{__index=_G})) end callee(); return y end; print(caller())'
+  run "nested local+global" 'local up=7; local function f() return up + g end; g=100; local e=setmetatable({g=5},{__index=_G}); setfenv(f,e); print(f())'
+  run "getfenv float trunc" 'print(getfenv(1.9)==_G)'
+  run "getfenv(C fn)==_G"   'print(getfenv(print)==_G)'
+  run "getfenv invalid lvl" 'getfenv(5)'
+  run "getfenv negative"    'getfenv(-1)'
+  run "getfenv non-number"  'getfenv("x")'
+  run "setfenv on C fn"     'setfenv(print,{})'
+  run "setfenv bad table"   'setfenv(0,"x")'
+  run "setfenv invalid lvl" 'setfenv(100,{})'
+
+  # Metamethod flip: __len on a TABLE is IGNORED in 5.1 (table __len is 5.2+);
+  # the #1 silent-failure trap. Primitive length always wins.
+  run "__len table ignored" 'local t=setmetatable({1,2,3},{__len=function() return 99 end}); print(#t)'
+  run "string length"       'print(#"hello")'
+  run "table length"        'print(#({10,20}))'
+
+  # Stdlib roster (5.1): fenv globals present, _ENV/bit32/utf8 absent,
+  # unpack/loadstring globals, legacy table/math names, no math.type.
+  run "getfenv present"     'print(type(getfenv))'
+  run "setfenv present"     'print(type(setfenv))'
+  run "unpack global"       'print(unpack({10,20,30}))'
+  run "loadstring global"   'print(loadstring("return 7")())'
+  run "table.unpack absent" 'print(type(table.unpack))'
+  run "bit32 absent"        'print(type(bit32))'
+  run "utf8 absent"         'print(type(utf8))'
+  run "math.log10 present"  'print(type(math.log10))'
+  run "math.atan2 present"  'print(type(math.atan2))'
+  run "math.pow present"    'print(type(math.pow))'
+  run "module present"      'print(type(module))'
+  run "package.loaders"     'print(type(package.loaders))'
+  run "string.gfind alias"  'print(type(string.gfind))'
+
+  # Syntax rejection: 5.2+ constructs must not parse in 5.1.
+  run "goto rejected"       'do goto x ::x:: end print("ok")'
+  run "// rejected"         'print(7//2)'
+  run "& rejected"          'print(6 & 3)'
+  run "<const> rejected"    'local x <const> = 1'
+
+  # Number/coercion behavior stays float.
+  run "strcoerce add"       'print("10"+5)'
+  run "math.modf"           'print(math.modf(3.7))'
+  run "math.huge"           'print(math.huge)'
+  run "hex int literal"     'print(0x1F)'
+fi
+
 echo "-- $pass passed, $fail failed (vs reference) --"
 exit "$fail"

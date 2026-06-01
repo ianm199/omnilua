@@ -57,13 +57,24 @@ impl LuaVersion {
     }
 
     /// Whether this version has a real backend. The modern family (5.3/5.4/5.5)
-    /// is implemented; 5.1/5.2 (the float-only legacy family) are not yet, so
-    /// they must REFUSE rather than silently run as 5.4 (which would expose
-    /// integers, `//`, `goto`, etc. that 5.1 lacks — a misleading masquerade).
+    /// and 5.2 (float-only + `_ENV`) are complete. 5.1 is **alpha**: it reuses
+    /// the 5.2 float-only core and the fenv-globals axis is done and faithful —
+    /// `getfenv`/`setfenv` (the per-function environment model, Option B over the
+    /// reused `_ENV` upvalue; see `specs/followup/5.1-fenv.md`) plus the
+    /// metamethod flip that `#t` never consults a table `__len`. The remaining
+    /// 5.1 gaps are separate roster/syntax axes NOT yet landed: `table.unpack`
+    /// should be absent; `math.log10`/`atan2`/`pow`/`mod`, `module`,
+    /// `package.loaders`, and `string.gfind` are missing; and `goto`/labels
+    /// must be rejected (they wrongly parse today). V51 is constructible so the
+    /// fenv work is exercised by CI, but it is not yet a complete 5.1.
     pub fn is_supported(self) -> bool {
         matches!(
             self,
-            LuaVersion::V52 | LuaVersion::V53 | LuaVersion::V54 | LuaVersion::V55
+            LuaVersion::V51
+                | LuaVersion::V52
+                | LuaVersion::V53
+                | LuaVersion::V54
+                | LuaVersion::V55
         )
     }
 
@@ -128,5 +139,6 @@ mod tests {
 //   port_notes:    0
 //   unsafe_blocks: 0
 //   notes:         LuaVersion + NumberModel. Default = V54 preserves the
-//                  existing single-version behavior. Only V54 has a backend.
+//                  existing single-version behavior. V52-V55 complete; V51 is
+//                  alpha (fenv-globals axis done; roster/syntax gaps remain).
 // ──────────────────────────────────────────────────────────────────────────

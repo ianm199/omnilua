@@ -707,12 +707,30 @@ fn load_function(
     f.is_vararg = load_byte(s)? != 0;
     f.maxstacksize = load_byte(s)?;
     load_code(s, f)?;
+    reconstruct_vararg_table_reg(f);
     load_constants(s, f)?;
     load_upvalues(s, f)?;
     load_protos(s, f)?;
     load_debug(s, f)?;
 
     Ok(())
+}
+
+/// Recover `LuaProto.vararg_table_reg` from the loaded bytecode instead of from
+/// the wire format, so a precompiled chunk keeps Lua 5.5 named-vararg aliasing
+/// (`function f(...t)`) without lua-rs's `string.dump` output diverging from
+/// C's bytecode layout (which the structural oracle compares).
+///
+/// A named-vararg function emits exactly one `OP_VARARGPACK` (opcode 84) at
+/// entry; its A operand is the register holding the shared vararg table. The
+/// opcode occupies the low 7 bits of the instruction word and A the next 8.
+fn reconstruct_vararg_table_reg(f: &mut LuaProto) {
+    const OP_VARARGPACK: u32 = 84;
+    const OPCODE_MASK: u32 = 0x7F;
+    f.vararg_table_reg = f.code.iter().find_map(|inst| {
+        let raw = inst.raw();
+        (raw & OPCODE_MASK == OP_VARARGPACK).then(|| ((raw >> 7) & 0xFF) as u8)
+    });
 }
 
 // ── Header validation ──────────────────────────────────────────────────────

@@ -31,6 +31,13 @@ pub struct LuaProto {
     /// (so it cannot dangle); unlike C's GC-cleared weak cache this pins the one
     /// cached closure to the proto's lifetime, which is bounded and safe.
     pub cache: RefCell<Option<GcRef<LuaLClosure>>>,
+    /// Lua 5.5 named varargs (`function f(...t)`): the register holding the
+    /// packed vararg table `t`. When set, `...` unpacks live from that table
+    /// (count = its `n` field) rather than the frame's extra-arg slots, so
+    /// mutating `t` is observable through a later `...` (shared storage). `None`
+    /// for ordinary `...` and all pre-5.5 functions. Mirrors upstream's
+    /// `needvatab` proto flag + the vararg-table register.
+    pub vararg_table_reg: Option<u8>,
 }
 
 impl LuaProto {
@@ -50,6 +57,7 @@ impl LuaProto {
             lastlinedefined: 0,
             source: None,
             cache: RefCell::new(None),
+            vararg_table_reg: None,
         }
     }
 }

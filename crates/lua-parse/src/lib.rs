@@ -3363,6 +3363,9 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         );
         let line = ls.fs.as_ref().unwrap().previousline;
         emit_inst(ls.fs.as_mut().unwrap(), line, inst);
+        // Record the vararg-table register so `OP_VARARG` unpacks live from this
+        // table (shared storage), making `t` mutations visible through `...`.
+        ls.fs.as_mut().unwrap().f.vararg_table_reg = Some(reg as u8);
     }
     Ok(())
 }

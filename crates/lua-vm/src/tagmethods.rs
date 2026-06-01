@@ -888,6 +888,40 @@ pub(crate) fn get_varargs(
     where_idx: StackIdx,
     wanted: i32,
 ) -> Result<(), LuaError> {
+    // Lua 5.5 named varargs (`function f(...t)`): `...` unpacks live from the
+    // shared table `t` (its `n` field is the count), so mutating `t` is
+    // observable through a later `...`. See `LuaProto.vararg_table_reg`.
+    let vatab_reg = state
+        .ci_lua_closure(ci_idx)
+        .and_then(|cl| cl.proto.vararg_table_reg);
+    if let Some(reg) = vatab_reg {
+        let base = state.ci_base(ci_idx);
+        if let LuaValue::Table(t) = state.get_at(base + reg as i32) {
+            let n_key = state.intern_str(b"n")?;
+            let nextra: i32 = match t.get(&LuaValue::Str(n_key)) {
+                LuaValue::Int(i) => i.max(0).min(i32::MAX as i64) as i32,
+                LuaValue::Float(f) if f >= 0.0 => f as i32,
+                _ => 0,
+            };
+            let wanted: i32 = if wanted < 0 {
+                state.check_stack(nextra)?;
+                state.gc().check_step();
+                state.set_top(where_idx + nextra);
+                nextra
+            } else {
+                wanted
+            };
+            let copy_count = wanted.min(nextra);
+            for i in 0..copy_count {
+                let val = t.get(&LuaValue::Int((i + 1) as i64));
+                state.set_at(where_idx + i as i32, val);
+            }
+            for i in copy_count..wanted {
+                state.set_at(where_idx + i as i32, LuaValue::Nil);
+            }
+            return Ok(());
+        }
+    }
     let nextra: i32 = if let crate::state::CallInfoFrame::Lua { nextraargs, .. } = state.call_info[ci_idx.as_usize()].u { nextraargs } else { 0 };
 
     //      wanted = nextra;  /* get all extra arguments available */

@@ -897,7 +897,15 @@ fn searcher_preload(state: &mut LuaState) -> Result<usize, LuaError> {
 fn findloader(state: &mut LuaState, name: &[u8]) -> Result<(), LuaError> {
     //        luaL_error(L, "'package.searchers' must be a table");
     let uv = state.upvalue_index(1);
-    let ty = state.get_field(uv, b"searchers")?;
+    // In 5.1 the searcher list lives in `package.loaders`; 5.2 renamed it to
+    // `package.searchers` (5.2 keeps `loaders` as an alias). Read the name this
+    // version exposes. See specs/followup/5.1-roster-syntax.md §1.
+    let field: &[u8] = if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        b"loaders"
+    } else {
+        b"searchers"
+    };
+    let ty = state.get_field(uv, field)?;
     if ty != LuaType::Table {
         return Err(LuaError::runtime(format_args!(
             "'package.searchers' must be a table"
@@ -1040,16 +1048,29 @@ fn createsearcherstable(state: &mut LuaState) -> Result<(), LuaError> {
         state.push_c_closure(f, 1)?;
         state.raw_seti(-2, (i + 1) as i64)?;
     }
-    // Lua 5.2 kept the pre-5.2 name `package.loaders` as an alias of
-    // `package.searchers` (the table was renamed in 5.2 but the old global was
-    // retained for compatibility; it was dropped in 5.3). Verified against
-    // lua5.2.4: `package.loaders` is a table. Duplicate the field so both names
-    // point at the same searcher list.
-    if matches!(state.global().lua_version, lua_types::LuaVersion::V52) {
+    // Roster name deltas for the searcher list:
+    //  - 5.1: the table is named `package.loaders`; there is NO
+    //    `package.searchers` (verified against lua5.1.5: `package.searchers` is
+    //    nil, `package.loaders` is a table).
+    //  - 5.2: renamed to `package.searchers` but kept `package.loaders` as a
+    //    compat alias (both point at the same list).
+    //  - 5.3+: `package.searchers` only.
+    let version = state.global().lua_version;
+    let has_loaders = matches!(
+        version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
+    let has_searchers = !matches!(version, lua_types::LuaVersion::V51);
+    if has_loaders {
         state.push_value(-1)?;
         state.set_field(-3, b"loaders")?;
     }
-    state.set_field(-2, b"searchers")?;
+    if has_searchers {
+        state.set_field(-2, b"searchers")?;
+    } else {
+        // No `searchers` field under 5.1; drop the table copy left on the stack.
+        state.pop_n(1);
+    }
     Ok(())
 }
 
@@ -1064,6 +1085,121 @@ fn createclibstable(state: &mut LuaState) -> Result<(), LuaError> {
     state.set_field(-2, b"__gc")?;
     state.set_metatable(-2)?;
     Ok(())
+}
+
+// ── Lua 5.1 `module` / `package.seeall` (deprecated module system) ────────────
+//
+// These ship only in the default lua5.1.5 build (`loadlib.c`) and were removed
+// in 5.2. Registered under the V51 backend; see
+// specs/followup/5.1-roster-syntax.md §1. They lean on the 5.1 fenv globals
+// model: `module` sets its caller's environment to the module table (via
+// `crate::base::set_func_env_at_level`), and `package.seeall` points a module
+// table's `__index` at `_G`.
+
+/// `package.seeall(module)` — make a module table inherit globals.
+///
+/// Sets (creating if absent) `module`'s metatable `__index` to the global
+/// table. Mirrors `ll_seeall` in 5.1 `loadlib.c`. Verified against lua5.1.5.
+fn ll_seeall(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(1, LuaType::Table)?;
+    if !state.get_metatable(1)? {
+        state.create_table(0, 1)?;
+        state.push_value(-1)?;
+        state.set_metatable(1)?;
+    }
+    state.push_globals()?;
+    state.set_field(-2, b"__index")?;
+    Ok(0)
+}
+
+/// Walk a dotted module name from a table on the stack, creating intermediate
+/// tables as needed, leaving the final (sub)table on the stack top. A faithful
+/// reduction of `luaL_findtable(L, idx, name, 1)`; returns `Err` on a name
+/// conflict (an intermediate path component is a non-table, non-nil value).
+fn findtable(state: &mut LuaState, table_idx: i32, name: &[u8]) -> Result<(), LuaError> {
+    // Start from a copy of the base table on the stack top.
+    state.push_value_at(table_idx)?;
+    for part in name.split(|&b| b == b'.') {
+        // Stack top holds the current table; fetch current[part].
+        let ty = state.get_field(-1, part)?;
+        if ty == LuaType::Nil {
+            state.pop_n(1); // remove nil
+            state.create_table(0, 1)?; // new subtable
+            state.push_value(-1)?; // duplicate it
+            state.set_field(-3, part)?; // current[part] = subtable
+            // Stack: ..., current, subtable. Remove the parent, keep subtable.
+            state.remove(-2)?;
+        } else if ty == LuaType::Table {
+            // Stack: ..., current, value. Remove the parent, keep value.
+            state.remove(-2)?;
+        } else {
+            return Err(LuaError::runtime(format_args!(
+                "name conflict for module '{}'",
+                String::from_utf8_lossy(name)
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `module(name [, ...])` — Lua 5.1 only.
+///
+/// Creates (or reuses) a module table named `name`, registers it in
+/// `package.loaded`, initializes its `_NAME`/`_M`/`_PACKAGE` fields, applies any
+/// option functions (e.g. `package.seeall`), and sets the calling chunk's
+/// environment to the module table. Mirrors `ll_module` in 5.1 `loadlib.c`.
+fn ll_module(state: &mut LuaState) -> Result<usize, LuaError> {
+    let modname: Vec<u8> = state.check_arg_string(1)?;
+    let n_opts = state.top() as i32;
+
+    // Fetch _LOADED[modname]; create the module table if absent.
+    state.get_field_registry(b"_LOADED")?;
+    let loaded_idx = state.top() as i32;
+    state.get_field(loaded_idx, &modname)?;
+    if state.type_at(-1) != LuaType::Table {
+        state.pop_n(1); // remove non-table result
+        // Find/create a global table named `modname` (supporting dotted names).
+        state.push_globals()?;
+        let g_idx = state.top() as i32;
+        findtable(state, g_idx, &modname)?;
+        state.remove(g_idx)?; // drop the globals table copy, keep the module table
+        state.push_value(-1)?;
+        state.set_field(loaded_idx, &modname)?; // _LOADED[modname] = module
+    }
+
+    // Initialize the module if it has no `_NAME` yet.
+    let has_name = state.get_field(-1, b"_NAME")? != LuaType::Nil;
+    state.pop_n(1);
+    if !has_name {
+        // module._M = module
+        state.push_value(-1)?;
+        state.set_field(-2, b"_M")?;
+        // module._NAME = modname
+        state.push_string(&modname)?;
+        state.set_field(-2, b"_NAME")?;
+        // module._PACKAGE = full name minus the last dotted component.
+        let pkg: &[u8] = match modname.iter().rposition(|&b| b == b'.') {
+            Some(dot) => &modname[..=dot],
+            None => b"",
+        };
+        state.push_string(pkg)?;
+        state.set_field(-2, b"_PACKAGE")?;
+    }
+
+    // Set the caller's environment to the module table (the running closure that
+    // invoked `module`, i.e. level 1 relative to this C function).
+    let module_tbl = state.value_at(-1);
+    crate::base::set_func_env_at_level(state, 1, module_tbl)?;
+
+    // Apply option functions: for each extra arg, call `option(module)`.
+    let mut i = 2;
+    while i <= n_opts {
+        state.push_value_at(i)?; // option function
+        state.push_value(-2)?; // module table
+        state.call(1, 0)?;
+        i += 1;
+    }
+    Ok(0)
 }
 
 /// Open the `package` library and return the `package` table.
@@ -1116,6 +1252,22 @@ pub fn luaopen_package(state: &mut LuaState) -> Result<usize, LuaError> {
         1,
     )?;
     state.pop_n(1);
+
+    // The deprecated module system: `package.seeall` (a field on the package
+    // table) and the `module` global. Present in 5.1 and kept in 5.2.4 via the
+    // default-on `LUA_COMPAT_MODULE`; fully removed in 5.3. Verified against
+    // lua5.1.5 and lua5.2.4. See specs/followup/5.1-roster-syntax.md §1.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    ) {
+        // The package table is on top of the stack here.
+        state.push_c_function(ll_seeall)?;
+        state.set_field(-2, b"seeall")?;
+        // `module` is a *global*, not a `package` field.
+        state.push_c_function(ll_module)?;
+        state.set_global(b"module")?;
+    }
 
     Ok(1)
 }

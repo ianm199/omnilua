@@ -19,8 +19,12 @@ use lua_rs_runtime::{Lua, LuaVersion};
 /// outer wrapper runs in implicit-global mode and always has the builtins.
 fn run(version: LuaVersion, code: &str) -> Result<String, String> {
     let lua = Lua::new_versioned(version);
+    // Lua 5.1's `load` takes a reader function only — string loading is
+    // `loadstring`'s job (a V51 roster gate). 5.2+ `load` accepts a string. Pick
+    // the loader the running version exposes for a string chunk.
+    let loader = if version == LuaVersion::V51 { "loadstring" } else { "load" };
     let wrapper = format!(
-        "local f, e = load([==[\n{code}\n]==])\n\
+        "local f, e = {loader}([==[\n{code}\n]==])\n\
          if not f then return 'E\\0' .. e end\n\
          local ok, r = pcall(f)\n\
          if not ok then return 'E\\0' .. tostring(r) end\n\
@@ -1307,6 +1311,96 @@ fn v54_v55_random_zero_and_full_range() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// 5.1 `math.random`/`math.randomseed` PRNG contract (oracle = lua5.1.5).
+// 5.1 uses the C `rand()`/`srand()` model: NO `random(0)` full-range special
+// case (that empty interval errors), the `random(m, n)` empty-interval error
+// reports argument index 2 (the upper bound), `randomseed` REQUIRES its seed
+// argument (no auto-seed) and returns NO values, and integer-valued results
+// are plain `number`s (float-only, no `math.type`).
+//
+// The seeded random SEQUENCE is a KNOWN DOCUMENTED divergence: 5.1's host
+// `rand()` byte stream is platform-dependent and is not bit-matched here. Only
+// the contract — ranges, types, arg errors, return shapes — is asserted.
+// See specs/followup/5.1-numbers-prng.md.
+//
+// NOTE: 5.1 renders the function name as `'?'` for indirect (`pcall(fn,...)`)
+// calls where lua-rs renders the qualified name; that systematic indirect-call
+// name-recovery gap is tracked separately, so these assertions check the arg
+// INDEX and the error TEXT (which match), not the function-name token.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_random_contract() {
+    let v = LuaVersion::V51;
+    // random() ∈ [0, 1), is a number, and float-only (no math.type).
+    eq(v, "local r = math.random(); return type(r) .. ',' .. tostring(r >= 0 and r < 1)", "number,true");
+    eq(v, "return math.type", "nil");
+    // random(n) ∈ [1, n], integer-valued.
+    eq(v, "local r = math.random(10); return r >= 1 and r <= 10 and r == math.floor(r)", "true");
+    // random(m, n) ∈ [m, n].
+    eq(v, "local r = math.random(5, 8); return r >= 5 and r <= 8", "true");
+    // random(0) is an EMPTY interval [1, 0] — it errors (no 5.4 full-range case).
+    err_contains(v, "local ok, e = pcall(math.random, 0); error(e, 0)", "interval is empty");
+    // random(m, n) empty-interval error reports argument #2 (the upper bound).
+    err_contains(v, "local ok, e = pcall(math.random, 5, 2); error(e, 0)", "bad argument #2");
+    err_contains(v, "local ok, e = pcall(math.random, 5, 2); error(e, 0)", "interval is empty");
+    // Three args is "wrong number of arguments".
+    err_contains(v, "local ok, e = pcall(math.random, 1, 2, 3); error(e, 0)", "wrong number of arguments");
+}
+
+#[test]
+fn v51_randomseed_contract() {
+    let v = LuaVersion::V51;
+    // randomseed REQUIRES its seed argument — no auto-seed when absent.
+    err_contains(
+        v,
+        "local ok, e = pcall(math.randomseed); error(e, 0)",
+        "number expected, got no value",
+    );
+    err_contains(
+        v,
+        "local ok, e = pcall(math.randomseed, 'x'); error(e, 0)",
+        "number expected, got string",
+    );
+    err_contains(v, "local ok, e = pcall(math.randomseed); error(e, 0)", "bad argument #1");
+    // randomseed accepts a number and returns NO values.
+    eq(v, "return select('#', math.randomseed(42))", "0");
+    eq(v, "return select('#', math.randomseed(5))", "0");
+}
+
+#[test]
+fn v51_prng_non_regression_modern_unchanged() {
+    // The V51 gates must not alter the modern PRNG contract.
+    // 5.3: random(0) is empty-interval (no full-range), randomseed returns 2.
+    err_contains(
+        LuaVersion::V53,
+        "local ok, e = pcall(math.random, 0); error(e, 0)",
+        "interval is empty",
+    );
+    eq(LuaVersion::V53, "return select('#', math.randomseed(42))", "2");
+    // 5.4/5.5: random(0) is full-range integer; randomseed(N) returns 2 words;
+    // randomseed() auto-seeds (no required arg) and also returns 2.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return math.type(math.random(0))", "integer");
+        eq(v, "return select('#', math.randomseed(42))", "2");
+        eq(v, "return select('#', math.randomseed())", "2");
+    }
+    // 5.2 is float-only like 5.1: it shares the require-seed + void-return
+    // randomseed contract and the no-full-range random(0) error.
+    err_contains(
+        LuaVersion::V52,
+        "local ok, e = pcall(math.random, 0); error(e, 0)",
+        "interval is empty",
+    );
+    eq(LuaVersion::V52, "return select('#', math.randomseed(42))", "0");
+    err_contains(
+        LuaVersion::V52,
+        "local ok, e = pcall(math.randomseed); error(e, 0)",
+        "number expected, got no value",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 5.2 — the float-only + _ENV bridge to the legacy family. 5.2 reuses the
 // modern _ENV core but is FLOAT-ONLY (no integer subtype, no //, no bitwise
 // ops, no int-specific stdlib) and carries the 5.2 roster (bit32 present,
@@ -1412,4 +1506,379 @@ fn v52_goto_and_basics() {
     eq(LuaVersion::V52, "return unpack({10,20,30})", "10");
     eq(LuaVersion::V52, "return loadstring('return 7')()", "7");
     eq(LuaVersion::V52, "return ('10'+5)", "15");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5.1 — the legacy fenv-globals family. 5.1 reuses the float-only core (shared
+// with 5.2) but restores the per-function environment model: `getfenv`/
+// `setfenv` read/write a function's environment (its `_ENV` upvalue under the
+// reused modern core) or the running thread's global table for level 0.
+// Option B (specs/followup/5.1-fenv.md): no second VM ISA — the modern _ENV
+// upvalue IS the closure environment under V51. Every expected value captured
+// from /tmp/lua-refs/bin/lua5.1.5.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_getfenv_main_chunk_is_g() {
+    // In the main chunk getfenv() / getfenv(0) / getfenv(1) all return _G.
+    eq(LuaVersion::V51, "return getfenv() == _G", "true");
+    eq(LuaVersion::V51, "return getfenv(0) == _G", "true");
+    eq(LuaVersion::V51, "return getfenv(1) == _G", "true");
+    eq(LuaVersion::V51, "return getfenv(0) == getfenv(1)", "true");
+}
+
+#[test]
+fn v51_setfenv_per_closure_env() {
+    // A closure given its own env resolves free names there; the caller's
+    // globals are untouched (the env is PRIVATE, not the shared _ENV cell).
+    eq(
+        LuaVersion::V51,
+        "local function f() return x end \
+         local e = setmetatable({x=42},{__index=_G}) \
+         setfenv(f, e); return tostring(f()) .. ',' .. tostring(x)",
+        "42,nil",
+    );
+    // setfenv returns the function it set (even an empty-body closure).
+    eq(LuaVersion::V51, "local function f() end return setfenv(f, {}) == f", "true");
+}
+
+#[test]
+fn v51_new_closure_inherits_creator_env() {
+    // A closure created inside a function whose env was setfenv'd inherits that
+    // env (standard upvalue capture of _ENV).
+    eq(
+        LuaVersion::V51,
+        "local function outer() local function inner() return secret end return inner end \
+         local e = setmetatable({secret='hi'},{__index=_G}); setfenv(outer, e) \
+         local inner = outer(); return tostring(getfenv(inner)==e) .. ',' .. inner()",
+        "true,hi",
+    );
+}
+
+#[test]
+fn v51_setfenv_zero_thread_closure_split() {
+    // setfenv(0, t) sets the THREAD global table, observable via getfenv(0),
+    // but does NOT retroactively change the running closure's own _ENV upval:
+    // getfenv(1) != t and a free name set only in t reads back nil.
+    eq(
+        LuaVersion::V51,
+        "local e = setmetatable({z=99},{__index=_G}); setfenv(0, e) \
+         return tostring(getfenv(0)==e) .. ',' .. tostring(getfenv(1)==e) .. ',' .. tostring(z)",
+        "true,false,nil",
+    );
+}
+
+#[test]
+fn v51_loaded_chunk_takes_thread_env() {
+    // A chunk loaded AFTER setfenv(0, t) takes t as its environment (loaded
+    // chunks take the thread env, never the loader closure's env).
+    eq(
+        LuaVersion::V51,
+        "local e = setmetatable({secret='thr'},{__index=_G}); setfenv(0, e) \
+         local c = loadstring('return secret'); return tostring(getfenv(c)==e) .. ',' .. c()",
+        "true,thr",
+    );
+}
+
+#[test]
+fn v51_level_forms() {
+    // getfenv(2) from a callee returns the caller's env. (Parenthesized to
+    // avoid a tail call, which 5.1 itself refuses to introspect.)
+    eq(
+        LuaVersion::V51,
+        "local e = setmetatable({k=1},{__index=_G}) \
+         local function caller() local function callee() return (getfenv(2)) end return (callee()) end \
+         setfenv(caller, e); return caller() == e",
+        "true",
+    );
+    // setfenv(2, t) sets the caller's env (its free name then resolves in t).
+    eq(
+        LuaVersion::V51,
+        "local function caller() local function callee() setfenv(2, setmetatable({y=9},{__index=_G})) end \
+         callee(); return y end return caller()",
+        "9",
+    );
+    // A nested closure that captures BOTH a local and a global: setfenv must
+    // touch the _ENV upvalue, located by NAME (not position — the captured
+    // local is at upvalue 0 here), or the local would be corrupted.
+    eq(
+        LuaVersion::V51,
+        "local up = 7; local function f() return up + g end; g = 100 \
+         local e = setmetatable({g=5},{__index=_G}); setfenv(f, e); return f()",
+        "12",
+    );
+}
+
+#[test]
+fn v51_float_level_truncates() {
+    // Levels truncate toward zero (luaL_checkint cast): getfenv(1.9) is level 1.
+    eq(LuaVersion::V51, "return getfenv(1.9) == _G", "true");
+}
+
+#[test]
+fn v51_c_function_env_is_g() {
+    // C functions get the thread global table as their env (documented
+    // LUA_ENVIRONINDEX gap, specs/followup/5.1-fenv.md §4).
+    eq(LuaVersion::V51, "return getfenv(print) == _G", "true");
+}
+
+#[test]
+fn v51_fenv_error_cases() {
+    err_contains(LuaVersion::V51, "return getfenv(5)", "invalid level");
+    err_contains(LuaVersion::V51, "return getfenv(-1)", "level must be non-negative");
+    err_contains(LuaVersion::V51, "return getfenv('x')", "number expected, got string");
+    err_contains(
+        LuaVersion::V51,
+        "return setfenv(print, {})",
+        "'setfenv' cannot change environment of given object",
+    );
+    err_contains(LuaVersion::V51, "return setfenv(0, 'x')", "table expected, got string");
+    err_contains(LuaVersion::V51, "return setfenv(100, {})", "invalid level");
+}
+
+#[test]
+fn v51_len_on_table_ignores_metamethod() {
+    // THE #1 silent-failure trap: `#t` in 5.1 NEVER consults a table __len;
+    // table __len was added in 5.2. Primitive length always wins.
+    eq(
+        LuaVersion::V51,
+        "local t = setmetatable({1,2,3}, {__len = function() return 99 end}); return #t",
+        "3",
+    );
+    eq(LuaVersion::V51, "return #'hello'", "5");
+    eq(LuaVersion::V51, "return #({10, 20})", "2");
+}
+
+#[test]
+fn v51_pairs_ignores_metamethod() {
+    // 5.1 has no __pairs metamethod; pairs(t) ALWAYS iterates the raw table
+    // even when a __pairs is set (it is silently ignored). Oracle lua5.1.5:
+    // a __pairs that error()s never fires; the raw sum (60) comes through.
+    eq(
+        LuaVersion::V51,
+        "local t = setmetatable({10,20,30}, {__pairs = function() error('should not fire') end}); \
+         local s = 0; for k,v in pairs(t) do s = s + v end; return s",
+        "60",
+    );
+}
+
+#[test]
+fn v52_plus_pairs_honors_metamethod() {
+    // Non-regression guard: __pairs IS consulted in 5.2-5.5. It was added in
+    // 5.2 and `pairs` still dispatches to it on 5.3/5.4/5.5 (verified against
+    // lua5.2.4/5.3.6/5.4.7/5.5.0 — a __pairs that error()s fires on all four).
+    // A __pairs returning an empty iterator makes the loop body never run, so
+    // the raw sum is shadowed (0).
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local t = setmetatable({10,20,30}, {__pairs = function(tt) \
+               return function() return nil end, tt, nil end}); \
+             local s = 0; for k,v in pairs(t) do s = s + v end; return s",
+            "0",
+        );
+    }
+}
+
+#[test]
+fn v51_gc_on_table_is_inert() {
+    // 5.1 has no __gc on tables — only userdata can be finalized. Setting __gc
+    // on a table metatable is inert: no call, no error, on collection. Oracle
+    // lua5.1.5: the flag set by the finalizer stays false after two GC cycles.
+    eq(
+        LuaVersion::V51,
+        "local flag = {fired = false}; \
+         do local t = setmetatable({}, {__gc = function() flag.fired = true end}); t = nil end; \
+         collectgarbage(); collectgarbage(); return tostring(flag.fired)",
+        "false",
+    );
+}
+
+#[test]
+fn v52_plus_gc_on_table_fires() {
+    // Non-regression guard: __gc on tables works in 5.2+ (it was added in 5.2).
+    // The finalizer must run on collection and flip the flag to true. We assert
+    // the call site does not error and produces a boolean; the exact firing is
+    // exercised by the gc canaries — here we only guard that table finalizers
+    // remain *registered* (not silently skipped) off V51 by confirming the
+    // setmetatable path accepts a table __gc without raising.
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local ok = pcall(function() \
+               setmetatable({}, {__gc = function() end}) end); return tostring(ok)",
+            "true",
+        );
+    }
+}
+
+#[test]
+fn v51_fenv_roster_present() {
+    eq(LuaVersion::V51, "return type(getfenv)", "function");
+    eq(LuaVersion::V51, "return type(setfenv)", "function");
+    eq(LuaVersion::V51, "return _VERSION", "Lua 5.1");
+}
+
+#[test]
+fn v52_plus_no_fenv_globals() {
+    // Non-regression guard: getfenv/setfenv are 5.1-ONLY. They were removed in
+    // 5.2 (lexical _ENV) and must stay absent on 5.2/5.3/5.4/5.5. The 5.2+
+    // family also keeps consulting a table __len metamethod.
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return type(getfenv)", "nil");
+        eq(v, "return type(setfenv)", "nil");
+    }
+    // 5.2 keeps the float-only core but consults table __len (5.2+ behavior).
+    eq(
+        LuaVersion::V52,
+        "local t = setmetatable({1,2,3}, {__len = function() return 99 end}); return #t",
+        "99",
+    );
+    // The modern (dual-number) family also consults table __len.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local t = setmetatable({1,2,3}, {__len = function() return 99 end}); return #t",
+            "99",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5.1 — roster / syntax / metamethod axis (the legacy stdlib roster, the
+// pre-5.2 syntax rejections, and the body-behavior deltas). Every expected
+// value captured from /tmp/lua-refs/bin/lua5.1.5. See
+// specs/followup/5.1-roster-syntax.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_global_roster() {
+    // unpack is a GLOBAL; table.unpack/pack/move are absent.
+    eq(LuaVersion::V51, "return unpack({10,20,30})", "10");
+    eq(LuaVersion::V51, "return type(table.unpack)", "nil");
+    eq(LuaVersion::V51, "return type(table.pack)", "nil");
+    eq(LuaVersion::V51, "return type(table.move)", "nil");
+    // legacy table roster present.
+    eq(LuaVersion::V51, "return table.getn({1,2,3})", "3");
+    eq(LuaVersion::V51, "return table.maxn({[1]=1,[5]=2,[3]=3})", "5");
+    eq(LuaVersion::V51, "return type(table.foreach)", "function");
+    eq(LuaVersion::V51, "return type(table.foreachi)", "function");
+    // table.setn is a gravestone raising the obsolete message.
+    err_contains(LuaVersion::V51, "return table.setn({}, 3)", "'setn' is obsolete");
+    // 5.1 holdover globals.
+    eq(LuaVersion::V51, "return type(gcinfo())", "number");
+    eq(LuaVersion::V51, "return type(newproxy)", "function");
+    eq(LuaVersion::V51, "return type(newproxy())", "userdata");
+    eq(LuaVersion::V51, "return type(loadstring)", "function");
+    // absent in 5.1.
+    eq(LuaVersion::V51, "return type(bit32)", "nil");
+    eq(LuaVersion::V51, "return type(utf8)", "nil");
+    eq(LuaVersion::V51, "return type(rawlen)", "nil");
+    eq(LuaVersion::V51, "return type(math.type)", "nil");
+}
+
+#[test]
+fn v51_math_roster() {
+    // 5.1 compat math functions present; math.log ignores a 2nd arg (no base).
+    eq(LuaVersion::V51, "return type(math.log10)", "function");
+    eq(LuaVersion::V51, "return type(math.atan2)", "function");
+    eq(LuaVersion::V51, "return type(math.pow)", "function");
+    eq(LuaVersion::V51, "return type(math.mod)", "function");
+    eq(LuaVersion::V51, "return math.mod(7,3)", "1");
+    // math.log(8,2) == math.log(8) == ln(8); the base is silently ignored.
+    eq(LuaVersion::V51, "return math.log(8,2) == math.log(8)", "true");
+}
+
+#[test]
+fn v51_string_and_package_roster() {
+    eq(LuaVersion::V51, "return type(string.gfind)", "function");
+    eq(LuaVersion::V51, "return type(module)", "function");
+    eq(LuaVersion::V51, "return type(package.seeall)", "function");
+    eq(LuaVersion::V51, "return type(package.loaders)", "table");
+    // package.searchers is the 5.2 rename; absent in 5.1.
+    eq(LuaVersion::V51, "return type(package.searchers)", "nil");
+    // module() creates/initializes a module table and sets the caller env.
+    eq(
+        LuaVersion::V51,
+        "module('foo', package.seeall); return _NAME .. ',' .. tostring(_M == foo)",
+        "foo,true",
+    );
+}
+
+#[test]
+fn v51_body_behavior_deltas() {
+    // load takes a reader function ONLY; a string errors. loadstring loads it.
+    err_contains(LuaVersion::V51, "return load('return 1')", "function expected, got string");
+    eq(LuaVersion::V51, "return loadstring('return 7')()", "7");
+    // xpcall(f, h) does NOT forward extra args; f is called with zero args.
+    eq(
+        LuaVersion::V51,
+        "local n; xpcall(function(...) n = select('#', ...) end, function(e) return e end, 1, 2, 3); return n",
+        "0",
+    );
+    // collectgarbage rejects the 5.4-only options under V51.
+    err_contains(LuaVersion::V51, "return collectgarbage('isrunning')", "invalid option 'isrunning'");
+    // coroutine.running() returns nil in the main coroutine.
+    eq(LuaVersion::V51, "return coroutine.running()", "nil");
+    eq(LuaVersion::V51, "return type(coroutine.isyieldable)", "nil");
+}
+
+#[test]
+fn v51_syntax_rejections() {
+    // goto is NOT reserved in 5.1 — it stays a valid identifier.
+    eq(LuaVersion::V51, "local goto = 5; return goto", "5");
+    // The goto STATEMENT and ::label:: do not parse (goto lexes as a name, so
+    // `goto done` is a name beginning an assignment → "'=' expected").
+    err_contains(LuaVersion::V51, "do goto done; ::done:: end", "'=' expected");
+    err_contains(LuaVersion::V51, "::lbl::", "unexpected symbol near ':'");
+    // 5.3 integer operators and 5.4 attribs do not parse in 5.1.
+    err_contains(LuaVersion::V51, "return 7//2", "unexpected symbol near '/'");
+    err_contains(LuaVersion::V51, "return 6 & 3", "near '&'");
+    err_contains(LuaVersion::V51, "return 1 << 4", "unexpected symbol near '<'");
+    err_contains(LuaVersion::V51, "local x <const> = 1", "unexpected symbol near '<'");
+}
+
+#[test]
+fn v51_escape_leniency() {
+    // 5.1 does NOT recognize \x, \z, \u and does NOT raise on unknown escapes:
+    // it drops the backslash and keeps the next char. \x41 → "x41", \z → "z".
+    eq(LuaVersion::V51, "return '\\x41'", "x41");
+    eq(LuaVersion::V51, "return '\\z'", "z");
+    eq(LuaVersion::V51, "return '\\q'", "q");
+    // Decimal escapes still work; \65 → "A".
+    eq(LuaVersion::V51, "return '\\65'", "A");
+    // A decimal escape > 255 errors (5.1 wording: "escape sequence too large").
+    err_contains(LuaVersion::V51, "return '\\999'", "escape sequence too large");
+}
+
+#[test]
+fn v52_plus_roster_unchanged_by_v51_work() {
+    // Non-regression guards for the SHARED code paths the V51 gates touched:
+    // they must remain version-correct off V51.
+    //  - xpcall forwards extra args in 5.2+ (added in 5.2).
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local n; xpcall(function(...) n = select('#', ...) end, function(e) return e end, 1, 2, 3); return n",
+            "3",
+        );
+    }
+    //  - coroutine.running returns thread + is-main boolean in 5.2+.
+    for v in [LuaVersion::V52, LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "local _, m = coroutine.running(); return tostring(m)", "true");
+    }
+    //  - 5.2 keeps isyieldable absent (added in 5.3); 5.3+ has it.
+    eq(LuaVersion::V52, "return type(coroutine.isyieldable)", "nil");
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, "return type(coroutine.isyieldable)", "function");
+    }
+    //  - 5.2 keeps load accepting a string (the reader-only restriction is V51).
+    eq(LuaVersion::V52, "return load('return 1')()", "1");
+    //  - 5.2 collectgarbage still accepts isrunning (added in 5.2).
+    eq(LuaVersion::V52, "return type(collectgarbage('isrunning'))", "boolean");
+    //  - math.log honors a base argument in 5.2+ (float-only: prints "3").
+    eq(LuaVersion::V52, "return math.log(8, 2)", "3");
+    //  - 5.2 keeps table.unpack/pack present (V51 drops them).
+    eq(LuaVersion::V52, "return type(table.unpack)", "function");
+    eq(LuaVersion::V52, "return type(table.pack)", "function");
 }

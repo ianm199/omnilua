@@ -482,6 +482,18 @@ pub fn co_running(state: &mut LuaState) -> Result<usize, LuaError> {
     // TODO(port): push_thread pushes a Thread value for the current LuaState and
     // returns true iff it is the main thread; Phase B wire-up needed.
     let is_main = state.push_thread()?;
+    // Lua 5.1's `coroutine.running()` returns nil in the main coroutine and only
+    // the running thread (one value) inside a coroutine — the second `is-main`
+    // boolean is a 5.2 addition. Verified against lua5.1.5:
+    // `coroutine.running()` in main prints `nil`. See
+    // specs/followup/5.1-roster-syntax.md §1.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        if is_main {
+            state.pop_n(1);
+            state.push(LuaValue::Nil);
+        }
+        return Ok(1);
+    }
     state.push(LuaValue::Bool(is_main));
     Ok(2)
 }
@@ -614,19 +626,27 @@ pub fn open_coroutine(state: &mut LuaState) -> Result<usize, LuaError> {
     // (`specs/research/5.3-upstream-delta.md` delta #9). Under 5.3 it is absent
     // from the roster entirely.
     use lua_types::LuaVersion;
+    let version = state.global().lua_version;
     let has_close = !matches!(
-        state.global().lua_version,
+        version,
         LuaVersion::V51 | LuaVersion::V52 | LuaVersion::V53
     );
-    if has_close {
+    // `coroutine.isyieldable` is a Lua 5.3 addition; it is absent in 5.1 and 5.2
+    // (verified against lua5.1.5 and lua5.2.4: `type(coroutine.isyieldable)` ==
+    // "nil"). See specs/followup/5.1-roster-syntax.md §1.
+    let has_isyieldable = !matches!(version, LuaVersion::V51 | LuaVersion::V52);
+    if has_close && has_isyieldable {
         state.new_lib(CO_FUNCS)?;
     } else {
-        let without_close: Vec<(&[u8], lua_CFunction)> = CO_FUNCS
+        let filtered: Vec<(&[u8], lua_CFunction)> = CO_FUNCS
             .iter()
-            .filter(|(name, _)| *name != b"close".as_slice())
+            .filter(|(name, _)| {
+                (has_close || *name != b"close".as_slice())
+                    && (has_isyieldable || *name != b"isyieldable".as_slice())
+            })
             .copied()
             .collect();
-        state.new_lib(&without_close)?;
+        state.new_lib(&filtered)?;
     }
     Ok(1)
 }

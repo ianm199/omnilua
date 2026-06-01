@@ -1293,8 +1293,19 @@ pub(crate) fn obj_len(state: &mut LuaState, ra: StackIdx, rb: LuaValue, rb_idx: 
     match &rb {
         LuaValue::Table(_) => {
             //    if (tm) break; else setivalue(s2v(ra), luaH_getn(h));
-            let mt = state.table_metatable(&rb);
-            let tm = state.fast_tm_table(mt.as_ref(), TagMethod::Len);
+            // Lua 5.1 `#t` never consults a table `__len` metamethod (only
+            // userdata can intercept `#` there); `__len` on tables was added in
+            // 5.2. Under V51 we therefore always take the primitive length.
+            let consult_len_tm = !matches!(
+                state.global().lua_version,
+                lua_types::LuaVersion::V51
+            );
+            let tm = if consult_len_tm {
+                let mt = state.table_metatable(&rb);
+                state.fast_tm_table(mt.as_ref(), TagMethod::Len)
+            } else {
+                LuaValue::Nil
+            };
             if matches!(tm, LuaValue::Nil) {
                 let n = state.table_length(&rb)?;
                 state.set_at(ra, LuaValue::Int(n as i64));

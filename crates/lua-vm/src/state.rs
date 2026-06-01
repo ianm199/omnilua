@@ -2834,8 +2834,16 @@ impl LuaState {
     pub fn obj_len(&mut self, v: &LuaValue) -> Result<LuaValue, LuaError> {
         match v {
             LuaValue::Table(_) => {
-                let mt = self.table_metatable(v);
-                let tm = self.fast_tm_table(mt.as_ref(), TagMethod::Len);
+                // Lua 5.1 `#t` ignores a table `__len` metamethod (table
+                // `__len` is 5.2+); always use the primitive length under V51.
+                let consult_len_tm =
+                    !matches!(self.global().lua_version, lua_types::LuaVersion::V51);
+                let tm = if consult_len_tm {
+                    let mt = self.table_metatable(v);
+                    self.fast_tm_table(mt.as_ref(), TagMethod::Len)
+                } else {
+                    LuaValue::Nil
+                };
                 if matches!(tm, LuaValue::Nil) {
                     let n = self.table_length(v)?;
                     return Ok(LuaValue::Int(n));

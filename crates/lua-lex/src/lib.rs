@@ -1416,8 +1416,18 @@ fn read_dec_esc(
         i += 1;
     }
 
-    // UCHAR_MAX = 255 = u8::MAX
-    esc_check(state, ls, r <= u8::MAX as u32, b"decimal escape too large")?;
+    // UCHAR_MAX = 255 = u8::MAX. Lua 5.1 spells this `escape sequence too
+    // large` (the `decimal escape too large` wording is 5.2+). Verified against
+    // lua5.1.5; see specs/followup/5.1-roster-syntax.md §2.
+    let too_large_msg: &[u8] = if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51
+    ) {
+        b"escape sequence too large"
+    } else {
+        b"decimal escape too large"
+    };
+    esc_check(state, ls, r <= u8::MAX as u32, too_large_msg)?;
 
     ls.buff.truncate_by(i);
     Ok(r)
@@ -1459,6 +1469,18 @@ fn read_string(
             c if c == b'\\' as i32 => {
                 save_and_next(ls, state)?;
 
+                // Lua 5.1's lexer does NOT recognize `\x`, `\z`, or `\u`, and it
+                // does NOT raise on an unknown escape. For any escape char outside
+                // the known set, the 5.1 lexer silently drops the backslash and
+                // keeps the next character verbatim (`"\x41"` → bytes `x41`,
+                // `"\z"` → `z`, `"\q"` → `q`). Decimal escapes (`\ddd`) and the
+                // standard letter/quote/newline escapes still work. Verified
+                // against lua5.1.5; see specs/followup/5.1-roster-syntax.md §2.
+                let is_v51 = matches!(
+                    state.global().lua_version,
+                    lua_types::LuaVersion::V51
+                );
+
                 // Inner switch on the escape character
                 let esc = match ls.current {
                     c if c == b'a' as i32 => EscapeResult::ReadSave(b'\x07' as i32),
@@ -1468,11 +1490,11 @@ fn read_string(
                     c if c == b'r' as i32 => EscapeResult::ReadSave(b'\r' as i32),
                     c if c == b't' as i32 => EscapeResult::ReadSave(b'\t' as i32),
                     c if c == b'v' as i32 => EscapeResult::ReadSave(b'\x0B' as i32),
-                    c if c == b'x' as i32 => {
+                    c if c == b'x' as i32 && !is_v51 => {
                         let decoded = read_hex_esc(state, ls)?;
                         EscapeResult::ReadSave(decoded as i32)
                     }
-                    c if c == b'u' as i32 => {
+                    c if c == b'u' as i32 && !is_v51 => {
                         utf8_esc(state, ls)?;
                         EscapeResult::NoSave
                     }
@@ -1484,7 +1506,7 @@ fn read_string(
                         EscapeResult::ReadSave(c)
                     }
                     c if c == EOZ => EscapeResult::NoSave,
-                    c if c == b'z' as i32 => {
+                    c if c == b'z' as i32 && !is_v51 => {
                         ls.buff.truncate_by(1);
                         advance(ls);
                         while is_space(ls.current) {
@@ -1495,6 +1517,10 @@ fn read_string(
                             }
                         }
                         EscapeResult::NoSave
+                    }
+                    c if is_v51 && !is_digit(c) => {
+                        // 5.1 unknown escape: drop the backslash, emit the char.
+                        EscapeResult::ReadSave(c)
                     }
                     _ => {
                         esc_check(
@@ -1680,7 +1706,15 @@ fn llex(
 
             c if c == b':' as i32 => {
                 advance(ls);
-                if check_next1(ls, b':' as i32) {
+                // Lua 5.1 has no `::label::` token; `::` was added with `goto` in
+                // 5.2. Under V51 the second `:` is left for the parser, which
+                // reports `unexpected symbol near ':'`. See
+                // specs/followup/5.1-roster-syntax.md §2.
+                let is_v51 = matches!(
+                    state.global().lua_version,
+                    lua_types::LuaVersion::V51
+                );
+                if !is_v51 && check_next1(ls, b':' as i32) {
                     return Ok(TK_DBCOLON);
                 }
                 return Ok(b':' as i32);
@@ -1740,6 +1774,21 @@ fn llex(
                     *seminfo = TokenValue::Str(ts);
 
                     if let Some(tk) = reserved_token {
+                        // Lua 5.1 has no `goto` keyword — `goto` is an ordinary
+                        // identifier (`local goto = 5` is valid). The keyword and
+                        // the `::label::` grammar were added in 5.2. So under V51
+                        // `goto` lexes as a plain name; the parser then treats
+                        // `goto done` as a name beginning an assignment, yielding
+                        // the incidental `'=' expected near 'done'` the oracle
+                        // reports. See specs/followup/5.1-roster-syntax.md §2.
+                        if tk == TK_GOTO
+                            && matches!(
+                                state.global().lua_version,
+                                lua_types::LuaVersion::V51
+                            )
+                        {
+                            return Ok(TK_NAME);
+                        }
                         return Ok(tk);
                     }
 

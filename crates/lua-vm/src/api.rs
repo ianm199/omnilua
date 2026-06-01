@@ -1625,9 +1625,18 @@ pub fn set_metatable(state: &mut LuaState, objindex: i32) -> Result<bool, LuaErr
             // `__gc` and `obj` was not already registered, pin `obj` in the
             // pending-finalizers list so that `run_pending_finalizers` can
             // invoke the finalizer before the object is freed.
-            if let Some(ref mt_table) = mt {
-                if metatable_has_gc(state, mt_table) {
-                    register_finalizable_table(state, tbl);
+            //
+            // Lua 5.1 has no `__gc` on tables — only userdata can be finalized.
+            // Setting `__gc` on a table metatable is inert under V51 (no call,
+            // no error). `__gc` on tables was added in 5.2, so only register
+            // table finalizers off V51.
+            let tables_finalizable =
+                !matches!(state.global().lua_version, lua_types::LuaVersion::V51);
+            if tables_finalizable {
+                if let Some(ref mt_table) = mt {
+                    if metatable_has_gc(state, mt_table) {
+                        register_finalizable_table(state, tbl);
+                    }
                 }
             }
         }

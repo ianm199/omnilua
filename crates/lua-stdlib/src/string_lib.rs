@@ -2767,6 +2767,14 @@ pub fn createmetatable(state: &mut LuaState) -> Result<(), LuaError> {
 ///
 pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
     state.new_lib(STRING_LIB)?;
+    // Lua 5.1 carries `string.gfind`, the pre-5.0 name for `gmatch` (an exact
+    // alias). It was removed in 5.2. Verified against lua5.1.5:
+    // `type(string.gfind)` == "function" and it iterates identically to
+    // `gmatch`. See specs/followup/5.1-roster-syntax.md §1.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        state.push_c_function(gmatch)?;
+        state.set_field(-2, b"gfind")?;
+    }
     createmetatable(state)?;
     Ok(1)
 }

@@ -847,6 +847,97 @@ pub fn create(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
+// ─── Lua 5.1 legacy compat functions (`getn`/`setn`/`maxn`/`foreach`/`foreachi`) ──
+//
+// These predate the `#` operator and the 5.2 roster cleanup; they ship only in
+// the default lua5.1.5 build (`ltablib.c`) and are registered under the V51
+// backend by `open_table`. Verified against lua5.1.5; see
+// specs/followup/5.1-roster-syntax.md §1.
+
+/// `table.getn(t)` — the "size" of a sequence, i.e. the border `#t` reports.
+///
+/// In 5.1 `aux_getn` is `luaL_checktype(TABLE)` followed by `luaL_getn`, which
+/// resolves to the primitive length. Mirrors `getn` in 5.1 `ltablib.c`.
+fn getn(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(1, LuaType::Table)?;
+    let n = state.length_at(1)?;
+    state.push(LuaValue::Int(n));
+    Ok(1)
+}
+
+/// `table.setn(t, n)` — obsolete gravestone. In 5.1 the default build defines
+/// `luaL_setn` as a no-op, so `setn` raises `'setn' is obsolete`. Verified
+/// against lua5.1.5 (`pcall`-able to that exact message).
+fn setn(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(1, LuaType::Table)?;
+    Err(LuaError::runtime(format_args!("'setn' is obsolete")))
+}
+
+/// `table.maxn(t)` — the largest positive numeric key (0 if none). Iterates the
+/// raw table via `next`, tracking the max numeric key. Mirrors `maxn` in 5.1
+/// `ltablib.c`.
+fn maxn(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(1, LuaType::Table)?;
+    let mut max: f64 = 0.0;
+    state.push(LuaValue::Nil);
+    while state.table_next(1)? {
+        // Stack: ..., key, value. Drop the value, inspect the key.
+        state.pop_n(1);
+        if matches!(state.type_at(-1), LuaType::Number) {
+            if let Some(v) = state.to_number(-1) {
+                if v > max {
+                    max = v;
+                }
+            }
+        }
+    }
+    state.push(LuaValue::Float(max));
+    Ok(1)
+}
+
+/// `table.foreachi(t, f)` — call `f(i, t[i])` for `i` in `1..#t`, stopping early
+/// if `f` returns a non-nil value (which is then returned). Mirrors `foreachi`
+/// in 5.1 `ltablib.c`.
+fn foreachi(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(1, LuaType::Table)?;
+    state.check_arg_type(2, LuaType::Function)?;
+    let n = state.length_at(1)?;
+    let mut i: i64 = 1;
+    while i <= n {
+        state.push_value_at(2)?;
+        state.push(LuaValue::Int(i));
+        state.table_get_i(1, i)?;
+        state.call(2, 1)?;
+        if !matches!(state.type_at(-1), LuaType::Nil) {
+            return Ok(1);
+        }
+        state.pop_n(1);
+        i += 1;
+    }
+    Ok(0)
+}
+
+/// `table.foreach(t, f)` — call `f(k, v)` for every pair, stopping early if `f`
+/// returns a non-nil value (which is then returned). Mirrors `foreach` in 5.1
+/// `ltablib.c`.
+fn foreach(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(1, LuaType::Table)?;
+    state.check_arg_type(2, LuaType::Function)?;
+    state.push(LuaValue::Nil);
+    while state.table_next(1)? {
+        // Stack: ..., key, value.
+        state.push_value_at(2)?; // function
+        state.push_value_at(-3)?; // key copy
+        state.push_value_at(-3)?; // value copy
+        state.call(2, 1)?;
+        if !matches!(state.type_at(-1), LuaType::Nil) {
+            return Ok(1);
+        }
+        state.pop_n(2); // remove value and result, leaving key for next()
+    }
+    Ok(0)
+}
+
 // ─── Module opener ────────────────────────────────────────────────────────────
 
 ///
@@ -860,13 +951,33 @@ pub fn open_table(state: &mut LuaState) -> Result<usize, LuaError> {
     // TODO(port): state.new_lib → luaL_newlib; creates a new table and registers functions;
     //             verify method name and signature
     //
-    // Per-version roster delta: `table.move` is a Lua 5.3 addition, absent in
-    // 5.1/5.2 (verified against lua5.2.4: `type(table.move)` == "nil"). Drop it
-    // from the roster under the float-only legacy family.
-    if matches!(
-        state.global().lua_version,
-        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
-    ) {
+    // Per-version roster deltas:
+    //  - `table.move` is a Lua 5.3 addition, absent in 5.1/5.2 (verified against
+    //    lua5.2.4: `type(table.move)` == "nil").
+    //  - `table.pack`/`table.unpack` are Lua 5.2 additions; in 5.1 `unpack` is a
+    //    *global* and there is no `table.pack` (verified against lua5.1.5: both
+    //    `table.unpack` and `table.pack` are nil). 5.1 instead carries the legacy
+    //    `getn`/`setn`/`maxn`/`foreach`/`foreachi` roster.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        let legacy: Vec<(&[u8], fn(&mut LuaState) -> Result<usize, LuaError>)> = TABLE_FUNCS
+            .iter()
+            .filter(|(name, _)| {
+                *name != b"move".as_slice()
+                    && *name != b"pack".as_slice()
+                    && *name != b"unpack".as_slice()
+            })
+            .copied()
+            .collect();
+        state.new_lib(&legacy)?;
+        const LEGACY_FUNCS: &[(&[u8], fn(&mut LuaState) -> Result<usize, LuaError>)] = &[
+            (b"getn", getn),
+            (b"setn", setn),
+            (b"maxn", maxn),
+            (b"foreach", foreach),
+            (b"foreachi", foreachi),
+        ];
+        state.set_funcs_with_upvalues(LEGACY_FUNCS, 0)?;
+    } else if matches!(state.global().lua_version, lua_types::LuaVersion::V52) {
         let without_move: Vec<(&[u8], fn(&mut LuaState) -> Result<usize, LuaError>)> = TABLE_FUNCS
             .iter()
             .filter(|(name, _)| *name != b"move".as_slice())

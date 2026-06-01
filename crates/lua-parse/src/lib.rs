@@ -4518,6 +4518,15 @@ fn exprstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         restassign(ls, state, &mut v_assign, 1)?;
     } else {
         if v_assign.v.k != ExprKind::Call {
+            // Lua 5.1's `exprstat` falls into `assignment`, which requires an
+            // `=`, so a bare primary expression statement reports `'=' expected`.
+            // 5.2+ rewrote this path to report the generic `syntax error`. Match
+            // the version. This is what makes `goto done` (where `goto` lexes as
+            // a name under V51) report `'=' expected near 'done'`. See
+            // specs/followup/5.1-roster-syntax.md §2.
+            if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+                return Err(error_expected(ls, b'=' as TokenKind));
+            }
             return Err(lua_lex::syntax_error(&mut ls.lex, b"syntax error"));
         }
         let info = v_assign.v.u.info as usize;

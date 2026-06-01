@@ -4,6 +4,7 @@
 //! Target crate: `lua-stdlib`
 
 use lua_types::{
+    closure::LuaClosure,
     error::LuaError,
     value::LuaValue,
     LuaType,
@@ -434,7 +435,22 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
     // The option set is version-gated. 5.4/5.3 expose `setpause`/`setstepmul`;
     // 5.5 removed both and added `param` (lbaselib.c). The version that owns
     // the running state decides which list/mapping applies.
-    let is_v55 = state.global().lua_version == lua_types::LuaVersion::V55;
+    let version = state.global().lua_version;
+    let is_v55 = version == lua_types::LuaVersion::V55;
+    // Lua 5.1's `collectgarbage` accepts only `collect/stop/restart/count/step/
+    // setpause/setstepmul`; the 5.2 `isrunning`/`generational`, the 5.4
+    // `incremental`, and the 5.5 `param` must be rejected with `invalid option`.
+    // Verified against lua5.1.5: `collectgarbage("isrunning")` errors. (5.2 DOES
+    // accept `isrunning`/`generational`, so it stays on OPTS_54.) See
+    // specs/followup/5.1-roster-syntax.md §1.
+    static OPTS_51: &[&[u8]] = &[
+        b"stop", b"restart", b"collect",
+        b"count", b"step", b"setpause", b"setstepmul",
+    ];
+    static OPTS_NUM_51: &[GcOp] = &[
+        GcOp::Stop, GcOp::Restart, GcOp::Collect,
+        GcOp::Count, GcOp::Step, GcOp::SetPause, GcOp::SetStepMul,
+    ];
     static OPTS_54: &[&[u8]] = &[
         b"stop", b"restart", b"collect",
         b"count", b"step", b"setpause", b"setstepmul",
@@ -457,6 +473,8 @@ pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError>
     ];
     let (opts, opts_num): (&[&[u8]], &[GcOp]) = if is_v55 {
         (OPTS_55, OPTS_NUM_55)
+    } else if matches!(version, lua_types::LuaVersion::V51) {
+        (OPTS_51, OPTS_NUM_51)
     } else {
         (OPTS_54, OPTS_NUM_54)
     };
@@ -564,6 +582,200 @@ pub(crate) fn type_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
+// ── getfenv / setfenv (Lua 5.1 fenv globals) ──────────────────────────────────
+
+/// Truncate a numeric `getfenv`/`setfenv` level toward zero.
+///
+/// 5.1's `luaL_checkint` casts `lua_Number` to a C `int`, truncating toward
+/// zero, so `getfenv(1.9)` is level 1 and `getfenv(-0.5)` is level 0. Under the
+/// float-only V51 model every number arrives as a `Float`; the `Int` arm is a
+/// defensive no-op. A non-number never reaches this helper.
+fn fenv_level(v: &LuaValue) -> i64 {
+    match v {
+        LuaValue::Float(f) => f.trunc() as i64,
+        LuaValue::Int(i) => *i,
+        _ => 0,
+    }
+}
+
+/// Resolve the function value targeted by a `getfenv`/`setfenv` first argument.
+///
+/// Returns the `LuaValue::Function` whose environment is being read or written.
+/// `arg1` is interpreted exactly as Lua 5.1's `getfunc`/`setfunc`
+/// (lbaselib.c): a function value targets that function directly; a number is a
+/// stack *level* (floored toward zero), where level 1 is the function calling
+/// `getfenv`/`setfenv`. Level 0 is handled by the callers (it denotes the
+/// running thread's global table, not a function) and never reaches here.
+///
+/// Errors mirror lua5.1.5:
+/// - negative level → `level must be non-negative`
+/// - level past the stack → `invalid level`
+/// - neither number nor function → `number expected, got <type>`
+fn fenv_getfunc(state: &mut LuaState, level: i64) -> Result<LuaValue, LuaError> {
+    if level < 0 {
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"level must be non-negative"));
+    }
+    let mut ar = lua_vm::debug::LuaDebug::default();
+    if !lua_vm::debug::get_stack(state, level as i32, &mut ar) {
+        return Err(lua_vm::debug::arg_error_impl(state, 1, b"invalid level"));
+    }
+    let ci_idx = ar
+        .i_ci
+        .ok_or_else(|| lua_vm::debug::arg_error_impl(state, 1, b"invalid level"))?;
+    let func_slot = state.get_ci(ci_idx).func;
+    Ok(state.get_at(func_slot))
+}
+
+/// Index of a Lua closure's `_ENV` upvalue, by upvalue name.
+///
+/// The reused modern parser threads an upvalue literally named `_ENV` and
+/// resolves every free (global) name through it; under V51 that upvalue *is* the
+/// function environment. It is NOT always upvalue 0 — a nested closure that
+/// captures locals places those first, with `_ENV` at a later index — so it must
+/// be located by name, not position. A closure that references no free names has
+/// no `_ENV` upvalue and returns `None`.
+fn fenv_env_upval_index(lcl: &lua_types::gc::GcRef<lua_types::closure::LuaLClosure>) -> Option<usize> {
+    lcl.proto
+        .upvalues
+        .iter()
+        .position(|ud| ud.name.as_ref().map(|s| s.as_bytes()) == Some(b"_ENV"))
+}
+
+/// Read the environment of a resolved function value.
+///
+/// A Lua closure's environment is its `_ENV` upvalue. A C/Rust function (or a
+/// Lua closure that references no globals, hence has no `_ENV` upvalue) is given
+/// the thread global table as its environment — matching the common 5.1 case
+/// and the documented `LUA_ENVIRONINDEX` gap (specs/followup/5.1-fenv.md §4).
+fn fenv_read(state: &LuaState, func: &LuaValue) -> LuaValue {
+    if let LuaValue::Function(LuaClosure::Lua(lcl)) = func {
+        if let Some(idx) = fenv_env_upval_index(lcl) {
+            return state.upvalue_get(lcl, idx);
+        }
+    }
+    state.global().globals.clone()
+}
+
+/// `getfenv([f])` — Lua 5.1 only.
+///
+/// Returns the environment of the function `f` (a function value or a stack
+/// level), or the running function's environment when the argument is absent or
+/// `1`. Level `0` returns the running thread's global table. See
+/// `specs/followup/5.1-fenv.md` §2.
+pub(crate) fn getfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    let arg1 = state.value_at(1);
+    let func = match &arg1 {
+        LuaValue::Function(_) => arg1.clone(),
+        LuaValue::Nil if state.type_at(1) == LuaType::None => {
+            // No argument => level 1 (the running function).
+            fenv_getfunc(state, 1)?
+        }
+        LuaValue::Float(_) | LuaValue::Int(_) => {
+            let level = fenv_level(&arg1);
+            if level == 0 {
+                let g = state.global().globals.clone();
+                state.push(g);
+                return Ok(1);
+            }
+            fenv_getfunc(state, level)?
+        }
+        other => {
+            let got = state.obj_type_name(other);
+            let msg = format!("number expected, got {}", String::from_utf8_lossy(&got));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, msg.as_bytes()));
+        }
+    };
+    let env = fenv_read(state, &func);
+    state.push(env);
+    Ok(1)
+}
+
+/// `setfenv(f, table)` — Lua 5.1 only.
+///
+/// Sets the environment of the function `f` (a function value or a stack level)
+/// to `table`. `setfenv(0, t)` sets the running thread's global table. Returns
+/// the affected function (or the running thread for level 0). A C/Rust function
+/// (or any non-Lua object) cannot have its environment changed and raises,
+/// matching lua5.1.5. See `specs/followup/5.1-fenv.md` §2.
+pub(crate) fn setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    state.check_arg_type(2, LuaType::Table)?;
+    let new_env = state.value_at(2);
+
+    let arg1 = state.value_at(1);
+    let is_level_zero = matches!(&arg1, LuaValue::Int(0))
+        || matches!(&arg1, LuaValue::Float(f) if *f == 0.0);
+    if is_level_zero {
+        // Level 0: replace the running thread's global table and return the
+        // running thread. Subsequently-loaded top-level chunks take this env.
+        state.global_mut().globals = new_env;
+        lua_vm::api::push_thread(state);
+        return Ok(1);
+    }
+
+    let func = match &arg1 {
+        LuaValue::Function(_) => arg1.clone(),
+        LuaValue::Float(_) | LuaValue::Int(_) => {
+            let level = fenv_level(&arg1);
+            fenv_getfunc(state, level)?
+        }
+        other => {
+            let got = state.obj_type_name(other);
+            let msg = format!("number expected, got {}", String::from_utf8_lossy(&got));
+            return Err(lua_vm::debug::arg_error_impl(state, 1, msg.as_bytes()));
+        }
+    };
+
+    match &func {
+        LuaValue::Function(LuaClosure::Lua(lcl)) => {
+            if let Some(idx) = fenv_env_upval_index(lcl) {
+                // Give the closure a PRIVATE environment: replace its `_ENV`
+                // upvalue *cell* with a fresh closed upvalue holding `new_env`.
+                // Mutating the existing cell's value (`upvalue_set`) would alter
+                // every closure sharing that upvalue (e.g. the main chunk's
+                // `_G`), which is wrong — `setfenv(f, e)` must not change the
+                // caller's globals. A new cell isolates `f`.
+                let uv = state.new_upval_closed(new_env);
+                lcl.set_upval(idx, uv);
+            }
+            // A Lua closure that references no globals has no `_ENV` upvalue and
+            // nothing reads globals through it, so the set is inert; 5.1 still
+            // accepts it and returns the function. (Gap: a subsequent
+            // `getfenv` on such a closure returns the thread globals rather than
+            // the set table — see specs/followup/5.1-fenv.md §4.)
+        }
+        _ => {
+            // C/Rust functions cannot have their environment changed. 5.1
+            // raises this exact message (via luaL_error, so it carries the
+            // caller's source location) for any object whose env is fixed.
+            return Err(state.where_error(1, b"'setfenv' cannot change environment of given object"));
+        }
+    }
+    state.push(func);
+    Ok(1)
+}
+
+/// Set the environment of the Lua closure `level` frames up the running stack
+/// to `new_env`, the internal equivalent of `setfenv(level, new_env)`.
+///
+/// Used by `module` (5.1 `package` library), which sets its caller's
+/// environment to the module table. A non-Lua function (or a closure with no
+/// `_ENV` upvalue) is left unchanged, matching the inert-set behavior of
+/// `setfenv`. See specs/followup/5.1-fenv.md.
+pub(crate) fn set_func_env_at_level(
+    state: &mut LuaState,
+    level: i64,
+    new_env: LuaValue,
+) -> Result<(), LuaError> {
+    let func = fenv_getfunc(state, level)?;
+    if let LuaValue::Function(LuaClosure::Lua(lcl)) = &func {
+        if let Some(idx) = fenv_env_upval_index(lcl) {
+            let uv = state.new_upval_closed(new_env);
+            lcl.set_upval(idx, uv);
+        }
+    }
+    Ok(())
+}
+
 // ── next ──────────────────────────────────────────────────────────────────────
 
 /// Table traversal iterator: given a table and a key, pushes the next key-value
@@ -596,7 +808,11 @@ fn pairs_cont(_state: &mut LuaState, _status: i32, _ctx: isize) -> Result<usize,
 ///
 pub(crate) fn pairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_any(1)?;
-    if state.get_metafield(1, b"__pairs")? == LuaType::Nil {
+    // Lua 5.1 has no `__pairs` metamethod; `pairs(t)` always iterates the raw
+    // table even when a `__pairs` is set (it is silently ignored). `__pairs`
+    // was added in 5.2 and removed again in 5.4, so only consult it off V51.
+    let consult_pairs_tm = !matches!(state.global().lua_version, lua_types::LuaVersion::V51);
+    if !consult_pairs_tm || state.get_metafield(1, b"__pairs")? == LuaType::Nil {
         state.push_c_function(next_fn)?;
         state.push_copy(1)?;
         state.push(LuaValue::Nil);
@@ -691,6 +907,13 @@ fn generic_reader(state: &mut LuaState) -> Result<Option<Vec<u8>>, LuaError> {
 /// Loads a Lua chunk from a string or a reader function.
 ///
 pub(crate) fn load_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    // Lua 5.1's `load` takes a *reader function only* — string loading is
+    // `loadstring`'s job. `load("...")` errors with `function expected, got
+    // string`. The string-or-function overload is a 5.2 addition. Verified
+    // against lua5.1.5; see specs/followup/5.1-roster-syntax.md §1.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        state.check_arg_type(1, LuaType::Function)?;
+    }
     // Determine whether argument 1 is a string (load from buffer) or a
     // function (load from reader).
     let is_string = matches!(state.type_at(1), LuaType::String | LuaType::Number);
@@ -715,6 +938,69 @@ pub(crate) fn load_fn(state: &mut LuaState) -> Result<usize, LuaError> {
         state.load_with_reader(generic_reader, &chunkname, &mode)?
     };
     load_aux(state, status_ok, env)
+}
+
+/// `loadstring(s [, chunkname])` — Lua 5.1 only.
+///
+/// Loads a string as a Lua chunk. In 5.1 this is the string-loading counterpart
+/// to `load` (which takes a reader function only). The second argument is the
+/// chunk name. Verified against lua5.1.5; see
+/// specs/followup/5.1-roster-syntax.md §1.
+pub(crate) fn loadstring_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    let chunk: Vec<u8> = state.check_arg_string(1)?;
+    let chunkname: Vec<u8> = if state.is_none_or_nil(2) {
+        chunk.clone()
+    } else {
+        state.check_arg_string(2)?
+    };
+    let status_ok = state.load_buffer_ex(&chunk, &chunkname, b"bt")?;
+    load_aux(state, status_ok, 0)
+}
+
+/// `gcinfo()` — Lua 5.1 only. Returns the amount of memory in use by Lua, in
+/// kilobytes. A deprecated holdover of `collectgarbage("count")` that returns
+/// just the integer KB count. Verified against lua5.1.5: returns a number. See
+/// specs/followup/5.1-roster-syntax.md §1.
+pub(crate) fn gcinfo_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    let k = state.gc_count()?;
+    state.push(LuaValue::Int(k as i64));
+    Ok(1)
+}
+
+/// `newproxy([boolean | proxy])` — Lua 5.1 only.
+///
+/// Creates a zero-size userdata (a "proxy"). With no argument or `false`, the
+/// proxy has no metatable. With `true`, it gets a fresh empty metatable (so a
+/// host can install `__gc`/`__len`, the userdata idiom these metamethods need
+/// in 5.1). With another proxy, it shares that proxy's metatable. Mirrors
+/// `luaB_newproxy` in 5.1 `lbaselib.c`; see specs/followup/5.1-roster-syntax.md
+/// §1. The C version validates the proxy argument against a weak table of
+/// metatables it created; this port instead accepts any userdata that carries a
+/// metatable, which is observably equivalent for the proxy idiom.
+pub(crate) fn newproxy_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    lua_vm::api::set_top(state, 1)?;
+    // The new userdata is pushed at stack position 2.
+    state.new_userdata_typed(b"", 0, 0)?;
+    if !state.to_boolean(1) {
+        return Ok(1); // no metatable
+    }
+    if matches!(state.type_at(1), LuaType::Boolean) {
+        // `true`: create and attach a fresh empty metatable.
+        let mt = state.new_table();
+        state.push(LuaValue::Table(mt));
+        state.set_metatable(2)?;
+    } else {
+        // A proxy argument: share its metatable. Validate it is a userdata that
+        // carries one (the C version checks a weak table of valid metatables).
+        let is_proxy =
+            matches!(state.type_at(1), LuaType::UserData) && state.get_metatable(1)?;
+        if !is_proxy {
+            return Err(lua_vm::debug::arg_error_impl(state, 1, b"boolean or proxy expected"));
+        }
+        // get_metatable pushed arg1's metatable on top; attach it to the proxy.
+        state.set_metatable(2)?;
+    }
+    Ok(1)
 }
 
 // ── dofile ────────────────────────────────────────────────────────────────────
@@ -828,6 +1114,14 @@ fn finish_pcall_k(state: &mut LuaState, status: i32, extra: isize) -> Result<usi
 /// Protected call with a separate error-handler function.
 ///
 pub(crate) fn xpcall_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    // Lua 5.1's `xpcall(f, h)` does NOT forward extra arguments to `f` — `f` is
+    // always called with zero arguments. The extra-argument forwarding is a 5.2
+    // addition. Verified against lua5.1.5: `xpcall(fn, h, 1,2,3)` calls `fn`
+    // with `select("#",...) == 0`. Drop any args past the handler. See
+    // specs/followup/5.1-roster-syntax.md §1.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) && state.top() > 2 {
+        lua_vm::api::set_top(state, 2)?;
+    }
     let n = state.top() as i32;
     state.check_arg_type(2, LuaType::Function)?;
     // Stack before rotate: [f, err, a1, …, aN, true, f]
@@ -929,8 +1223,38 @@ pub fn open(state: &mut LuaState) -> Result<usize, LuaError> {
     ) {
         state.push_c_function(crate::table_lib::unpack)?;
         state.set_field(-2, b"unpack")?;
+    }
+    // `loadstring` aliases `load` in 5.2 (whose `load` accepts a string), but in
+    // 5.1 `load` is reader-only, so `loadstring` is a distinct string-loader.
+    // Both are absent in 5.3+. See specs/followup/5.1-roster-syntax.md §1.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V52) {
         state.push_c_function(load_fn)?;
         state.set_field(-2, b"loadstring")?;
+    }
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        state.push_c_function(loadstring_fn)?;
+        state.set_field(-2, b"loadstring")?;
+        // `gcinfo()` and `newproxy()` are 5.1 holdovers absent in 5.2+.
+        state.push_c_function(gcinfo_fn)?;
+        state.set_field(-2, b"gcinfo")?;
+        state.push_c_function(newproxy_fn)?;
+        state.set_field(-2, b"newproxy")?;
+        // `rawlen` is a Lua 5.2 addition; it is absent in 5.1. Verified against
+        // lua5.1.5: `type(rawlen)` == "nil". It lives in BASE_FUNCS (registered
+        // for every version), so withhold it under V51.
+        state.push(LuaValue::Nil);
+        state.set_field(-2, b"rawlen")?;
+    }
+    // Lua 5.1's fenv-based globals model: `getfenv`/`setfenv` read and write a
+    // function's environment (its `_ENV` upvalue under the reused modern core)
+    // or the running thread's global table for level 0. Both were removed in
+    // 5.2 (which switched to lexical `_ENV`), so they are V51-only. See
+    // specs/followup/5.1-fenv.md.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        state.push_c_function(getfenv_fn)?;
+        state.set_field(-2, b"getfenv")?;
+        state.push_c_function(setfenv_fn)?;
+        state.set_field(-2, b"setfenv")?;
     }
     Ok(1)
 }

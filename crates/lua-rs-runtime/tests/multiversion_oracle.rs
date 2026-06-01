@@ -1021,6 +1021,18 @@ fn v54_collectgarbage_param_not_an_option() {
 }
 
 #[test]
+fn v54_v55_start_in_reported_generational_mode() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        eq(v,
+            "local a = collectgarbage('incremental'); \
+             local b = collectgarbage('generational'); \
+             local c = collectgarbage('incremental'); \
+             return a .. '|' .. b .. '|' .. c",
+            "generational|incremental|generational");
+    }
+}
+
+#[test]
 fn v55_version_string() {
     eq(LuaVersion::V55, "return _VERSION", "Lua 5.5");
     eq(LuaVersion::V54, "return _VERSION", "Lua 5.4");

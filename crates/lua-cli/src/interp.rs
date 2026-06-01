@@ -698,6 +698,7 @@ fn pmain_body(
         cli.report(Err(e));
         return false;
     }
+    api::configure_startup_gc_mode(state);
     if let Err(e) = preload(state) {
         cli.report(Err(e));
         return false;

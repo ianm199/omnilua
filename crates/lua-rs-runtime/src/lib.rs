@@ -792,6 +792,7 @@ impl Lua {
         install_parser_hook(&mut state);
         hooks.install(&mut state);
         open_libs(&mut state)?;
+        lua_vm::api::configure_startup_gc_mode(&mut state);
         let lua = Self::from_initialized_state(state, version);
         lua.sync_version_global()?;
         Ok(lua)
@@ -3247,6 +3248,7 @@ impl LuaRuntime {
         install_parser_hook(&mut state);
         hooks.install(&mut state);
         open_libs(&mut state)?;
+        lua_vm::api::configure_startup_gc_mode(&mut state);
         Ok(Self { state })
     }
 

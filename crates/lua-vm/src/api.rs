@@ -2136,6 +2136,28 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
     0
 }
 
+/// Configure the hosted-runtime GC mode after the standard libraries are open.
+///
+/// Upstream 5.4/5.5 initialize a fresh raw state in incremental mode, then the
+/// standalone/runtime startup path restarts the collector and enters
+/// generational mode. Keep `new_state()` semantics raw-state faithful and apply
+/// the observable hosted default at this layer.
+pub fn configure_startup_gc_mode(state: &mut LuaState) {
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V54 | lua_types::LuaVersion::V55
+    ) {
+        let _ = gc(state, GcArgs::Restart);
+        let _ = gc(
+            state,
+            GcArgs::Gen {
+                minormul: 0,
+                majormul: 0,
+            },
+        );
+    }
+}
+
 // ── miscellaneous functions ───────────────────────────────────────────────────
 
 // PORT NOTE: returns Result<Infallible, _> — semantically "always Err". The

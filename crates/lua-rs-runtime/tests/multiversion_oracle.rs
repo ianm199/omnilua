@@ -1424,6 +1424,41 @@ fn v52_float_only_number_model() {
     eq(LuaVersion::V52, "return _VERSION", "Lua 5.2");
 }
 
+/// Float-only is an OBSERVATIONAL invariant, not a constructional one.
+///
+/// The gate-based float-only design (5.1/5.2) keeps the dual `LuaValue` enum and
+/// does NOT forbid constructing `Int` — `#t`, `string.len`, `string.byte`, and
+/// `Int*Int` arithmetic all still produce internal `Int` values under V51/V52.
+/// That is intentional and correct: an integer-valued `Int` is observationally
+/// identical to the equivalent `Float` once the distinguishing channels are
+/// gated (`tostring` suppresses the `.0`; `math.type`/`//`/bitwise — the only
+/// things that could tell them apart — are absent or unlexable in 5.1/5.2).
+///
+/// This test pins that interpretation so a future change does NOT "fix" the
+/// internal `Int` construction (a no-op churn) or add a blanket
+/// `debug_assert!(no Int under FloatOnly)` (which would fire on `#"abc"` and is
+/// the WRONG invariant). What must hold is the observable surface — locked here
+/// and in `v52_float_only_number_model` / `v52_math_roster_is_float_only`.
+#[test]
+fn float_only_internal_int_is_observationally_invisible() {
+    for v in [LuaVersion::V51, LuaVersion::V52] {
+        // Int*Int (two lengths) is constructed as an internal Int, yet prints
+        // and concatenates with no `.0` — indistinguishable from Float(6.0).
+        eq(v, r#"return #"abc" * #"de""#, "6");
+        eq(v, r#"return tostring(#"abcdef")"#, "6");
+        eq(v, r#"return (#"abc" * #"de") .. """#, "6");
+        // string.byte yields an internal Int too; arithmetic on it stays faithful.
+        eq(v, r#"return string.byte("A") + 1"#, "66");
+        // The ONLY channel that would expose the internal Int — math.type — is
+        // absent in the float-only family, which is exactly why it stays hidden.
+        eq(v, "return type(math.type)", "nil");
+    }
+    // Contrast: on the dual-model core the same length IS an observable integer
+    // (math.type present) — proving the value really is Int internally and that
+    // math.type's absence is what makes 5.1/5.2 float-only, not any value fork.
+    eq(LuaVersion::V53, r#"return math.type(#"abc")"#, "integer");
+}
+
 #[test]
 fn v52_math_roster_is_float_only() {
     // The 5.3 integer-subtype members are absent.

@@ -2650,9 +2650,16 @@ fn solvegoto(
     Ok(())
 }
 
-/// Searches for an active label with the given name in the current function.
-fn findlabel(ls: &LexState, name: &GcRef<LuaString>) -> Option<usize> {
-    let first = ls.fs.as_ref().unwrap().firstlabel as usize;
+/// Searches for an active label with the given name, starting the scan at the
+/// label-list index `first`.
+///
+/// The scan-start encodes the version-specific scope of goto resolution. In Lua
+/// 5.2/5.3, upstream `gotostat` resolves a goto against labels of the **current
+/// block only** (`fs->bl->firstlabel`); a goto that matches no current-block
+/// label stays pending and is resolved later when its label is declared (or is
+/// moved out to the enclosing block on block exit). In 5.4/5.5 `findlabel` was
+/// changed to scan the whole function (`fs->firstlabel`).
+fn findlabel_from(ls: &LexState, name: &GcRef<LuaString>, first: usize) -> Option<usize> {
     for i in first..ls.dyd.label.len() {
         let lb = &ls.dyd.label[i];
         if lb.name.as_ref().map_or(false, |n| GcRef::ptr_eq(n, name)) {
@@ -2660,6 +2667,31 @@ fn findlabel(ls: &LexState, name: &GcRef<LuaString>) -> Option<usize> {
         }
     }
     None
+}
+
+/// Resolves a goto against labels visible per the active version's rules.
+///
+/// 5.2/5.3 scan only the current block; 5.4/5.5 scan the whole function.
+fn findlabel_for_goto(
+    ls: &LexState,
+    state: &LuaState,
+    name: &GcRef<LuaString>,
+) -> Option<usize> {
+    let block_scoped = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
+    let first = if block_scoped {
+        ls.fs
+            .as_ref()
+            .unwrap()
+            .bl
+            .as_ref()
+            .map_or(0, |b| b.firstlabel) as usize
+    } else {
+        ls.fs.as_ref().unwrap().firstlabel as usize
+    };
+    findlabel_from(ls, name, first)
 }
 
 /// Adds a new label/goto entry; returns its index.
@@ -2744,19 +2776,56 @@ fn createlabel(
 }
 
 /// Adjusts pending gotos to outer block level when leaving a block.
-fn movegotosout(ls: &mut LexState, bl_firstgoto: usize, bl_nactvar: u8, bl_upval: bool) {
-    let _ = ls.fs.as_ref().unwrap();
-    let first_goto = bl_firstgoto;
-    let _n_gt = ls.dyd.gt.len();
-
-    for i in first_goto..ls.dyd.gt.len() {
-        let _gt_nactvar = ls.dyd.gt[i].nactvar;
-        // TODO(port): compute reg_level properly using ls+fs
-        if bl_upval {
-            ls.dyd.gt[i].close = true;
+///
+/// For 5.4/5.5 this only re-levels the pending gotos to the enclosing block
+/// (backward gotos were already resolved eagerly in `gotostat`, whose
+/// `findlabel` scans the whole function). For 5.2/5.3, `gotostat` resolves a
+/// goto only against the current block, so a backward goto to an enclosing
+/// block's label is still pending here; upstream 5.3 `movegotosout` re-runs
+/// the (now current-block-scoped) `findlabel` to close such gotos. This must be
+/// called *after* the leaving block has been popped, so the current block is
+/// the enclosing one.
+fn movegotosout(
+    ls: &mut LexState,
+    state: &mut LuaState,
+    bl_firstgoto: usize,
+    bl_nactvar: u8,
+    bl_upval: bool,
+) -> Result<(), LuaError> {
+    let reresolve = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
+    let mut i = bl_firstgoto;
+    while i < ls.dyd.gt.len() {
+        if reresolve {
+            if ls.dyd.gt[i].nactvar > bl_nactvar {
+                if bl_upval {
+                    ls.dyd.gt[i].close = true;
+                }
+                ls.dyd.gt[i].nactvar = bl_nactvar;
+            }
+        } else {
+            if bl_upval {
+                ls.dyd.gt[i].close = true;
+            }
+            ls.dyd.gt[i].nactvar = bl_nactvar;
         }
-        ls.dyd.gt[i].nactvar = bl_nactvar;
+        if reresolve {
+            let gt_name = ls.dyd.gt[i].name.clone();
+            let lb_idx = gt_name
+                .as_ref()
+                .and_then(|n| findlabel_for_goto(ls, state, n));
+            if let Some(lb_idx) = lb_idx {
+                let lb_pc = ls.dyd.label[lb_idx].pc;
+                let lb_nactvar = ls.dyd.label[lb_idx].nactvar;
+                solvegoto(ls, state, i, lb_pc, lb_nactvar)?;
+                continue;
+            }
+        }
+        i += 1;
     }
+    Ok(())
 }
 
 /// Pushes a new block scope onto fs->bl.
@@ -2790,16 +2859,21 @@ fn enter_block(ls: &mut LexState, isloop: bool) {
     });
 }
 
-fn undef_goto(ls: &LexState, gt_idx: usize) -> LuaError {
-    let gt = &ls.dyd.gt[gt_idx];
-    let line = gt.line;
-    let name_bytes: &[u8] = gt.name.as_ref().map(|n| n.as_bytes()).unwrap_or(b"");
-    if name_bytes == b"break" {
-        LuaError::syntax(format_args!("break outside loop at line {}", line))
+fn undef_goto(ls: &mut LexState, gt_idx: usize) -> LuaError {
+    let (line, name_bytes): (i32, Vec<u8>) = {
+        let gt = &ls.dyd.gt[gt_idx];
+        (
+            gt.line,
+            gt.name.as_ref().map(|n| n.as_bytes().to_vec()).unwrap_or_default(),
+        )
+    };
+    let msg = if name_bytes == b"break" {
+        format!("break outside loop at line {}", line)
     } else {
-        let name_str = String::from_utf8_lossy(name_bytes);
-        LuaError::syntax(format_args!("no visible label '{}' for <goto> at line {}", name_str, line))
-    }
+        let name_str = String::from_utf8_lossy(&name_bytes);
+        format!("no visible label '{}' for <goto> at line {}", name_str, line)
+    };
+    lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0)
 }
 
 /// Pops the innermost block scope, emitting CLOSE if needed.
@@ -2869,7 +2943,7 @@ fn leave_block(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> 
     ls.dyd.label.truncate(bl_firstlabel as usize);
 
     if has_prev_block {
-        movegotosout(ls, bl_firstgoto as usize, bl_nactvar, bl_upval);
+        movegotosout(ls, state, bl_firstgoto as usize, bl_nactvar, bl_upval)?;
     } else {
         if (bl_firstgoto as usize) < ls.dyd.gt.len() {
             return Err(undef_goto(ls, bl_firstgoto as usize));
@@ -3803,7 +3877,7 @@ fn cond(ls: &mut LexState, state: &mut LuaState) -> Result<i32, LuaError> {
 fn gotostat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     let line = ls.lastline;
     let name = str_check_name(ls, state)?;
-    let lb = findlabel(ls, &name);
+    let lb = findlabel_for_goto(ls, state, &name);
     if lb.is_none() {
         let pc = cg_jump(ls.fs.as_mut().unwrap(), line);
         new_goto_entry(ls, state, name, line, pc)?;
@@ -3841,13 +3915,45 @@ fn breakstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     Ok(())
 }
 
-fn checkrepeated(ls: &LexState, name: &GcRef<LuaString>) -> Result<(), LuaError> {
-    if let Some(lb_idx) = findlabel(ls, name) {
+/// Checks whether `name` collides with an already-defined label.
+///
+/// The scope of the collision check differs by Lua version. 5.2 and 5.3
+/// (upstream `checkrepeated`) scan only the labels of the **current block**
+/// (`fs->bl->firstlabel`), so a label in an inner block may shadow a same-named
+/// label in an enclosing block. 5.4 and 5.5 rewrote `checkrepeated` to call
+/// `findlabel`, which scans the **whole function** (`fs->firstlabel`), making
+/// any repeated label name in the function an error. 5.1 has no `goto`/labels.
+fn checkrepeated(
+    ls: &mut LexState,
+    state: &LuaState,
+    name: &GcRef<LuaString>,
+) -> Result<(), LuaError> {
+    let block_scoped = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
+    let first = if block_scoped {
+        ls.fs
+            .as_ref()
+            .unwrap()
+            .bl
+            .as_ref()
+            .map_or(0, |b| b.firstlabel) as usize
+    } else {
+        ls.fs.as_ref().unwrap().firstlabel as usize
+    };
+    let mut dup_line: Option<i32> = None;
+    for i in first..ls.dyd.label.len() {
+        let lb = &ls.dyd.label[i];
+        if lb.name.as_ref().map_or(false, |n| GcRef::ptr_eq(n, name)) {
+            dup_line = Some(lb.line);
+            break;
+        }
+    }
+    if let Some(line) = dup_line {
         let name_str = String::from_utf8_lossy(name.as_bytes());
-        let line = ls.dyd.label[lb_idx].line;
-        return Err(LuaError::syntax(format_args!(
-            "label '{}' already defined on line {}", name_str, line
-        )));
+        let msg = format!("label '{}' already defined on line {}", name_str, line);
+        return Err(lua_lex::lex_error(&mut ls.lex, msg.as_bytes(), 0));
     }
     Ok(())
 }
@@ -3862,7 +3968,7 @@ fn labelstat(
     while ls.t.token == b';' as TokenKind || ls.t.token == TK_DBCOLON {
         statement(ls, state)?;
     }
-    checkrepeated(ls, &name)?;
+    checkrepeated(ls, state, &name)?;
     let is_last = block_follow(ls, false);
     createlabel(ls, state, name, line, is_last)?;
     Ok(())

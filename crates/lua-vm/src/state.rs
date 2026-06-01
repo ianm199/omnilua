@@ -188,6 +188,20 @@ pub enum GcKind {
     Generational = 1,
 }
 
+/// State of the built-in warning handler, mirroring the `warnfoff` /
+/// `warnfon` / `warnfcont` static functions in upstream `lauxlib.c`.
+///
+/// `Off` is the install-time default (warnings disabled until `warn("@on")`).
+/// `On` is ready to begin a fresh message. `Cont` means the previous `warn`
+/// call had `tocont` set, so the next message part continues the current line
+/// without re-printing the `Lua warning: ` prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarnMode {
+    Off,
+    On,
+    Cont,
+}
+
 // ─── LuaStatus enum ──────────────────────────────────────────────────────────
 
 /// Thread / call status codes.
@@ -1225,6 +1239,18 @@ pub struct GlobalState {
     /// strong roots so they survive the sweep that scheduled them.
     pub to_be_finalized: Vec<GcRef<lua_types::value::LuaTable>>,
 
+    /// Error raised by a `__gc` finalizer during an explicit `collectgarbage`
+    /// on 5.2 / 5.3, parked here for the `collectgarbage` wrapper to re-raise.
+    ///
+    /// C-Lua re-throws the wrapped `error in __gc metamethod (%s)` directly out
+    /// of `GCTM` via `luaD_throw`. The Rust `api::gc` entry point returns `i32`
+    /// (its many callers cannot all thread a `Result`), so the explicit-collect
+    /// path stashes the wrapped error here and the `collectgarbage` built-in
+    /// drains it into the `Result<usize, LuaError>` it already returns. Only
+    /// the explicit-collect path sets this; the automatic GC-step and close
+    /// paths never do (matching `GCTM(L, 0)` and the dispatch-loop swallow).
+    pub gc_finalizer_error: Option<LuaValue>,
+
     // Phase-D NOTE: tobefnz + fixedgc removed (dead since Phase A — see
     // sibling note above re allgc et al). Pending finalizers live in
     // `pending_finalizers` above; fixed objects live in heap.allgc with the
@@ -1300,6 +1326,12 @@ pub struct GlobalState {
 
     // types.tsv: global_State.warnf → Option<Box<dyn FnMut(&[u8], bool)>>
     pub warnf: Option<Box<dyn FnMut(&[u8], bool)>>,
+
+    /// State of the default warning handler (the `warnfoff`/`warnfon`/
+    /// `warnfcont` chain from upstream `lauxlib.c`). `luaL_openlibs` installs
+    /// `warnfoff`, so warnings start disabled until `warn("@on")`. Only
+    /// consulted when no custom `warnf` was installed via the C API.
+    pub warn_mode: WarnMode,
 
     /// Registry of native `LuaCFunction` pointers. Lua-types cannot reference
     /// `LuaState`, so `LuaClosure::LightC` carries a `usize` index into this
@@ -4613,6 +4645,7 @@ pub fn new_state() -> Option<LuaState> {
         gc_tracked_long_strings: Vec::new(),
         pending_finalizers: Vec::new(),
         to_be_finalized: Vec::new(),
+        gc_finalizer_error: None,
         twups: Vec::new(),
         panic: None,
         mainthread: None,
@@ -4629,6 +4662,7 @@ pub fn new_state() -> Option<LuaState> {
         }),
         interned_lt: std::collections::HashMap::new(),
         warnf: None,
+        warn_mode: WarnMode::Off,
         c_functions: Vec::new(),
         heap: lua_gc::Heap::new(),
         cross_thread_upvals: std::collections::HashMap::new(),
@@ -4740,6 +4774,43 @@ pub(crate) fn warning(state: &mut LuaState, msg: &[u8], to_cont: bool) {
         }
         // Restore the closure.
         state.global_mut().warnf = warnf;
+        return;
+    }
+    default_warn(state, msg, to_cont);
+}
+
+/// The default warning handler: a faithful port of the `warnfoff` /
+/// `warnfon` / `warnfcont` chain in upstream `lauxlib.c`. State is held in
+/// `GlobalState::warn_mode` (C threads it via `lua_setwarnf`); output goes to
+/// stderr (`lua_writestringerror`).
+fn default_warn(state: &mut LuaState, msg: &[u8], to_cont: bool) {
+    use std::io::Write;
+    // checkcontrol: a leading-`@` non-continuation message is a control word.
+    if !to_cont && msg.first() == Some(&b'@') {
+        match &msg[1..] {
+            b"off" => state.global_mut().warn_mode = WarnMode::Off,
+            b"on" => state.global_mut().warn_mode = WarnMode::On,
+            _ => {}
+        }
+        return;
+    }
+    let mode = state.global().warn_mode;
+    match mode {
+        WarnMode::Off => {}
+        WarnMode::On | WarnMode::Cont => {
+            let stderr = std::io::stderr();
+            let mut h = stderr.lock();
+            if mode == WarnMode::On {
+                let _ = h.write_all(b"Lua warning: ");
+            }
+            let _ = h.write_all(msg);
+            if to_cont {
+                state.global_mut().warn_mode = WarnMode::Cont;
+            } else {
+                let _ = h.write_all(b"\n");
+                state.global_mut().warn_mode = WarnMode::On;
+            }
+        }
     }
 }
 

@@ -75,14 +75,21 @@ fragile reference quirk — DEFERRED.
 
 ### Item H — architectural candidates (all DEFERRED, documented)
 
-- **goto label scoping in disjoint/nested blocks** (`goto.lua`): rs's label
-  table is too global. Minimal repro: `::l3:: do goto l3; ::l3:: end` — rs
-  errors "label 'l3' already defined" on **both** versions; the reference 5.3
-  accepts it (inner `l3` is a distinct block scope) while 5.5 also errors. The
-  scope rules themselves differ 5.3 vs 5.5. Re-entry: per-block label scope
-  tracking in `crates/lua-parse` goto/label resolution, version-gated; interacts
-  with the `<close>`/goto-over-local rules. Genuinely a parser-scope change, not
-  a localized fix.
+- **goto label scoping in disjoint/nested blocks** (`goto.lua`): **FIXED**
+  (version-gated in `crates/lua-parse/src/lib.rs`). 5.2/5.3 scan repeated-label
+  detection (`checkrepeated`) and goto resolution (`findlabel_for_goto`) over the
+  **current block only** (`bl.firstlabel`), and `movegotosout` re-resolves
+  backward gotos to enclosing-block labels on block exit (mirroring upstream
+  5.3's `movegotosout` -> `findlabel` loop); 5.4/5.5 keep the function-wide scan.
+  `::l3:: do goto l3; ::l3:: end` now accepts on 5.2/5.3 (inner `l3` is a
+  distinct scope, goto binds forward to it) and rejects on 5.4/5.5, matching all
+  references. CI: `multiversion_oracle.rs` `v52_v53_disjoint_block_label_*`,
+  `v54_v55_*_rejected`, `same_block_duplicate_label_rejected_all_versions`,
+  `v52_v53_backward_goto_to_enclosing_block_label`. NOTE: `goto.lua` itself still
+  DIFFs for *other* reasons after this fix — 5.3 fails at `goto.lua:180`
+  (closure upvalue-id sharing, the loop-closure item below), 5.5 at
+  `goto.lua:427` (`global<const>` assignability, a separate 5.5 `global`-keyword
+  item). The label-scoping blocker is gone; those are independent.
 - **loop-built-closure equality caching** (`closure.lua:48`): **5.3-only**. With
   closures sharing identical upvalues (`function(x) return x + a + _ENV end` in a
   loop), 5.3 caches and returns the same `LClosure` (`a[3]==a[4]==a[5]` → true);
@@ -92,9 +99,54 @@ fragile reference quirk — DEFERRED.
 - **`__gc` finalizer error propagation** (`gc.lua:360`): an erroring `__gc`
   finalizer's error is not surfaced as the reference does. GC-subsystem
   (`crates/lua-gc`), interacts with finalizer scheduling. Deferred.
-- **debug line-hook fidelity** (`db.lua:28`, both versions): `sethook(f,"l")`
-  line-trace events do not match the reference trace. Debug-subsystem; needs the
-  per-instruction line-change hook dispatch. Deferred.
+- **debug line-hook fidelity** (`db.lua:28`, per-version): **INVESTIGATED →
+  DOCUMENTED (genuinely deep, do not half-implement).** `sethook(f,"l")`
+  line-trace events diverge from the reference *and the correct trace differs by
+  version*. Confirmed root cause: this is **NOT** a hook-timing bug in
+  `crates/lua-vm/src/debug.rs`. `trace_exec` + `changed_line` are a faithful port
+  of the **5.4** `luaG_traceexec` (relative `lineinfo`-delta walk bounded by
+  `MAX_IWTH_ABS`, plus the `npci <= oldpc` backward-jump clause), applied
+  uniformly to all five versions. The divergence has **two independent
+  version-specific sources**, both upstream of the hook:
+
+  1. **Compiler line-attribution of control-flow instructions changed
+     (5.2/5.3 vs 5.4/5.5).** Repro `if\nmath.sin(1)\nthen\n a=1\nelse\n a=2\nend`:
+     the inner-chunk line trace is `2,3,4,7` on ref 5.2/5.3/5.4 but `2,4,7` on
+     ref 5.5 (no line-3 event). `luac -l` proves why — in 5.3 the condition
+     `TEST`/`JMP` carry line `[3]` (the `then` line), so moving CALL(line2) →
+     TEST(line3) is a line change and fires; in 5.5 those same `TEST`/`JMP`
+     carry line `[2]`, folded onto the expression, so no event fires. db.lua's
+     own expectations encode this: 5.3.4 test file `{2,3,4,7}`, 5.5.0 test file
+     `{2,4,7}`. rs emits `2,3,4,7` for *all* versions → matches ≤5.4, wrong on 5.5.
+  2. **The line-hook fire rule itself changed (5.1–5.3 vs 5.4+).** Repro
+     `for i=1,4 do a=1 end`: ref 5.2/5.3 emit `1,1,1,1,1` (5 events), ref
+     5.4/5.5 emit `1,1,1,1` (4). All instructions are line `[1]` in both
+     (`luac -l` confirms), so this is purely the back-edge rule: pre-5.4
+     `luaG_traceexec` fired a line event on *every* backward jump
+     unconditionally; the 5.4 rewrite only fires when the line actually changed.
+     rs implements the 5.4 rule for all versions → matches ≥5.4, wrong on 5.2/5.3.
+
+  rs is therefore a *hybrid*: it matches 5.4 on both cases but no other single
+  version on both. A correct fix is a **two-part, version-gated change in two
+  crates**, not a localized debug.rs patch, and each part risks regressing
+  line-number reporting (errors, tracebacks, `getinfo("l").currentline`) across
+  all five versions — exactly the "structural change too large to land with full
+  oracle verification" the honesty rule says to document. Re-entry:
+  - (a) Version-gate codegen line-attribution for the conditional `TEST`/`JMP`
+    of `if`/`while` so 5.2/5.3 attribute them to the `then`/`do` line and 5.4/5.5
+    fold them onto the condition-expression line. Seam: `cond` /
+    `test_then_block` in `crates/lua-parse/src/lib.rs` and the `luaK_fixline`
+    TODO (line ~4607); verify with `luac -l` per version against the C `luac`
+    in `/tmp/lua-refs/lua-5.x/src/luac`.
+  - (b) Version-gate the back-edge rule in `crates/lua-vm/src/debug.rs`
+    `trace_exec`: for 5.1/5.2/5.3 fire on every backward jump (`npci <= oldpc`)
+    unconditionally (old `luaG_traceexec`); keep the current 5.4 `changed_line`
+    path for 5.4/5.5.
+  Verify both with `db.lua`'s `test([[...]], {...})` battery using the
+  version-matched test file (5.3.4-tests vs 5.5.0-tests — the expected arrays
+  *differ*), and add per-version `multiversion_oracle.rs` line-trace assertions
+  for the `if`-multiline and `for i=1,4` cases. Tree left clean this pass (no
+  probe edits to crates).
 - **named-vararg `...t` / `...` aliasing** (`vararg.lua:111`, `locals.lua:314`,
   5.5): the always-materialize lowering makes `t` and `...` independent;
   upstream shares one storage object. Re-entry: a proto field for the

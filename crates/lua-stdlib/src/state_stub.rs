@@ -1148,7 +1148,13 @@ impl LuaStateStubExt for LuaState {
                 "invalid GC option {}", op
             ))),
         };
-        Ok(lua_vm::api::gc(self, args))
+        let res = lua_vm::api::gc(self, args);
+        // 5.2/5.3 `collectgarbage("collect")` re-raises a `__gc` finalizer
+        // error parked by the explicit-collect path (C `GCTM` propagation).
+        if let Some(err) = self.global_mut().gc_finalizer_error.take() {
+            return Err(LuaError::from_value(err));
+        }
+        Ok(res)
     }
 
     fn gc_set_param(&mut self, op: i32, value: i32) -> Result<i32, LuaError> {

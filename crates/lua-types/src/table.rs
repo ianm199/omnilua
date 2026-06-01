@@ -585,16 +585,20 @@ impl TableInner {
         };
 
         if new_asize < old_asize {
+            let migrate_end = (old_asize as usize).min(self.array.len());
+            let detached: Vec<(i64, LuaValue)> = ((new_asize as usize)..migrate_end)
+                .filter(|&i| !matches!(self.array[i], LuaValue::Nil))
+                .map(|i| ((i + 1) as i64, self.array[i].clone()))
+                .collect();
+            self.array.truncate(new_asize as usize);
             self.alimit = new_asize;
+
             std::mem::swap(&mut self.node, &mut new_hash_node);
             std::mem::swap(&mut self.lsizenode, &mut new_hash_lsize);
             std::mem::swap(&mut self.lastfree, &mut new_hash_lastfree);
 
-            for i in (new_asize as usize)..(old_asize as usize) {
-                if !matches!(self.array[i], LuaValue::Nil) {
-                    let v = self.array[i].clone();
-                    self.set_int((i + 1) as i64, v)?;
-                }
+            for (key, v) in detached {
+                self.set_int(key, v)?;
             }
 
             self.alimit = old_asize;

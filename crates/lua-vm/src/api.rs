@@ -1466,6 +1466,33 @@ fn register_finalizable_table(state: &mut LuaState, tbl: &GcRef<LuaTable>) {
 /// Replaced by `lua_gc::run_pending_finalizers` when Phase D's incremental
 /// GC lands.
 pub fn run_pending_finalizers(state: &mut LuaState) {
+    let _ = run_pending_finalizers_inner(state, false);
+}
+
+/// `__gc` driver that mirrors C-Lua's `GCTM(L, propagateerrors)`.
+///
+/// `propagate` corresponds to C's `propagateerrors` argument. C calls
+/// `GCTM(L, 1)` from `runafewfinalizers` (the explicit-collect / automatic
+/// step paths) and `GCTM(L, 0)` from `callallpendingfinalizers` (the
+/// `lua_close` path). When a finalizer errors and `propagate` is set, the
+/// disposition is version-specific:
+///
+/// - 5.2 / 5.3: wrap the error object as `error in __gc metamethod (%s)`
+///   (matching `GCTM`'s `LUA_ERRGCMM` branch) and re-throw, aborting the
+///   drain. Returned here as `Err(LuaError)` for the caller to propagate.
+/// - 5.4 / 5.5: `luaE_warnerror(L, "__gc")` — emit a warning and discard the
+///   error. The warning is silent unless the program enabled warnings
+///   (`warn("@on")`), which matches the reference default of swallowing
+///   `__gc` errors with warnings off.
+/// - 5.1: errors are silently swallowed (`luaC_callGCTM` ignores the status).
+///
+/// `propagate = false` (the close path) swallows the error on every version,
+/// matching `callallpendingfinalizers`'s `GCTM(L, 0)`.
+pub fn run_pending_finalizers_inner(
+    state: &mut LuaState,
+    propagate: bool,
+) -> Result<(), LuaError> {
+    let version = state.global().lua_version;
     let mut did_run = false;
     loop {
         // `to_be_finalized` was populated by the most recent
@@ -1518,21 +1545,68 @@ pub fn run_pending_finalizers(state: &mut LuaState) {
         let caller_ci = state.ci;
         let caller_status = state.get_ci(caller_ci).callstatus;
         state.get_ci_mut(caller_ci).callstatus = caller_status | crate::state::CIST_FIN;
-        let _ = crate::do_::pcall(
+        let status = crate::do_::pcall(
             state,
             |s| s.call_no_yield(func_idx, 0),
             func_idx,
             0,
         );
+        // On error, `pcall` left the error object on top of the stack. Capture
+        // it before `set_top` truncates so the version-specific disposition
+        // below (propagate on 5.2/5.3, warn on 5.4/5.5) can use it.
+        let finalizer_error: Option<LuaValue> =
+            if status != LuaStatus::Ok {
+                Some(state.get_at(state.top_idx() - 1).clone())
+            } else {
+                None
+            };
         state.get_ci_mut(caller_ci).callstatus = caller_status;
         state.allowhook = old_allowhook;
         state.global_mut().set_gc_stop_flags(old_gcstp);
         state.set_top(saved_top);
+
+        if let Some(errobj) = finalizer_error {
+            match version {
+                lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 if propagate => {
+                    // C `GCTM`: wrap a string error object as
+                    // `error in __gc metamethod (%s)` and re-throw. A
+                    // non-string object becomes `(no message)`. Aborts the
+                    // drain (the remaining `to_be_finalized` entries are
+                    // left for a later pass, matching the C longjmp out of
+                    // `runafewfinalizers`).
+                    let msg: Vec<u8> = match &errobj {
+                        LuaValue::Str(s) => s.as_bytes().to_vec(),
+                        _ => b"no message".to_vec(),
+                    };
+                    let mut wrapped = b"error in __gc metamethod (".to_vec();
+                    wrapped.extend_from_slice(&msg);
+                    wrapped.push(b')');
+                    let interned = state.intern_str(&wrapped)?;
+                    return Err(LuaError::from_value(LuaValue::Str(interned)));
+                }
+                lua_types::LuaVersion::V54 | lua_types::LuaVersion::V55 if propagate => {
+                    // C `luaE_warnerror(L, "__gc")`: emit
+                    // `error in __gc (<msg>)` through the warning system.
+                    // Silent unless warnings are enabled.
+                    let msg: Vec<u8> = match &errobj {
+                        LuaValue::Str(s) => s.as_bytes().to_vec(),
+                        _ => b"error object is not a string".to_vec(),
+                    };
+                    state.emit_warning(b"error in ", true);
+                    state.emit_warning(b"__gc", true);
+                    state.emit_warning(b" (", true);
+                    state.emit_warning(&msg, true);
+                    state.emit_warning(b")", false);
+                }
+                _ => {}
+            }
+        }
     }
     // Post-finalizer weak sweep is also obsolete: any weak entries newly
     // exposed by the finalizer pass will be cleared on the NEXT
     // `Heap::full_collect_with_post_mark`. We accept the one-cycle lag.
     let _ = did_run;
+    Ok(())
 }
 
 /// Run every still-pending `__gc` finalizer at state close.
@@ -1908,7 +1982,13 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             // Phase-B: drain pending __gc finalizers for tables whose user
             // refs have all been dropped. Kept for legacy compat; runs
             // after the heap's collect so weak entries have been cleared.
-            run_pending_finalizers(state);
+            // This is C-Lua's explicit-collect path (`runafewfinalizers` with
+            // `propagateerrors = 1`): on 5.2/5.3 a finalizer error is wrapped
+            // and re-thrown. `gc()` returns `i32`, so park the error in the
+            // global for the `collectgarbage` built-in to re-raise.
+            if let Err(e) = run_pending_finalizers_inner(state, true) {
+                state.global_mut().gc_finalizer_error = Some(e.into_value());
+            }
             // PORT NOTE: Phase-B long-string accounting. Reclaim `gc_debt`
             // for any tracked long-string Rc whose strong count has dropped
             // to zero (either because the weak-table sweep above released

@@ -1033,8 +1033,18 @@ fn read_numeral(
     }
     match obj {
         lua_types::LuaValue::Int(i) => {
-            *seminfo = TokenValue::Int(i);
-            Ok(TK_INT)
+            // Lua 5.1/5.2 are float-only: `lua_Number` is the only numeric type,
+            // so every numeric literal is parsed as a float (`lua_str2number`),
+            // including ones written without a decimal point. A literal like
+            // 9007199254740993 therefore loses precision exactly as in lua5.2.4
+            // (prints `9.007199254741e+15`), rather than surviving as an i64.
+            if is_float_only(state) {
+                *seminfo = TokenValue::Float(i as f64);
+                Ok(TK_FLT)
+            } else {
+                *seminfo = TokenValue::Int(i);
+                Ok(TK_INT)
+            }
         }
         lua_types::LuaValue::Float(f) => {
             *seminfo = TokenValue::Float(f);
@@ -1539,6 +1549,15 @@ fn read_string(
 /// the current character and dispatches to the appropriate scanner.
 ///
 /// # C source (see llex.c lines 445-562 for full listing)
+/// Whether the active version is the float-only legacy family (5.1/5.2), which
+/// lacks the 5.3 integer operators (`//`, `<<`, `>>`, and the bitwise binops).
+fn is_float_only(state: &LuaState) -> bool {
+    matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    )
+}
+
 fn llex(
     state: &mut LuaState,
     ls: &mut LexState,
@@ -1620,7 +1639,11 @@ fn llex(
                 advance(ls);
                 if check_next1(ls, b'=' as i32) {
                     return Ok(TK_LE);
-                } else if check_next1(ls, b'<' as i32) {
+                } else if !is_float_only(state) && check_next1(ls, b'<' as i32) {
+                    // The `<<` shift operator is a Lua 5.3 addition. Under the
+                    // float-only legacy family (5.1/5.2) it does not exist: a
+                    // bare `<` is returned, so a second `<` then surfaces
+                    // upstream's "unexpected symbol near '<'".
                     return Ok(TK_SHL);
                 }
                 return Ok(b'<' as i32);
@@ -1630,7 +1653,8 @@ fn llex(
                 advance(ls);
                 if check_next1(ls, b'=' as i32) {
                     return Ok(TK_GE);
-                } else if check_next1(ls, b'>' as i32) {
+                } else if !is_float_only(state) && check_next1(ls, b'>' as i32) {
+                    // `>>` is a 5.3 addition; absent in 5.1/5.2.
                     return Ok(TK_SHR);
                 }
                 return Ok(b'>' as i32);
@@ -1638,7 +1662,9 @@ fn llex(
 
             c if c == b'/' as i32 => {
                 advance(ls);
-                if check_next1(ls, b'/' as i32) {
+                if !is_float_only(state) && check_next1(ls, b'/' as i32) {
+                    // Floor division `//` is a 5.3 addition; absent in 5.1/5.2,
+                    // where the second `/` becomes "unexpected symbol near '/'".
                     return Ok(TK_IDIV);
                 }
                 return Ok(b'/' as i32);

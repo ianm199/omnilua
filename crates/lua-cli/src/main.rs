@@ -855,7 +855,7 @@ fn main() -> ExitCode {
             };
             if !lv.is_supported() {
                 return Err(format!(
-                    "{} is not yet supported (supported: 5.3, 5.4, 5.5)",
+                    "{} is not yet supported (supported: 5.2, 5.3, 5.4, 5.5)",
                     lv.version_str()
                 ));
             }

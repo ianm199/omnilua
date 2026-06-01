@@ -1215,6 +1215,21 @@ pub fn f_read(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 /// TODO(port): borrow split — same issue as g_read.
 #[expect(dead_code, reason = "ported stdlib helper; not yet wired into the runtime")]
+/// Render a numeric `LuaValue` to its `io.write` byte form.
+///
+/// C's `g_write` writes numbers with `lua_tostring`, i.e. the same
+/// `tostringbuff` path as `print`/`tostring`. Routing through the shared,
+/// version-aware [`lua_vm::object::num_to_string`] keeps `io.write(1.0)`
+/// identical to `print(1.0)` on every version: `%.14g` on 5.1-5.4 (no `.0`
+/// suffix under the float-only 5.1/5.2), shortest-round-trip on 5.5. Previously
+/// these sites used `{:.14e}`, which always emitted scientific notation
+/// (`0.00000000000000e0`) and only stayed hidden because the modern test
+/// scripts wrote integers.
+fn num_to_write_bytes(state: &mut LuaState, val: &LuaValue) -> Result<Vec<u8>, LuaError> {
+    let s = lua_vm::object::num_to_string(state, val)?;
+    Ok(s.as_bytes().to_vec())
+}
+
 fn g_write(
     state: &mut LuaState,
     file: &mut dyn LuaFileHandle,
@@ -1227,16 +1242,13 @@ fn g_write(
         let idx = arg + i;
         if state.type_at(idx) == LuaType::Number {
             // PERF(port): byte-by-byte write; Phase B add bulk write_fmt to LuaFileOps.
-            // TODO(port): C's %.14g (significant digits) has no direct Rust equivalent.
-            let s = if state.is_integer(idx) {
-                let ival = state.to_integer(idx).unwrap_or(0);
-                format!("{}", ival)
-            } else {
-                let fval = state.to_number(idx).unwrap_or(0.0);
-                // TODO(port): implement proper %.14g (choose between %e and %f based on magnitude)
-                format!("{:.14e}", fval)
-            };
-            match file.write_bytes(s.as_bytes()) {
+            // C's `g_write` renders a number with `lua_tostring`, i.e. the same
+            // `tostringbuff`/`%.14g` path as `print`/`tostring`. Route through
+            // the shared, version-aware `num_to_string` so float rendering
+            // matches (5.1-5.4 `%.14g`, 5.5 round-trip) instead of always-`%e`.
+            let val = state.value_at(idx);
+            let s = num_to_write_bytes(state, &val)?;
+            match file.write_bytes(&s) {
                 Ok(n) => overall_ok = overall_ok && n == s.len(),
                 Err(_) => overall_ok = false,
             }
@@ -1276,15 +1288,8 @@ pub fn io_write(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(n as usize);
     for i in 1..=(n as i32) {
         if state.type_at(i) == LuaType::Number {
-            let s = if state.is_integer(i) {
-                let ival = state.to_integer(i).unwrap_or(0);
-                format!("{}", ival).into_bytes()
-            } else {
-                let fval = state.to_number(i).unwrap_or(0.0);
-                // TODO(port): proper %.14g (significant-digit) formatting.
-                format!("{:.14e}", fval).into_bytes()
-            };
-            chunks.push(s);
+            let val = state.value_at(i);
+            chunks.push(num_to_write_bytes(state, &val)?);
         } else {
             let bytes: Vec<u8> = state.check_arg_string(i)?;
             chunks.push(bytes);
@@ -1316,15 +1321,8 @@ pub fn f_write(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(n.saturating_sub(1) as usize);
     for i in 2..=(n as i32) {
         if state.type_at(i) == LuaType::Number {
-            let s = if state.is_integer(i) {
-                let ival = state.to_integer(i).unwrap_or(0);
-                format!("{}", ival).into_bytes()
-            } else {
-                let fval = state.to_number(i).unwrap_or(0.0);
-                // TODO(port): proper %.14g formatting (significant digits).
-                format!("{:.14e}", fval).into_bytes()
-            };
-            chunks.push(s);
+            let val = state.value_at(i);
+            chunks.push(num_to_write_bytes(state, &val)?);
         } else {
             let bytes: Vec<u8> = state.check_arg_string(i)?;
             chunks.push(bytes);

@@ -8,6 +8,8 @@
 set -uo pipefail
 ver="${1:?usage: diff_one.sh <5.3|5.4|5.5> <luacode>}"; shift; code="$*"
 case "$ver" in
+  5.1) ref=/tmp/lua-refs/bin/lua5.1.5 ;;
+  5.2) ref=/tmp/lua-refs/bin/lua5.2.4 ;;
   5.3) ref=/tmp/lua-refs/bin/lua5.3.6 ;;
   5.4) ref=/tmp/lua-refs/bin/lua5.4.7 ;;
   5.5) ref=/tmp/lua-refs/bin/lua5.5.0 ;;

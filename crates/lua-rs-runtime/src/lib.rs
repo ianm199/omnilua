@@ -779,10 +779,11 @@ impl Lua {
     /// language version.
     pub fn with_hooks_versioned(hooks: HostHooks, version: LuaVersion) -> Result<Self> {
         if !version.is_supported() {
-            // Refuse rather than masquerade as 5.4: 5.1/5.2 (the float-only
-            // legacy family) have no backend yet. See specs/LUA_5_1_PLAN.md.
+            // Refuse rather than masquerade as 5.4: Lua 5.1 (the fenv-based
+            // legacy core) has no backend yet. 5.2 is supported (float-only +
+            // _ENV). See specs/LUA_5_1_PLAN.md and specs/followup/5.2-syntax-roster.md.
             return Err(LuaError::runtime(format_args!(
-                "{} is not yet supported by lua-rs (supported: 5.3, 5.4, 5.5)",
+                "{} is not yet supported by lua-rs (supported: 5.2, 5.3, 5.4, 5.5)",
                 version.version_str()
             )));
         }

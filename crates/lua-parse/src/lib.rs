@@ -3587,6 +3587,39 @@ fn getbinopr(op: TokenKind) -> BinOpr {
     }
 }
 
+/// Whether the active version is the float-only legacy family (5.1/5.2), which
+/// has no bitwise operators (`&`, `|`, `~`, `<<`, `>>`).
+fn parser_is_float_only(state: &LuaState) -> bool {
+    matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    )
+}
+
+/// Version-aware [`getbinopr`]: under 5.1/5.2 the bitwise binops `&`/`|`/`~`
+/// are not operators (they were added in 5.3), so they resolve to
+/// [`BinOpr::NoBinOpr`]. The lexer already withholds `<<`/`>>`/`//` there.
+/// This reproduces upstream lua5.2.4's "')' expected near '&'" surface: the
+/// `&` simply terminates the expression and the parser then expects the
+/// enclosing delimiter.
+fn getbinopr_versioned(op: TokenKind, state: &LuaState) -> BinOpr {
+    let r = getbinopr(op);
+    if parser_is_float_only(state) && matches!(r, BinOpr::BAnd | BinOpr::BOr | BinOpr::BXor) {
+        return BinOpr::NoBinOpr;
+    }
+    r
+}
+
+/// Version-aware [`getunopr`]: under 5.1/5.2 the unary `~` (bitwise NOT) is not
+/// an operator. A leading `~` there is "unexpected symbol near '~'".
+fn getunopr_versioned(op: TokenKind, state: &LuaState) -> UnOpr {
+    let r = getunopr(op);
+    if parser_is_float_only(state) && matches!(r, UnOpr::BNot) {
+        return UnOpr::NoUnOpr;
+    }
+    r
+}
+
 /// Parses a sub-expression with operators of priority > `limit`.
 /// Returns the first untreated (lower-priority) operator.
 fn subexpr(
@@ -3597,7 +3630,7 @@ fn subexpr(
 ) -> Result<BinOpr, LuaError> {
     enter_level(ls)?;
 
-    let uop = getunopr(ls.t.token);
+    let uop = getunopr_versioned(ls.t.token, state);
     if uop != UnOpr::NoUnOpr {
         // so this is the operator's own line, not the prior token's.
         let line = ls.linenumber;
@@ -3608,7 +3641,7 @@ fn subexpr(
         simpleexp(ls, state, v)?;
     }
 
-    let mut op = getbinopr(ls.t.token);
+    let mut op = getbinopr_versioned(ls.t.token, state);
     while op != BinOpr::NoBinOpr && PRIORITY[op as usize].0 as i32 > limit {
         let mut v2 = ExprDesc::default();
         // errors.lua's `lineerror` cases check that runtime arith errors are

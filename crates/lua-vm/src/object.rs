@@ -588,7 +588,8 @@ fn strip_fixed_trailing_zeros(s: &str) -> String {
 /// Formats the numeric `LuaValue` `val` (must be Int or Float) into a byte
 /// buffer and returns it.
 ///
-fn number_to_str_buf(val: &LuaValue, lua55_floats: bool) -> Vec<u8> {
+fn number_to_str_buf(val: &LuaValue, version: lua_types::LuaVersion) -> Vec<u8> {
+    use lua_types::LuaVersion;
     debug_assert!(
         matches!(val, LuaValue::Int(_) | LuaValue::Float(_)),
         "number_to_str_buf: value is not a number"
@@ -603,14 +604,19 @@ fn number_to_str_buf(val: &LuaValue, lua55_floats: bool) -> Vec<u8> {
             s.into_bytes()
         }
         LuaValue::Float(f) => {
-            let mut bytes = if lua55_floats {
+            // 5.5: shortest round-trip; 5.1-5.4: %.14g.
+            let mut bytes = if version == LuaVersion::V55 {
                 fmt_float_55(*f)
             } else {
                 fmt_g(*f, 14)
             };
 
+            // 5.3+ append ".0" to an integer-valued float so it reads back as a
+            // float (the int/float distinction). 5.1/5.2 are float-only and
+            // have no such distinction, so they print `5`, not `5.0`.
+            let dual_model = !matches!(version, LuaVersion::V51 | LuaVersion::V52);
             let looks_like_int = bytes.iter().all(|&b| b == b'-' || b.is_ascii_digit());
-            if looks_like_int {
+            if dual_model && looks_like_int {
                 bytes.push(b'.');
                 bytes.push(b'0');
             }
@@ -627,18 +633,11 @@ fn number_to_str_buf(val: &LuaValue, lua55_floats: bool) -> Vec<u8> {
 ///
 /// in place; in Rust we return the string because holding `&mut LuaValue`
 /// across a `state.intern_str` call would borrow `state` twice.
-/// True when the active Lua version uses the 5.5 float `tostring` algorithm
-/// (`%.15g`-then-round-trip-`%.17g`); false for 5.1-5.4 (plain `%.14g`). Drives
-/// every `tostring`/`print`/concat float rendering.
-fn uses_lua55_floats(state: &LuaState) -> bool {
-    state.global().lua_version == lua_types::LuaVersion::V55
-}
-
 pub fn num_to_string(state: &mut LuaState, val: &LuaValue) -> Result<GcRef<LuaString>, LuaError> {
     //    int len = tostringbuff(obj, buff);
     //    setsvalue(L, obj, luaS_newlstr(L, buff, len));
-    let lua55 = uses_lua55_floats(state);
-    let bytes = number_to_str_buf(val, lua55);
+    let version = state.global().lua_version;
+    let bytes = number_to_str_buf(val, version);
     state.intern_str(&bytes)
 }
 
@@ -733,8 +732,8 @@ fn addstr2buff(buf: &mut BufFs, state: &mut LuaState, str_bytes: &[u8]) -> Resul
 fn addnum2buff(buf: &mut BufFs, state: &mut LuaState, num: &LuaValue) -> Result<(), LuaError> {
     //    int len = tostringbuff(num, numbuff);
     //    addsize(buff, len);
-    let lua55 = uses_lua55_floats(state);
-    let bytes = number_to_str_buf(num, lua55);
+    let version = state.global().lua_version;
+    let bytes = number_to_str_buf(num, version);
     addstr2buff(buf, state, &bytes)
 }
 

@@ -1040,6 +1040,15 @@ fn createsearcherstable(state: &mut LuaState) -> Result<(), LuaError> {
         state.push_c_closure(f, 1)?;
         state.raw_seti(-2, (i + 1) as i64)?;
     }
+    // Lua 5.2 kept the pre-5.2 name `package.loaders` as an alias of
+    // `package.searchers` (the table was renamed in 5.2 but the old global was
+    // retained for compatibility; it was dropped in 5.3). Verified against
+    // lua5.2.4: `package.loaders` is a table. Duplicate the field so both names
+    // point at the same searcher list.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V52) {
+        state.push_value(-1)?;
+        state.set_field(-3, b"loaders")?;
+    }
     state.set_field(-2, b"searchers")?;
     Ok(())
 }

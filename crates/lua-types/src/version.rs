@@ -61,7 +61,10 @@ impl LuaVersion {
     /// they must REFUSE rather than silently run as 5.4 (which would expose
     /// integers, `//`, `goto`, etc. that 5.1 lacks — a misleading masquerade).
     pub fn is_supported(self) -> bool {
-        matches!(self, LuaVersion::V53 | LuaVersion::V54 | LuaVersion::V55)
+        matches!(
+            self,
+            LuaVersion::V52 | LuaVersion::V53 | LuaVersion::V54 | LuaVersion::V55
+        )
     }
 
     /// The `_VERSION` global string for this version (e.g. `"Lua 5.4"`).

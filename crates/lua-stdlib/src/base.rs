@@ -920,6 +920,18 @@ pub fn open(state: &mut LuaState) -> Result<usize, LuaError> {
         state.push(LuaValue::Nil);
         state.set_field(-2, b"warn")?;
     }
+    // Lua 5.1/5.2 carry two globals that were removed in 5.3: `unpack` (an alias
+    // of `table.unpack`) and `loadstring` (an alias of `load`). Verified against
+    // lua5.2.4: both are functions. The base table is on the stack top here.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    ) {
+        state.push_c_function(crate::table_lib::unpack)?;
+        state.set_field(-2, b"unpack")?;
+        state.push_c_function(load_fn)?;
+        state.set_field(-2, b"loadstring")?;
+    }
     Ok(1)
 }
 

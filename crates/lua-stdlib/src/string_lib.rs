@@ -2026,6 +2026,29 @@ fn strip_trailing_zeros_exp(s: &[u8]) -> Vec<u8> {
 
 /// `string.format(fmt, ...)` — C-style string formatting.
 ///
+/// Fetch the integer argument for a `%d`/`%i`/`%u`/`%o`/`%x`/`%X` conversion.
+///
+/// On the dual-number versions (5.3+) an integer is required and a non-integral
+/// number raises "number has no integer representation". On the float-only
+/// versions (5.1/5.2) there is no integer subtype, so `string.format` truncates
+/// the number toward zero — `("%d"):format(3.5)` is `3`, `(-3.5)` is `-3` —
+/// matching lua5.2.4. A value outside the `lua_Integer` range (including inf/nan)
+/// raises "number has no integer representation", which lua5.2.4 phrases as
+/// "not a number in proper range"; the harness battery checks the truncation
+/// cases (the out-of-range message text is a separate 5.2 error-format gap).
+fn format_int_arg(state: &mut LuaState, arg: i32) -> Result<i64, LuaError> {
+    if state.global().lua_version.number_model() != lua_types::NumberModel::FloatOnly {
+        return state.check_arg_integer(arg);
+    }
+    let n = state.check_arg_number(arg)?;
+    let t = n.trunc();
+    if t.is_finite() && (-9223372036854775808.0..=9223372036854775808.0).contains(&t) {
+        Ok(t as i64)
+    } else {
+        Err(LuaError::arg_error(arg, "number has no integer representation"))
+    }
+}
+
 pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
     let top = state.get_top();
     let mut arg = 1i32;
@@ -2114,31 +2137,31 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
             }
             b'd' | b'i' => {
                 check_conv_spec(state, form, FMT_FLAGS_I, true)?;
-                let n = state.check_arg_integer(arg)?;
+                let n = format_int_arg(state, arg)?;
                 let (sign, digits) = signed_int_parts(n, &spec);
                 pad_int(&mut buf, &sign, &digits, &spec);
             }
             b'u' => {
                 check_conv_spec(state, form, FMT_FLAGS_U, true)?;
-                let n = state.check_arg_integer(arg)? as u64;
+                let n = format_int_arg(state, arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 10, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'o' => {
                 check_conv_spec(state, form, FMT_FLAGS_X, true)?;
-                let n = state.check_arg_integer(arg)? as u64;
+                let n = format_int_arg(state, arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 8, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'x' => {
                 check_conv_spec(state, form, FMT_FLAGS_X, true)?;
-                let n = state.check_arg_integer(arg)? as u64;
+                let n = format_int_arg(state, arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 16, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'X' => {
                 check_conv_spec(state, form, FMT_FLAGS_X, true)?;
-                let n = state.check_arg_integer(arg)? as u64;
+                let n = format_int_arg(state, arg)? as u64;
                 let (prefix, digits) = unsigned_int_parts(n, 16, true, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }

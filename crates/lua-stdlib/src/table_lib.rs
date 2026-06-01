@@ -859,7 +859,23 @@ pub fn create(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn open_table(state: &mut LuaState) -> Result<usize, LuaError> {
     // TODO(port): state.new_lib → luaL_newlib; creates a new table and registers functions;
     //             verify method name and signature
-    state.new_lib(TABLE_FUNCS)?;
+    //
+    // Per-version roster delta: `table.move` is a Lua 5.3 addition, absent in
+    // 5.1/5.2 (verified against lua5.2.4: `type(table.move)` == "nil"). Drop it
+    // from the roster under the float-only legacy family.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    ) {
+        let without_move: Vec<(&[u8], fn(&mut LuaState) -> Result<usize, LuaError>)> = TABLE_FUNCS
+            .iter()
+            .filter(|(name, _)| *name != b"move".as_slice())
+            .copied()
+            .collect();
+        state.new_lib(&without_move)?;
+    } else {
+        state.new_lib(TABLE_FUNCS)?;
+    }
     // Per-version roster delta: `table.create` is a Lua 5.5 addition
     // (`specs/research/5.5-upstream-delta.md` §5), absent in 5.1-5.4. Register
     // it only on the V55 backend so the version seam carries a real,

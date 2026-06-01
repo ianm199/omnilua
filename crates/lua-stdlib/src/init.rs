@@ -87,15 +87,28 @@ static LOADED_LIBS: &[(&[u8], LuaCFunction)] = &[
 ///
 /// Corresponds to `luaL_openlibs` in `linit.c`.
 pub fn open_libs(state: &mut LuaState) -> Result<(), LuaError> {
+    // The `utf8` library is a Lua 5.3 addition; it is absent on 5.1/5.2
+    // (verified against lua5.2.4: `type(utf8)` == "nil"). Skip it under the
+    // float-only legacy family.
+    let has_utf8 = !matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
     for &(name, func) in LOADED_LIBS {
+        if name == b"utf8".as_slice() && !has_utf8 {
+            continue;
+        }
         state.require_lib(name, func, true)?;
         state.pop_n(1);
     }
-    // Per-version roster delta: the `bit32` library is default-on in Lua 5.3
-    // and was removed in 5.4 (`specs/research/5.3-upstream-delta.md` delta
-    // #11). Register it only under the 5.3 backend so the version seam shows
-    // a real, observable stdlib difference.
-    if matches!(state.global().lua_version, lua_types::LuaVersion::V53) {
+    // Per-version roster delta: the `bit32` library is default-on in Lua 5.2
+    // and 5.3, and was removed in 5.4 (`specs/research/5.3-upstream-delta.md`
+    // delta #11). Register it only under those backends. Verified against
+    // lua5.2.4 and lua5.3.6: `type(bit32)` == "table".
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    ) {
         state.require_lib(b"bit32", crate::bit32_lib::open_bit32, true)?;
         state.pop_n(1);
     }

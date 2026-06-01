@@ -1305,3 +1305,111 @@ fn v54_v55_random_zero_and_full_range() {
         eq(v, "return math.type(math.random(math.mininteger, math.maxinteger))", "integer");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5.2 — the float-only + _ENV bridge to the legacy family. 5.2 reuses the
+// modern _ENV core but is FLOAT-ONLY (no integer subtype, no //, no bitwise
+// ops, no int-specific stdlib) and carries the 5.2 roster (bit32 present,
+// utf8 absent, getfenv/setfenv removed, unpack/loadstring globals retained).
+// Every expected value captured from /tmp/lua-refs/bin/lua5.2.4.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v52_float_only_number_model() {
+    // Integer-valued floats print without ".0" (float-only: no int/float split).
+    eq(LuaVersion::V52, "return 10/2", "5");
+    eq(LuaVersion::V52, "return 2^2", "4");
+    eq(LuaVersion::V52, "return tostring(1.0)", "1");
+    eq(LuaVersion::V52, "return 1 .. 2", "12");
+    eq(LuaVersion::V52, "return 1.5", "1.5");
+    eq(LuaVersion::V52, "return math.floor(3.7)", "3");
+    eq(LuaVersion::V52, "return string.format('%d', 42)", "42");
+    // All numeric literals lex as float, so a 2^53+1 literal loses precision
+    // exactly as lua5.2.4 does (it has no i64 to preserve it).
+    eq(LuaVersion::V52, "return 9007199254740993", "9.007199254741e+15");
+    eq(LuaVersion::V52, "return _VERSION", "Lua 5.2");
+}
+
+#[test]
+fn v52_math_roster_is_float_only() {
+    // The 5.3 integer-subtype members are absent.
+    eq(LuaVersion::V52, "return type(math.type)", "nil");
+    eq(LuaVersion::V52, "return type(math.tointeger)", "nil");
+    eq(LuaVersion::V52, "return type(math.maxinteger)", "nil");
+    eq(LuaVersion::V52, "return type(math.mininteger)", "nil");
+    eq(LuaVersion::V52, "return type(math.ult)", "nil");
+    // The LUA_COMPAT_MATHLIB deprecated roster IS present in the default build.
+    eq(LuaVersion::V52, "return type(math.atan2)", "function");
+    eq(LuaVersion::V52, "return type(math.cosh)", "function");
+    eq(LuaVersion::V52, "return type(math.pow)", "function");
+    eq(LuaVersion::V52, "return type(math.log10)", "function");
+    eq(LuaVersion::V52, "return type(math.frexp)", "function");
+}
+
+#[test]
+fn v52_stdlib_roster_delta() {
+    eq(LuaVersion::V52, "return type(bit32)", "table");
+    eq(LuaVersion::V52, "return bit32.band(6,3)", "2");
+    eq(LuaVersion::V52, "return type(utf8)", "nil");
+    eq(LuaVersion::V52, "return type(table.pack)", "function");
+    eq(LuaVersion::V52, "return type(table.unpack)", "function");
+    eq(LuaVersion::V52, "return type(table.move)", "nil");
+    eq(LuaVersion::V52, "return type(unpack)", "function");
+    eq(LuaVersion::V52, "return type(loadstring)", "function");
+    eq(LuaVersion::V52, "return type(coroutine.close)", "nil");
+    eq(LuaVersion::V52, "return type(warn)", "nil");
+    eq(LuaVersion::V52, "return type(table.create)", "nil");
+    // _ENV present; fenv globals removed in 5.2.
+    eq(LuaVersion::V52, "return type(_ENV)", "table");
+    eq(LuaVersion::V52, "return type(getfenv)", "nil");
+    eq(LuaVersion::V52, "return type(setfenv)", "nil");
+    // package.loaders kept as alias of searchers in 5.2 (dropped in 5.3).
+    eq(LuaVersion::V52, "return type(package.loaders)", "table");
+    eq(LuaVersion::V52, "return type(package.searchers)", "table");
+}
+
+#[test]
+fn v52_rejects_53_integer_operators() {
+    // The 5.3 integer operators do not exist in 5.2; messages match lua5.2.4.
+    err_contains(LuaVersion::V52, "return 7//2", "unexpected symbol near '/'");
+    err_contains(LuaVersion::V52, "return 6 & 3", "near '&'");
+    err_contains(LuaVersion::V52, "return 6 | 3", "near '|'");
+    err_contains(LuaVersion::V52, "return 1 << 4", "unexpected symbol near '<'");
+    err_contains(LuaVersion::V52, "return 256 >> 4", "unexpected symbol near '>'");
+    err_contains(LuaVersion::V52, "return 5 ~ 3", "near '~'");
+    err_contains(LuaVersion::V52, "return ~0", "unexpected symbol near '~'");
+    // The 5.4 <const> attribute syntax is also absent.
+    err_contains(LuaVersion::V52, "local x <const> = 1", "unexpected symbol near '<'");
+}
+
+#[test]
+fn v52_format_int_family_truncates() {
+    // Float-only: string.format's %d/%i/%u/%o/%x/%X truncate a non-integral
+    // number toward zero (lua5.2.4), where 5.3+ raises "no integer
+    // representation". A string operand is coerced to a number first.
+    eq(LuaVersion::V52, "return string.format('%d', 3.5)", "3");
+    eq(LuaVersion::V52, "return string.format('%d', -3.5)", "-3");
+    eq(LuaVersion::V52, "return string.format('%d', 2.9)", "2");
+    eq(LuaVersion::V52, "return string.format('%x', 255.9)", "ff");
+    eq(LuaVersion::V52, "return string.format('%d', '3.5')", "3");
+    // An integer operand still formats exactly.
+    eq(LuaVersion::V52, "return string.format('%d', 42)", "42");
+}
+
+#[test]
+fn v53_plus_format_int_family_still_strict() {
+    // The truncation behavior is V52-gated: the dual-number versions keep the
+    // strict integer-representation check for the same %d-family conversions.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return string.format('%d', 3.5)", "no integer representation");
+        eq(v, "return string.format('%d', 42)", "42");
+    }
+}
+
+#[test]
+fn v52_goto_and_basics() {
+    eq(LuaVersion::V52, "do goto x ::x:: end return 'ok'", "ok");
+    eq(LuaVersion::V52, "return unpack({10,20,30})", "10");
+    eq(LuaVersion::V52, "return loadstring('return 7')()", "7");
+    eq(LuaVersion::V52, "return ('10'+5)", "15");
+}

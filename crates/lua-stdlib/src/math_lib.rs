@@ -801,9 +801,12 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
     // `new_lib` leaves the new table on the stack top, so we register into it
     // directly. See `specs/followup/5.3-math.md` (whose 5.4/5.5-absence claim
     // is corrected here against the binaries, the binding oracle).
+    // The `LUA_COMPAT_MATHLIB` deprecated roster also ships in the default
+    // lua5.2.4 build (verified against the reference binary: `type(math.atan2)`
+    // etc. == "function" on 5.2.4). 5.5 drops them.
     if matches!(
         state.global().lua_version,
-        lua_types::LuaVersion::V53 | lua_types::LuaVersion::V54
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 | lua_types::LuaVersion::V54
     ) {
         const COMPAT_MATH_FUNCS: &[(&[u8], LuaCFunction)] = &[
             (b"atan2",  math_atan),
@@ -828,6 +831,26 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
 
     state.push(LuaValue::Int(i64::MIN));
     state.set_field(-2, b"mininteger")?;
+
+    // Lua 5.1/5.2 are float-only: the integer-subtype helpers (`math.type`,
+    // `math.tointeger`, `math.ult`) and the integer bounds
+    // (`math.maxinteger`/`mininteger`) are 5.3 additions and are absent there.
+    // Verified against lua5.2.4: each is `nil`.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    ) {
+        for field in [
+            &b"type"[..],
+            &b"tointeger"[..],
+            &b"ult"[..],
+            &b"maxinteger"[..],
+            &b"mininteger"[..],
+        ] {
+            state.push(LuaValue::Nil);
+            state.set_field(-2, field)?;
+        }
+    }
 
     // Registers math.random and math.randomseed as upvalue-bearing closures.
     set_rand_func(state)?;

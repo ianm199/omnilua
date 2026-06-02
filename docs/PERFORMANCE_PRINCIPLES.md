@@ -421,8 +421,11 @@ barriers, skipped metamethod checks, or benchmark-only dispatch.
 - **`vm::execute` needs source-region attribution.** If
   `profile-hotspots.sh` sees `lua_vm::vm::execute` in the raw `sample.txt`, it
   writes `vm-execute.txt` beside the hotspot summary. Treat that as the first
-  pass at per-region timing inside the interpreter loop. It is sampled
-  line/offset evidence, not exact opcode timing, so pair it with
+  pass at per-region timing inside the interpreter loop. Read
+  `opaque_self_samples` and the opaque-source table before treating
+  `UNKNOWN_INLINED` as one bucket; it often distinguishes `vm.rs:0` from
+  standard-library inlining such as `result.rs:0` or `value.rs:0`. It is
+  sampled line/offset evidence, not exact opcode timing, so pair it with
   `opcode-profile.sh` when you need executed-op counts.
 
 ## What about JIT?
@@ -445,7 +448,7 @@ When starting a perf push:
 3. Build the profile-friendly binary (`force-frame-pointers=yes`).
 4. Run `bash harness/bench/profile-hotspots.sh <workload>` to capture
    a wall-clock sample. Read the top frames and, when present, the adjacent
-   `vm-execute.txt` source-region report.
+   `vm-execute.txt` source-region and opaque-source report.
 5. Form a hypothesis. Write it down (commit message body is fine).
 6. Apply *one* change. Smaller is better.
 7. `cargo build --release -p lua-cli`. Run the 44/44 suite.

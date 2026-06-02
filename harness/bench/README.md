@@ -146,7 +146,13 @@ When the raw sample contains `lua_vm::vm::execute`, the same runner also writes
 `execute` source-line samples into frame setup, dispatch fetch, opcode arms,
 return re-entry, and unknown-inlined regions. The headline table uses
 self-samples, so an outer `OP_CALL` frame is not charged for time spent in the
-nested callee's active VM frame.
+nested callee's active VM frame. The report also includes
+`opaque_self_samples` plus an "Opaque VM execute self samples by source file"
+section, so `UNKNOWN_INLINED` time can be separated into `vm.rs:0`,
+`result.rs:0`, `value.rs:0`, or other inlined source buckets before reaching
+for heavier tooling. Opaque rows also show compact address-offset bundles from
+the raw sample output; those offsets are not per-offset counts, but they show
+when one line-0 row is aggregating multiple code addresses.
 
 This is still sampling telemetry, not exact per-op timing. It is useful for
 distinguishing "all time vanished into `vm::execute`" from concrete buckets
@@ -220,7 +226,8 @@ unsafe representation ceilings.
 2. `profile-hotspots.sh` is wired for `/usr/bin/sample` summaries and supports
    `PROFILE_REPEAT=N` for scaled short-workload probes. `PROFILE_LUA_EVAL`
    remains available for custom probe shapes. When `vm::execute` dominates,
-   inspect the adjacent `vm-execute.txt` before adding deeper profiler tooling.
+   inspect the adjacent `vm-execute.txt`, including its opaque-source table,
+   before adding deeper profiler tooling.
 3. `opcode-profile.sh` covers per-op counts when stack samples flatten into
    `vm::execute`; it does not provide per-op timing. Pair it with
    `vm-execute.txt` when opcode frequency and sampled time diverge.

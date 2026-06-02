@@ -31,6 +31,8 @@ ANY_FRAME_RE = re.compile(
     r"(?P<frame>.+?)\s+\(in\s+(?P<lib>[^)]+)\)"
 )
 
+OFFSET_RE = re.compile(r"\(in\s+[^)]+\)\s+\+\s+(?P<offsets>[0-9,.\s]+?)\s+\[[^\]]+\]")
+
 OP_RE = re.compile(r"\bOpCode::([A-Za-z0-9_]+)\s*=>")
 
 
@@ -41,6 +43,7 @@ class Node:
     frame: str
     file: str | None = None
     line: int | None = None
+    offsets: str = ""
     children: list["Node"] = dataclasses.field(default_factory=list)
 
     @property
@@ -128,6 +131,24 @@ def region_for_line(regions: list[Region], file_name: str | None, line: int | No
     return "OUTSIDE_EXECUTE"
 
 
+def is_opaque_region(region: str) -> bool:
+    return (
+        region == "UNKNOWN"
+        or region == "UNKNOWN_INLINED"
+        or region == "OUTSIDE_EXECUTE"
+        or region.startswith("INLINED_")
+    )
+
+
+def compact_offsets(offsets: str, limit: int = 36) -> str:
+    if not offsets:
+        return ""
+    compact = re.sub(r"\s+", "", offsets)
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
 def parse_call_graph(sample_text: str) -> list[Node]:
     in_call_graph = False
     roots: list[Node] = []
@@ -158,6 +179,9 @@ def parse_call_graph(sample_text: str) -> list[Node]:
         if exec_match:
             node.file = exec_match.group("file")
             node.line = int(exec_match.group("line"))
+            offset_match = OFFSET_RE.search(raw_line)
+            if offset_match:
+                node.offsets = compact_offsets(offset_match.group("offsets"))
 
         while stack and indent <= stack[-1].indent:
             stack.pop()
@@ -183,6 +207,7 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
 
     region_self: dict[str, int] = defaultdict(int)
     line_self: dict[tuple[str, int, str], int] = defaultdict(int)
+    opaque_self: dict[tuple[str, int, str, str], int] = defaultdict(int)
     region_inclusive: dict[str, int] = defaultdict(int)
     total_thread_samples = sum(root.count for root in roots) or 1
 
@@ -200,8 +225,11 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
         if node.self_count:
             file_name = pathlib.PurePath(node.file or "?").name
             line_self[(file_name, node.line or 0, region)] += node.self_count
+            if is_opaque_region(region):
+                opaque_self[(file_name, node.line or 0, region, node.offsets)] += node.self_count
 
     total_execute_self = sum(region_self.values()) or 1
+    total_opaque_self = sum(opaque_self.values())
     lines: list[str] = []
     lines.append(f"sample:                {sample}")
     lines.append(f"source:                {source}")
@@ -209,6 +237,7 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
     lines.append(f"execute_nodes:         {execute_nodes}")
     lines.append(f"execute_source_nodes:  {execute_nodes_with_source}")
     lines.append(f"execute_self_samples:  {sum(region_self.values())}")
+    lines.append(f"opaque_self_samples:   {total_opaque_self}")
     if execute_nodes > 0 and execute_nodes_with_source == 0:
         lines.append(
             "warning: no source-line data found for lua_vm::vm::execute; "
@@ -222,6 +251,20 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
         vm_pct = 100.0 * count / total_execute_self
         thread_pct = 100.0 * count / total_thread_samples
         lines.append(f"  {count:>8}  {vm_pct:>5.1f}%  {thread_pct:>9.1f}%  {region}")
+
+    if opaque_self:
+        lines.append("")
+        lines.append("Opaque VM execute self samples by source file:")
+        lines.append(f"  {'count':>8}  {'vm_pct':>6}  {'thread_pct':>10}  location  region  offsets")
+        for (file_name, line_no, region, offsets), count in sorted(
+            opaque_self.items(), key=lambda row: (-row[1], row[0][0], row[0][1])
+        )[:20]:
+            vm_pct = 100.0 * count / total_execute_self
+            thread_pct = 100.0 * count / total_thread_samples
+            lines.append(
+                f"  {count:>8}  {vm_pct:>5.1f}%  {thread_pct:>9.1f}%  "
+                f"{file_name}:{line_no:<5}  {region:<18}  {offsets}"
+            )
 
     lines.append("")
     lines.append("Top VM execute self samples by source line:")

@@ -634,13 +634,27 @@ Follow-up rejected call/frame spikes:
   before execution (`bash harness/run_official_test.sh reference/lua-c/testes/db.lua`).
   It was dropped before benchmarking. Trap/debug path shape needs correctness
   coverage before speed measurement.
+- Removing `#[cold] #[inline(never)]` from `LuaTable::try_raw_set_generic`
+  looked plausible after `table_hash_pressure_x100` showed string-key hash
+  lookup and insertion cost. A focused best-of-5 run with the hint removed
+  (`harness/bench/results/20260602T193855Z-4558473-compare.tsv`) did not
+  produce a keeper signal (`table_hash_pressure` 1.20x, `binarytrees` 2.05x).
+  Restoring the hint and rerunning on the same host
+  (`harness/bench/results/20260602T193949Z-4558473-compare.tsv`) showed the
+  workload itself was noisy at this duration (`table_hash_pressure` 1.40x), so
+  this remains rejected until a longer controlled A/B shows otherwise.
 
 Tool gaps:
 
 - `sample` plus `vm-execute.txt` still leaves `UNKNOWN_INLINED` samples and
-  cannot provide exact per-op timing.
-- `vm-execute-attribution.py` now records `execute_source_nodes` and warns
-  when `sample` has no source-line data for `lua_vm::vm::execute`. Without
+  cannot provide exact per-op timing. The report now records
+  `opaque_self_samples` and an opaque-source table so line-0 samples can at
+  least be split by source file before escalating to heavier tools. The table
+  also preserves compact address-offset bundles from `sample`; these are not
+  per-offset counts, but they reveal when `vm.rs:0` aggregates multiple code
+  addresses.
+- `vm-execute-attribution.py` records `execute_source_nodes` and warns when
+  `sample` has no source-line data for `lua_vm::vm::execute`. Without
   `CARGO_PROFILE_RELEASE_DEBUG=true` and frame pointers, the profiler may show
   a top `execute` symbol but still be unable to bucket VM time.
 - `opcode-profile.sh` gives execution counts but not time per opcode.

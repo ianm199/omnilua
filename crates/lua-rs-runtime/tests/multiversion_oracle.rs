@@ -2379,3 +2379,63 @@ fn issue92_while_condition_line_attribution_unchanged_all_versions() {
         assert_eq!(got, trace_lines(LuaVersion::V54, code), "version {v:?} drifted: {got}");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Issue #92 cause 1 — the numeric-`for` back-edge line-hook event.
+//
+// 5.1/5.2/5.3 compile a numeric `for` so FORPREP jumps *forward* to the FORLOOP
+// test at the bottom; iteration 1 therefore enters the body via a backward jump
+// and fires a line event, giving n+1 events for an n-iteration single-line loop.
+// 5.4 made FORPREP fall through to the body (count-based loop), so iteration 1
+// fires no event → n events. Expected traces captured from the reference
+// binaries (5.3.6 / 5.4.7) and corroborated by db.lua's own `test()` battery
+// (5.3.4-tests `{1,1,1,1,1}` vs 5.4.7-tests `{1,1,1,1}` for `for i=1,4`).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn issue92_numeric_for_backedge_legacy_pre54() {
+    // 4-iteration single-line loop: <=5.3 fire one event per iteration plus the
+    // entry → 5 events.
+    for v in [LuaVersion::V51, LuaVersion::V52, LuaVersion::V53] {
+        assert_eq!(trace_lines(v, "for i=1,4 do a=1 end"), "1,1,1,1,1", "version {v:?}");
+    }
+}
+
+#[test]
+fn issue92_numeric_for_backedge_modern_54_55() {
+    // 5.4 count-based loop: iteration 1 falls through, so 4 events.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        assert_eq!(trace_lines(v, "for i=1,4 do a=1 end"), "1,1,1,1", "version {v:?}");
+    }
+}
+
+/// A multi-line numeric `for` changes line between header and body every
+/// iteration, so `changedline` fires regardless of the back-edge rule — the
+/// trace is identical across all versions. (db.lua 5.3.4/5.4.7 both `{1,2,...}`.)
+#[test]
+fn issue92_numeric_for_multiline_unchanged_all_versions() {
+    let code = "for i=1,3 do\n  a=i\nend";
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        assert_eq!(trace_lines(v, code), "1,2,1,2,1,2,1,3", "version {v:?}");
+    }
+}
+
+/// The legacy numeric-`for` semantics must stay *behaviorally* correct, not just
+/// trace-correct. These results were diffed against the lua-5.3.6 reference
+/// binary: down-loops, zero-iteration loops, and (unlike 5.4) a zero step that
+/// runs zero times instead of raising "'for' step is zero".
+#[test]
+fn issue92_legacy_numeric_for_behavior_matches_53() {
+    eq(LuaVersion::V53, "local t={} for i=5,1,-1 do t[#t+1]=i end return table.concat(t,',')", "5,4,3,2,1");
+    eq(LuaVersion::V53, "local n=0 for i=1,0 do n=n+1 end return n", "0");
+    // 5.3 has no zero-step error; the comparison just fails and the loop is empty.
+    eq(LuaVersion::V53, "local n=0 for i=1,2,0 do n=n+1 if n>3 then break end end return n", "0");
+    // control variable stays an integer subtype on 5.3.
+    eq(LuaVersion::V53, "local r for i=1,1 do r=math.type(i) end return r", "integer");
+}

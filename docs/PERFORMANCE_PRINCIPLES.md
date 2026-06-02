@@ -41,6 +41,10 @@ recent 1.75×-2.00× band to 1.14× in the broad matrix and 1.17× in a
 best-of-10 focused run. The overall ratio stayed about 1.54× because the
 largest remaining workloads are VM-call and GC dominated, not string-key
 construction dominated.
+The follow-up intern-cache retain fast path removes a fixed post-mark sort /
+retain cost from `gc_pressure`; focused best-of-10 evidence put that workload
+at 2.00×, but the broad selected matrix above remains the last full-matrix
+snapshot.
 The next tall poles are core VM call/upvalue dispatch, GC cadence on
 `gc_pressure`, old-revisit/cohort volume on `binarytrees`, table string-key
 write paths on `table_hash_pressure`, and byte-string pattern matching.

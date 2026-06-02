@@ -608,6 +608,40 @@ experiments with correctness canaries; `binarytrees` wants old-revisit/cohort
 scan reduction; `table_hash_pressure` wants table string-key write-path and
 intern/concat allocation work.
 
+### 11. `perf/intern-retain-fastpath` — skip no-op intern-cache retain
+
+`gc_pressure_x300` showed `retain_live_interned_strings` and its
+sort/binary-search path as fixed post-mark overhead when the short-string cache
+is small and all interned entries are still live. The safe packet is a no-op
+guard: after the post-mark scan, if `live_ids.len() == interned_lt.len()`,
+every cached short string was marked live, so retaining the map would preserve
+all entries. The collector can return before sorting the live IDs or walking
+the intern map.
+
+Evidence:
+
+- Direct Rust A/B, best-of-20 on the same built artifacts:
+  `/tmp/lua-rs-intern-baseline` vs `/tmp/lua-rs-intern-skip` improved
+  `gc_pressure` from 0.05s to 0.04s and left `binarytrees` effectively flat
+  at 0.77s to 0.76s.
+- Focused best-of-10 compare
+  (`harness/bench/results/20260602T195056Z-b67d54d-compare.tsv`) reported
+  `gc_pressure` at 2.00x, with `binarytrees` 2.02x and `closure_ops` 2.00x as
+  watch items in the same noisy short run.
+- Post-packet hotspot
+  (`harness/bench/profiles/20260602T194913Z-b67d54d-gc_pressure_x300/summary.txt`)
+  removed `retain_live_interned_strings` from the top 25 leaf frames; the
+  remaining intern-cache cost is `record_live_interned_strings` at 2.6%.
+- Post-packet GC cadence
+  (`harness/bench/profiles/gc-profile/20260602T195127Z-b67d54d-gc_pressure_x50/gc-rates.tsv`)
+  kept collection cadence unchanged at 6,336.9 collections/run and measured
+  2.34061s over 50 repeated runs.
+
+This does not change weak-cache semantics: when any interned short string is
+dead, `live_ids.len() < interned_lt.len()` and the existing retain/prune path
+still runs. Existing tests cover both the live-in-cache and unrooted-pruned
+cases.
+
 Follow-up rejected call/frame spikes:
 
 - A no-hook `RETURN0`/`RETURN1` direct re-entry cleanup removed the shared

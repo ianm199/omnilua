@@ -3828,6 +3828,9 @@ fn retain_live_interned_strings(
         global.interned_lt.clear();
         return;
     }
+    if live_ids.len() == global.interned_lt.len() {
+        return;
+    }
     live_ids.sort_unstable();
     live_ids.dedup();
     global

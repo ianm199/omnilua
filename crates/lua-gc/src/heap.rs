@@ -134,12 +134,30 @@ impl HeapRef {
 /// A traced color in the tri-color invariant.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Color {
-    /// Not yet visited this cycle. Candidate for sweep.
-    White,
+    /// Not yet visited in the current cycle. The collector alternates between
+    /// two white bits so allocations made during sweep are not collected by
+    /// the cycle already in progress.
+    White0,
+    /// Alternate white bit.
+    White1,
     /// Visited; outgoing references not yet traced.
     Gray,
     /// Fully traced; no outgoing pointers to white objects.
     Black,
+}
+
+impl Color {
+    pub fn is_white(self) -> bool {
+        matches!(self, Color::White0 | Color::White1)
+    }
+
+    fn other_white(self) -> Self {
+        match self {
+            Color::White0 => Color::White1,
+            Color::White1 => Color::White0,
+            Color::Gray | Color::Black => self,
+        }
+    }
 }
 
 /// Object age used by Lua's generational collector.
@@ -201,9 +219,9 @@ pub struct GcHeader {
 }
 
 impl GcHeader {
-    fn new_white(size: usize) -> Self {
+    fn new_white(size: usize, color: Color) -> Self {
         Self {
-            color: Cell::new(Color::White),
+            color: Cell::new(color),
             age: Cell::new(GcAge::New),
             finalized: Cell::new(false),
             collected: Cell::new(false),
@@ -274,7 +292,7 @@ impl<T: Trace + 'static> Gc<T> {
     pub fn new_uncollected(value: T) -> Self {
         let size = std::mem::size_of::<T>();
         let boxed = Box::new(GcBox {
-            header: GcHeader::new_white(size),
+            header: GcHeader::new_white(size, Color::White0),
             value,
         });
         Gc {
@@ -616,6 +634,8 @@ pub struct Heap {
     head: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
     /// Total bytes allocated (sum of header sizes; rough).
     bytes: Cell<usize>,
+    /// White bit used for new allocations and for survivors after a sweep.
+    current_white: Cell<Color>,
     /// Heap-owned allocation tokens keyed by box address. Weak handles store
     /// these tokens so address reuse after sweep cannot resurrect a stale weak
     /// target.
@@ -654,6 +674,7 @@ impl Heap {
         Self {
             head: Cell::new(None),
             bytes: Cell::new(0),
+            current_white: Cell::new(Color::White0),
             allocation_tokens: RefCell::new(HashMap::new()),
             next_allocation_token: Cell::new(1),
             threshold: Cell::new(64 * 1024), // initial threshold: 64 KB
@@ -680,7 +701,7 @@ impl Heap {
     pub fn allocate<T: Trace + 'static>(&self, value: T) -> Gc<T> {
         let size = std::mem::size_of::<GcBox<T>>();
         let boxed = Box::new(GcBox {
-            header: GcHeader::new_white(size),
+            header: GcHeader::new_white(size, self.current_white.get()),
             value,
         });
         boxed.header.next.set(self.head.get());
@@ -755,6 +776,18 @@ impl Heap {
         token
     }
 
+    fn current_white(&self) -> Color {
+        self.current_white.get()
+    }
+
+    fn other_white(&self) -> Color {
+        self.current_white.get().other_white()
+    }
+
+    fn flip_current_white(&self) {
+        self.current_white.set(self.other_white());
+    }
+
     fn for_each_header(&self, mut f: impl FnMut(&GcHeader)) {
         let mut cursor = self.head.get();
         while let Some(ptr) = cursor {
@@ -804,7 +837,7 @@ impl Heap {
         if parent.header().color.get() != Color::Black {
             return;
         }
-        if child.header().color.get() != Color::White {
+        if !child.header().color.get().is_white() {
             return;
         }
         child.header().color.set(Color::Gray);
@@ -888,9 +921,6 @@ impl Heap {
         if self.paused.get() {
             return;
         }
-        self.for_each_header(|header| {
-            header.color.set(Color::White);
-        });
         let mut marker = Marker::new();
         roots.trace(&mut marker);
         marker.drain_gray_queue();
@@ -910,9 +940,10 @@ impl Heap {
     /// Metadata transition used when returning to incremental mode: Lua clears
     /// age information and treats all objects as new again.
     pub fn reset_all_ages(&self) {
+        let current_white = self.current_white();
         self.for_each_header(|header| {
             header.age.set(GcAge::New);
-            header.color.set(Color::White);
+            header.color.set(current_white);
         });
     }
 
@@ -1065,9 +1096,7 @@ impl Heap {
     }
 
     fn start_cycle(&self, roots: &dyn Trace) {
-        self.for_each_header(|header| {
-            header.color.set(Color::White);
-        });
+        self.flip_current_white();
         let mut marker = Marker::new();
         roots.trace(&mut marker);
         *self.marker.borrow_mut() = Some(marker);
@@ -1112,6 +1141,8 @@ impl Heap {
         let mut work = 0usize;
         let mut budget = max_units;
         let mut freed_bytes = 0usize;
+        let current_white = self.current_white();
+        let dead_white = self.other_white();
         let mut prev_next_ptr = match self.sweep_prev_next.get() {
             Some(p) => p,
             None => return 0,
@@ -1128,24 +1159,22 @@ impl Heap {
             };
             let header = self.header_from_ptr(ptr);
             let next = header.next.get();
-            match header.color.get() {
-                Color::White => {
-                    prev_cell.set(next);
-                    freed_bytes += header.size.get();
-                    self.allocation_tokens
-                        .borrow_mut()
-                        .remove(&(ptr.as_ptr() as *const () as usize));
-                    unsafe {
-                        let _ = Box::from_raw(ptr.as_ptr());
-                    }
+            let color = header.color.get();
+            if color == dead_white {
+                prev_cell.set(next);
+                freed_bytes += header.size.get();
+                self.allocation_tokens
+                    .borrow_mut()
+                    .remove(&(ptr.as_ptr() as *const () as usize));
+                unsafe {
+                    let _ = Box::from_raw(ptr.as_ptr());
                 }
-                Color::Black | Color::Gray => {
-                    header.color.set(Color::White);
-                    prev_next_ptr = unsafe {
-                        NonNull::from(&(*ptr.as_ptr()).header.next)
-                    };
-                    self.sweep_prev_next.set(Some(prev_next_ptr));
+            } else {
+                if matches!(color, Color::Black | Color::Gray) {
+                    header.color.set(current_white);
                 }
+                prev_next_ptr = unsafe { NonNull::from(&(*ptr.as_ptr()).header.next) };
+                self.sweep_prev_next.set(Some(prev_next_ptr));
             }
             work += 1;
             budget -= 1;
@@ -1158,13 +1187,14 @@ impl Heap {
 
     fn sweep_young(&self) {
         let mut freed_bytes = 0usize;
+        let current_white = self.current_white();
         let mut prev_next_ptr = NonNull::from(&self.head);
         loop {
             let prev_cell = unsafe { prev_next_ptr.as_ref() };
             let Some(ptr) = prev_cell.get() else { break; };
             let header = self.header_from_ptr(ptr);
             let next = header.next.get();
-            if header.color.get() == Color::White && !header.age.get().is_old() {
+            if header.color.get().is_white() && !header.age.get().is_old() {
                 prev_cell.set(next);
                 freed_bytes += header.size.get();
                 self.allocation_tokens
@@ -1176,11 +1206,11 @@ impl Heap {
                 continue;
             }
 
-            if header.color.get() != Color::White {
+            if !header.color.get().is_white() {
                 let age = header.age.get();
                 header.age.set(age.next_after_minor());
                 match age {
-                    GcAge::New => header.color.set(Color::White),
+                    GcAge::New => header.color.set(current_white),
                     GcAge::Touched1 | GcAge::Touched2 => header.color.set(Color::Black),
                     _ => {}
                 }
@@ -1208,6 +1238,10 @@ impl Heap {
         if !self.state.get().is_pause() {
             *self.marker.borrow_mut() = None;
             self.sweep_prev_next.set(None);
+            let current_white = self.current_white();
+            self.for_each_header(|header| {
+                header.color.set(current_white);
+            });
             self.state.set(GcState::Pause);
         }
     }
@@ -1382,7 +1416,7 @@ mod tests {
             marker_calls: Cell::new(0),
         });
         assert_eq!(obj.age(), GcAge::New);
-        assert_eq!(obj.color(), Color::White);
+        assert!(obj.color().is_white());
     }
 
     #[test]
@@ -1407,6 +1441,50 @@ mod tests {
     }
 
     #[test]
+    fn allocation_during_incremental_sweep_survives_current_cycle() {
+        let heap = Heap::new();
+        heap.unpause();
+        let old_dead = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        let old_id = old_dead.identity();
+
+        let outcome = heap.incremental_step_with_post_mark(
+            &OneRoot(None),
+            StepBudget::from_work(1),
+            |_| {},
+        );
+        assert_eq!(outcome, StepOutcome::InProgress);
+        assert_eq!(heap.gc_state(), GcState::Sweep);
+
+        let new_during_sweep = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        let new_id = new_during_sweep.identity();
+
+        loop {
+            let outcome = heap.incremental_step_with_post_mark(
+                &OneRoot(None),
+                StepBudget::from_work(64),
+                |_| {},
+            );
+            if matches!(outcome, StepOutcome::Paused) {
+                break;
+            }
+        }
+
+        assert_eq!(heap.allocation_token(old_id), None);
+        assert!(heap.allocation_token(new_id).is_some());
+        assert_eq!(heap.allgc_count(), 1);
+
+        heap.full_collect(&OneRoot(None));
+        assert_eq!(heap.allocation_token(new_id), None);
+        assert_eq!(heap.allgc_count(), 0);
+    }
+
+    #[test]
     fn promote_and_reset_all_ages() {
         let heap = Heap::new();
         heap.unpause();
@@ -1428,8 +1506,8 @@ mod tests {
         heap.reset_all_ages();
         assert_eq!(a.age(), GcAge::New);
         assert_eq!(b.age(), GcAge::New);
-        assert_eq!(a.color(), Color::White);
-        assert_eq!(b.color(), Color::White);
+        assert!(a.color().is_white());
+        assert!(b.color().is_white());
     }
 
     #[test]
@@ -1479,7 +1557,7 @@ mod tests {
         assert_eq!(heap.allgc_count(), 2);
         assert_eq!(old_unreachable.age(), GcAge::Old);
         assert_eq!(young_survivor.age(), GcAge::Survival);
-        assert_eq!(young_survivor.color(), Color::White);
+        assert!(young_survivor.color().is_white());
     }
 
     #[test]

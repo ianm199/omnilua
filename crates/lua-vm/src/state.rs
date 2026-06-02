@@ -1518,8 +1518,9 @@ impl GlobalState {
     ///
     /// macros.tsv: `luaC_white → g.current_white()`
     ///
-    /// PORT NOTE: GC color management deferred to Phase D; always returns
-    /// the initial white bit.
+    /// PORT NOTE: the effective dual-white collector state lives in
+    /// `lua_gc::Heap`; this field preserves the translated `global_State`
+    /// shape for code that still reads the upstream bitmask.
     pub fn current_white(&self) -> u8 {
         self.currentwhite
     }
@@ -1528,7 +1529,6 @@ impl GlobalState {
     ///
     /// macros.tsv: `otherwhite → g.other_white()`
     pub fn other_white(&self) -> u8 {
-        // TODO(port): Phase D — toggle white bit properly
         self.currentwhite ^ 0x03
     }
 

@@ -868,9 +868,10 @@ fn testc_gccolor(state: &mut LuaState) -> Result<usize, LuaError> {
     lua_vm::api::push_value(state, 1);
     let value = state.pop();
     let name = match testc_gc_color(value) {
-        Some(lua_gc::Color::White) => b"white".as_slice(),
+        Some(color) if color.is_white() => b"white".as_slice(),
         Some(lua_gc::Color::Gray) => b"gray".as_slice(),
         Some(lua_gc::Color::Black) => b"black".as_slice(),
+        Some(_) => b"white".as_slice(),
         None => b"no collectable".as_slice(),
     };
     testc_push_string(state, name)?;

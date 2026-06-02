@@ -1,0 +1,2 @@
+METRIC weakregistry mode=generational state=pause bytes=41542 debt=-8300 threshold=49842 allgc=258 collections=3 weak=3 weaklive=3 weakdead=0 weakretained=3 pendingfin=4 tobefin=0 pendingfinyoung=0 pendingfinold=4 tobefinyoung=0 tobefinold=0 finobjnew=0 finobjsur=0 finobjold1=0 finobjrold=4 finobjscan=0 marked=161 markedyoung=101 markedold=60 traced=102 tracedyoung=101 tracedold=1 sweepvisited=75 sweepvisitedyoung=75 sweepvisitedold=0 sweeprevisit=1 sweepfreed=4 sweepfreedbytes=608 tables=25 functions=8 threads=0 userdata=3 strings=218
+PASS canary_n

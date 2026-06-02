@@ -68,6 +68,12 @@ The current tree is no longer only startup/default scaffolding:
   `canary_m_testc_finalizer_cohorts.lua` pins that rooted old finalizers stay
   outside the minor scan while a young unreachable finalizer moves to
   to-be-finalized-young.
+- Weak table registry selection is now collector-crate owned through
+  `lua-gc::WeakRegistry<T>`. The VM still provides the table-specific
+  ephemeron/prune hooks, but dedupe, dead weak-handle dropping, live snapshots,
+  retain-by-live-identity, and `T.gcstats()` telemetry (`weaklive`, `weakdead`,
+  `weakretained`) are centralized. `canary_n_testc_weak_registry.lua` pins that
+  rooted weak tables are snapshotted/retained while weak-only entries clear.
 - Internal testC telemetry exists for GC state, age/color, type counts, warning
   capture, and memory accounting. Both normal and `LUA_RS_TESTC=1` official
   `gc.lua`/`gengc.lua` currently pass.
@@ -84,9 +90,10 @@ The real generational collector is still not complete:
   `lua-vm::FinalizerObject` implements the small `FinalizerEntry` trait.
   Remaining parity gap: finalizable objects are still an overlay on the heap's
   `allgc` chain, not a true intrusive `finobj`/`tobefnz` ownership split.
-- Weak/ephemeron handling is correct enough for the current gates but still runs
-  through VM snapshots and post-mark hooks instead of collector-owned weak-list
-  processing for minor and major cycles.
+- Weak/ephemeron handling is correct enough for the current gates. Weak-table
+  registry mechanics are now collector-owned, but weak/ephemeron table
+  classification and mark/prune processing still run through VM post-mark hooks
+  instead of intrusive `weak` / `ephemeron` / `allweak` lists.
 - `GlobalState.totalbytes` has been removed; `gettotalbytes` maps to
   collector-owned heap bytes through `GlobalState::total_bytes()`.
 
@@ -278,6 +285,9 @@ Deliverables:
 - Weak values, weak keys, and ephemeron fixed-point processing run at the right
   atomic points.
 - Old weak tables touched by young entries are revisited correctly.
+- Done for registry mechanics: collector-owned weak snapshots dedupe entries,
+  drop stale weak handles, and retain only tables that stayed live through the
+  mark/prune pass.
 - Weak string/key byte reclamation is collector-owned, not API cleanup.
 
 Verification:
@@ -286,6 +296,7 @@ Verification:
 - generational weak-key/weak-value tests with old containers and young entries
 - repeated minor collections do not leak young objects reachable only through
   weak paths
+- `canary_n_testc_weak_registry.lua` for registry live/dead/retained telemetry
 
 ### 8. Build a `testC` Equivalent
 

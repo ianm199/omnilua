@@ -10,7 +10,7 @@
 use std::convert::Infallible;
 #[allow(unused_imports)] use crate::prelude::*;
 
-use crate::state::{FinalizerObject, LuaState, LuaCFunction, LuaCallable, StackIdx,
+use crate::state::{FinalizerObject, LuaState, LuaCFunction, LuaCallable, StackIdx, WeakTableEntry,
     LuaValueExt, LuaTypeExt, StackIdxExt,
     LuaTableRefExt, LuaUserDataRefExt};
 use lua_types::{
@@ -1648,20 +1648,7 @@ pub fn run_close_finalizers(state: &mut LuaState) {
 /// and by the explicit `collectgarbage("collect")` path.
 fn collect_live_weak_tables(state: &mut LuaState) -> Vec<GcRef<lua_types::value::LuaTable>> {
     let mut g = state.global_mut();
-    g.weak_tables_registry.retain(|w| w.strong_count() > 0);
-    let mut seen = std::collections::HashSet::<usize>::new();
-    g.weak_tables_registry
-        .iter()
-        .filter_map(|w| w.upgrade())
-        .filter_map(|rc| {
-            let id = rc.identity();
-            if seen.insert(id) {
-                Some(rc)
-            } else {
-                None
-            }
-        })
-        .collect()
+    g.weak_tables_registry.live_snapshot()
 }
 
 pub fn set_metatable(state: &mut LuaState, objindex: i32) -> Result<bool, LuaError> {
@@ -1689,7 +1676,7 @@ pub fn set_metatable(state: &mut LuaState, objindex: i32) -> Result<bool, LuaErr
                 state
                     .global_mut()
                     .weak_tables_registry
-                    .push(tbl.downgrade());
+                    .push_unique(WeakTableEntry::new(tbl));
             }
             // Phase-B finalizer registration: if the new metatable carries
             // `__gc` and `obj` was not already registered, pin `obj` in the

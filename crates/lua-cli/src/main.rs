@@ -1069,6 +1069,9 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         allgc,
         collections,
         weak,
+        weaklive,
+        weakdead,
+        weakretained,
         pendingfin,
         tobefin,
         pendingfinyoung,
@@ -1085,6 +1088,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
     ) = {
         let g = state.global();
         let finstats = g.finalizers.stats();
+        let weakstats = g.weak_tables_registry.stats();
         (
             if g.is_gen_mode() { "generational" } else { "incremental" },
             String::from_utf8_lossy(testc_gc_state_name(g.heap.gc_state())).into_owned(),
@@ -1094,6 +1098,9 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
             g.heap.allgc_count(),
             g.heap.collections(),
             g.weak_tables_registry.len(),
+            weakstats.snapshot_live,
+            weakstats.snapshot_dead,
+            weakstats.retained,
             g.finalizers.pending_len(),
             g.finalizers.to_be_finalized_len(),
             finstats.pending_young,
@@ -1115,7 +1122,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
     let userdata = testc_type_count(state, b"userdata")?;
     let strings = testc_type_count(state, b"string")?;
     let stats = format!(
-        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} pendingfin={} tobefin={} pendingfinyoung={} pendingfinold={} tobefinyoung={} tobefinold={} finobjnew={} finobjsur={} finobjold1={} finobjrold={} finobjscan={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
+        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} weaklive={} weakdead={} weakretained={} pendingfin={} tobefin={} pendingfinyoung={} pendingfinold={} tobefinyoung={} tobefinold={} finobjnew={} finobjsur={} finobjold1={} finobjrold={} finobjscan={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
         mode,
         gc_state,
         bytes,
@@ -1124,6 +1131,9 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         allgc,
         collections,
         weak,
+        weaklive,
+        weakdead,
+        weakretained,
         pendingfin,
         tobefin,
         pendingfinyoung,

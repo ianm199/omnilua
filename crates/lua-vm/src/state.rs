@@ -163,6 +163,27 @@ impl lua_gc::FinalizerEntry for FinalizerObject {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct WeakTableEntry(lua_types::gc::GcWeak<LuaTable>);
+
+impl WeakTableEntry {
+    pub fn new(table: &GcRef<LuaTable>) -> Self {
+        Self(table.downgrade())
+    }
+}
+
+impl lua_gc::WeakEntry for WeakTableEntry {
+    type Strong = GcRef<LuaTable>;
+
+    fn identity(&self) -> usize {
+        self.0.identity()
+    }
+
+    fn upgrade(&self) -> Option<Self::Strong> {
+        self.0.upgrade()
+    }
+}
+
 // ─── Constants (from macros.tsv) ──────────────────────────────────────────────
 
 // macros.tsv: EXTRA_STACK → const EXTRA_STACK: u32 = 5
@@ -1293,11 +1314,11 @@ pub struct GlobalState {
     ///
     /// Heap collection snapshots this list before mark, then the post-mark
     /// weak-table pass clears entries whose weak target is held only by other
-    /// weak slots. The registry holds `GcWeak<LuaTable>` so it does not pin
+    /// weak slots. The registry holds weak table entries so it does not pin
     /// dead weak tables after sweep removes their heap allocation token.
     /// Replaced by proper `weak` / `ephemeron` / `allweak` cohorts once the
     /// Lua-style generational lists land.
-    pub weak_tables_registry: Vec<lua_types::gc::GcWeak<lua_types::value::LuaTable>>,
+    pub weak_tables_registry: lua_gc::WeakRegistry<WeakTableEntry>,
 
     /// Finalizable tables/userdata split into pending `finobj`-like entries
     /// and `tobefnz`-like entries waiting for their `__gc` call.
@@ -3859,13 +3880,8 @@ impl<'a> GcHandle<'a> {
         // the pointer address — safe even on still-dangling weak handles —
         // and dedup by identity keeps the iteration linear.
         let weak_tables_snapshot: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> = {
-            let g = state_ref.global.borrow();
-            let mut seen = std::collections::HashSet::<usize>::new();
-            g.weak_tables_registry
-                .iter()
-                .filter_map(|w| w.upgrade())
-                .filter(|t| seen.insert(t.identity()))
-                .collect()
+            let mut g = state_ref.global.borrow_mut();
+            g.weak_tables_registry.live_snapshot()
         };
 
         // Snapshot pending finalizers. `GlobalState::trace` deliberately
@@ -3995,8 +4011,7 @@ impl<'a> GcHandle<'a> {
         let live_interned_ids = live_interned_ids.into_inner();
         let mut g = state_ref.global.borrow_mut();
         retain_live_interned_strings(&mut *g, &live_interned_ids);
-        g.weak_tables_registry
-            .retain(|w| alive_set.contains(&w.identity()));
+        g.weak_tables_registry.retain_identities(&alive_set);
         let main_thread_id = g.main_thread_id;
         g.threads.retain(|id, _| alive_thread_ids.contains(id));
         g.cross_thread_upvals
@@ -4091,13 +4106,8 @@ impl<'a> GcHandle<'a> {
         let state_ref: &LuaState = &*self._state;
 
         let weak_tables_snapshot: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> = {
-            let g = state_ref.global.borrow();
-            let mut seen = std::collections::HashSet::<usize>::new();
-            g.weak_tables_registry
-                .iter()
-                .filter_map(|w| w.upgrade())
-                .filter(|t| seen.insert(t.identity()))
-                .collect()
+            let mut g = state_ref.global.borrow_mut();
+            g.weak_tables_registry.live_snapshot()
         };
 
         let pending_snapshot: Vec<FinalizerObject> = {
@@ -4218,8 +4228,7 @@ impl<'a> GcHandle<'a> {
             let live_interned_ids = live_interned_ids.into_inner();
             let mut g = state_ref.global.borrow_mut();
             retain_live_interned_strings(&mut *g, &live_interned_ids);
-            g.weak_tables_registry
-                .retain(|w| alive_set.contains(&w.identity()));
+            g.weak_tables_registry.retain_identities(&alive_set);
             let main_thread_id = g.main_thread_id;
             g.threads.retain(|id, _| alive_thread_ids.contains(id));
             g.cross_thread_upvals
@@ -4241,13 +4250,8 @@ impl<'a> GcHandle<'a> {
         let state_ref: &LuaState = &*self._state;
 
         let weak_tables_snapshot: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> = {
-            let g = state_ref.global.borrow();
-            let mut seen = std::collections::HashSet::<usize>::new();
-            g.weak_tables_registry
-                .iter()
-                .filter_map(|w| w.upgrade())
-                .filter(|t| seen.insert(t.identity()))
-                .collect()
+            let mut g = state_ref.global.borrow_mut();
+            g.weak_tables_registry.live_snapshot()
         };
 
         let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
@@ -5090,7 +5094,7 @@ pub fn new_state() -> Option<LuaState> {
         // [minormul, majorminor, minormajor, pause, stepmul, stepsize].
         gc55_params: [20, 50, 68, 250, 200, 9600],
         sweepgc_cursor: 0,
-        weak_tables_registry: Vec::new(),
+        weak_tables_registry: lua_gc::WeakRegistry::default(),
         finalizers: lua_gc::FinalizerRegistry::default(),
         gc_finalizer_error: None,
         twups: Vec::new(),

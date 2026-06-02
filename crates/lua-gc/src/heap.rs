@@ -196,6 +196,89 @@ pub trait FinalizerEntry: Clone {
     fn age(&self) -> GcAge;
 }
 
+/// Minimal operations needed for collector-owned weak-registry bookkeeping.
+pub trait WeakEntry: Clone {
+    type Strong: Clone;
+
+    fn identity(&self) -> usize;
+    fn upgrade(&self) -> Option<Self::Strong>;
+}
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct WeakRegistryStats {
+    pub tracked: usize,
+    pub snapshot_live: usize,
+    pub snapshot_dead: usize,
+    pub retained: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct WeakRegistry<T: WeakEntry> {
+    entries: Vec<T>,
+    last_stats: WeakRegistryStats,
+}
+
+impl<T: WeakEntry> Default for WeakRegistry<T> {
+    fn default() -> Self {
+        Self { entries: Vec::new(), last_stats: WeakRegistryStats::default() }
+    }
+}
+
+impl<T: WeakEntry> WeakRegistry<T> {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn stats(&self) -> WeakRegistryStats {
+        self.last_stats
+    }
+
+    pub fn push_unique(&mut self, entry: T) {
+        let id = entry.identity();
+        if !self.entries.iter().any(|existing| existing.identity() == id) {
+            self.entries.push(entry);
+            self.last_stats.tracked = self.entries.len();
+            self.last_stats.retained = self.entries.len();
+        }
+    }
+
+    pub fn live_snapshot(&mut self) -> Vec<T::Strong> {
+        let tracked_before = self.entries.len();
+        let mut seen = std::collections::HashSet::<usize>::new();
+        let mut live = Vec::new();
+        let mut retained = Vec::with_capacity(self.entries.len());
+        let mut dead = 0usize;
+
+        for entry in std::mem::take(&mut self.entries) {
+            if !seen.insert(entry.identity()) {
+                continue;
+            }
+            match entry.upgrade() {
+                Some(strong) => {
+                    live.push(strong);
+                    retained.push(entry);
+                }
+                None => dead += 1,
+            }
+        }
+
+        self.entries = retained;
+        self.last_stats = WeakRegistryStats {
+            tracked: tracked_before,
+            snapshot_live: live.len(),
+            snapshot_dead: dead,
+            retained: self.entries.len(),
+        };
+        live
+    }
+
+    pub fn retain_identities(&mut self, ids: &std::collections::HashSet<usize>) {
+        self.entries.retain(|entry| ids.contains(&entry.identity()));
+        self.last_stats.retained = self.entries.len();
+        self.last_stats.tracked = self.entries.len();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FinalizerRegistry<T: FinalizerEntry> {
     pending: Vec<T>,
@@ -2003,6 +2086,50 @@ mod tests {
 
     fn finalizer_ids(objects: &[FinalizerCell]) -> Vec<usize> {
         objects.iter().map(|object| object.id).collect()
+    }
+
+    #[derive(Clone)]
+    struct WeakCell {
+        id: usize,
+        live: bool,
+    }
+
+    impl WeakEntry for WeakCell {
+        type Strong = usize;
+
+        fn identity(&self) -> usize {
+            self.id
+        }
+
+        fn upgrade(&self) -> Option<Self::Strong> {
+            self.live.then_some(self.id)
+        }
+    }
+
+    #[test]
+    fn weak_registry_dedups_snapshots_and_retains_live_ids() {
+        let mut registry = WeakRegistry::default();
+        registry.push_unique(WeakCell { id: 1, live: true });
+        registry.push_unique(WeakCell { id: 1, live: true });
+        registry.push_unique(WeakCell { id: 2, live: false });
+        registry.push_unique(WeakCell { id: 3, live: true });
+
+        let snapshot = registry.live_snapshot();
+        assert_eq!(snapshot, vec![1, 3]);
+        assert_eq!(
+            registry.stats(),
+            WeakRegistryStats {
+                tracked: 3,
+                snapshot_live: 2,
+                snapshot_dead: 1,
+                retained: 2,
+            }
+        );
+
+        let keep: std::collections::HashSet<usize> = [3usize].into_iter().collect();
+        registry.retain_identities(&keep);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.stats().retained, 1);
     }
 
     #[test]

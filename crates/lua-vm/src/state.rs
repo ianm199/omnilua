@@ -2745,14 +2745,15 @@ impl LuaState {
                 let current = self.cached_thread_id;
                 if tid == current {
                     self.stack[idx.0 as usize].val = val;
-                    return Ok(());
+                } else {
+                    self.upvalue_set_cross_thread(tid, idx, val)?;
                 }
-                return self.upvalue_set_cross_thread(tid, idx, val);
             }
             None => {
                 uv.set_closed_value(val);
             }
         }
+        self.gc_barrier_upval(&uv, &val);
         Ok(())
     }
 
@@ -3312,7 +3313,9 @@ impl LuaState {
     pub fn gc_barrier_back(&mut self, t: &dyn std::any::Any, v: &LuaValue) {
         self.gc().barrier_back(t, v);
     }
-    pub fn gc_barrier_upval<T, U, V>(&mut self, _cl: T, _uv: U, _v: V) { /* phase-b no-op */ }
+    pub fn gc_barrier_upval(&mut self, uv: &GcRef<UpVal>, v: &LuaValue) {
+        self.gc().barrier(uv, v);
+    }
     ///
     /// Phase E-1: compares `GlobalState::current_thread_id` against
     /// `main_thread_id`. Coroutine resume (slice 02b) is what will swap
@@ -5348,6 +5351,76 @@ mod tests {
 
         assert!(state.external_unroot_value(parent_key).is_some());
         state.gc().full_collect();
+    }
+
+    #[test]
+    fn generational_upvalue_write_barrier_marks_young_child_old0() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let proto = state.new_proto();
+        let closure = state.new_lclosure(proto, 1);
+        let closure_key = state.external_root_value(LuaValue::Function(LuaClosure::Lua(closure)));
+        state.gc().change_mode(GcKind::Generational);
+        let uv = closure.upval(0);
+        assert_eq!(uv.0.age(), lua_gc::GcAge::Old);
+
+        let child = state.new_table();
+        state
+            .upvalue_set(&closure, 0, LuaValue::Table(child))
+            .expect("closed upvalue write should succeed");
+        assert_eq!(child.0.age(), lua_gc::GcAge::Old0);
+
+        assert!(state.external_unroot_value(closure_key).is_some());
+        state.gc().full_collect();
+    }
+
+    #[test]
+    fn generational_closure_upvalue_slot_barrier_marks_new_upval_old0() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let proto = state.new_proto();
+        let closure = state.new_lclosure(proto, 1);
+        let closure_key = state.external_root_value(LuaValue::Function(LuaClosure::Lua(closure)));
+        state.gc().change_mode(GcKind::Generational);
+        assert_eq!(closure.0.age(), lua_gc::GcAge::Old);
+
+        let replacement = state.new_upval_closed(LuaValue::Nil);
+        closure.set_upval(0, replacement);
+        state.gc().obj_barrier(&closure, &replacement);
+        assert_eq!(replacement.0.age(), lua_gc::GcAge::Old0);
+
+        assert!(state.external_unroot_value(closure_key).is_some());
+        state.gc().full_collect();
+    }
+
+    #[test]
+    fn cross_thread_upvalue_mirror_traces_values_as_roots() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let mirrored = state.new_table();
+        state
+            .global_mut()
+            .cross_thread_upvals
+            .insert((999, StackIdx(0)), LuaValue::Table(mirrored));
+
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.allgc_count(), 1);
+
+        state.global_mut().cross_thread_upvals.clear();
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.allgc_count(), 0);
     }
 
     #[test]

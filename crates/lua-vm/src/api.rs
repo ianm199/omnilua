@@ -1876,6 +1876,7 @@ pub fn load(
                 let gt = get_global_table(state);
                 let uv = state.new_upval_closed(gt);
                 lcl.set_upval(0, uv);
+                state.gc().obj_barrier(&lcl, &uv);
             }
         }
     }
@@ -2327,6 +2328,7 @@ pub fn upvalue_join(state: &mut LuaState, fidx1: i32, n1: i32, fidx2: i32, n2: i
     {
         let shared = lcl2.upval(idx2);
         lcl1.set_upval(idx1, shared);
+        state.gc().obj_barrier(lcl1, &shared);
     }
 }
 

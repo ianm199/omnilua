@@ -172,4 +172,3 @@ assert(collectgarbage'isrunning')
 collectgarbage(oldmode)
 
 print('OK')
-

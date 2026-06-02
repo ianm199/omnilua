@@ -736,6 +736,7 @@ pub(crate) fn setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
                 // caller's globals. A new cell isolates `f`.
                 let uv = state.new_upval_closed(new_env);
                 lcl.set_upval(idx, uv);
+                state.gc().obj_barrier(lcl, &uv);
             }
             // A Lua closure that references no globals has no `_ENV` upvalue and
             // nothing reads globals through it, so the set is inert; 5.1 still
@@ -771,6 +772,7 @@ pub(crate) fn set_func_env_at_level(
         if let Some(idx) = fenv_env_upval_index(lcl) {
             let uv = state.new_upval_closed(new_env);
             lcl.set_upval(idx, uv);
+            state.gc().obj_barrier(lcl, &uv);
         }
     }
     Ok(())

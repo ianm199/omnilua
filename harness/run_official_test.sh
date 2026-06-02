@@ -50,7 +50,7 @@ PREAMBLE_EXPR='_soft=true; _port=true; _nomsg=true; _U=false; arg=arg or {}; _G=
 {
     printf -- '-- harness preamble (passed via -e, NOT prepended; preserves test file line numbers):\n'
     printf -- '-- %s\n\n' "$PREAMBLE_EXPR"
-    cat "$TEST_FILE"
+    sed '${/^$/d;}' "$TEST_FILE"
 } > "$COMBINED"
 
 TESTES_DIR="$(cd "$(dirname "$TEST_FILE")" && pwd)"

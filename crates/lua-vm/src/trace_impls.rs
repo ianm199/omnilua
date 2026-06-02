@@ -117,6 +117,12 @@ impl Trace for GlobalState {
             value.trace(m);
         }
 
+        // Cross-thread open-upvalue mirrors are live roots while a coroutine
+        // resume holds the home thread's stack behind an outer mutable borrow.
+        for value in self.cross_thread_upvals.values() {
+            value.trace(m);
+        }
+
         // PORT NOTE (phase-b-reconcile): The lua-types LuaTable placeholder is
         // storage-less, so `globals` and `loaded` cannot live inside the registry
         // table (see `init_registry`). They are kept as direct GlobalState fields

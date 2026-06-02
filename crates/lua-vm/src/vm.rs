@@ -1678,6 +1678,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         match uv.try_open_payload() {
                             Some((thread_id, idx)) if thread_id as u64 == state.cached_thread_id => {
                                 state.stack[idx.0 as usize].val = v;
+                                state.gc_barrier_upval(&uv, &v);
                             }
                             _ => {
                                 state.upvalue_set(&cl, b, v)?;

@@ -725,6 +725,9 @@ pub struct Heap {
     collections: Cell<usize>,
     /// Diagnostic counters from the most recently completed mark phase.
     last_mark_stats: Cell<MarkerStats>,
+    /// Objects that young collections must revisit even if they are not
+    /// reached through normal roots: OLD0/OLD1 and touched old objects.
+    minor_revisit: RefCell<Vec<NonNull<GcBox<dyn Trace>>>>,
     /// In-progress marker state for incremental cycles. `Some` between
     /// `Propagate` start and `Sweep` start; `None` otherwise.
     marker: RefCell<Option<Marker>>,
@@ -755,6 +758,7 @@ impl Heap {
             paused: Cell::new(true), // start paused; caller enables when world is consistent
             collections: Cell::new(0),
             last_mark_stats: Cell::new(MarkerStats::default()),
+            minor_revisit: RefCell::new(Vec::new()),
             marker: RefCell::new(None),
             sweep_prev_next: Cell::new(None),
         }
@@ -882,18 +886,15 @@ impl Heap {
         unsafe { &(*ptr.as_ptr()).header }
     }
 
+    fn remember_minor_revisit(&self, ptr: NonNull<GcBox<dyn Trace>>) {
+        self.minor_revisit.borrow_mut().push(ptr);
+    }
+
     fn mark_minor_revisit_objects(&self, marker: &mut Marker) {
-        let mut cursor = self.head.get();
-        while let Some(ptr) = cursor {
+        for ptr in self.minor_revisit.borrow().iter().copied() {
             let header = self.header_from_ptr(ptr);
-            cursor = header.next.get();
-            if matches!(
-                header.age.get(),
-                GcAge::Old0 | GcAge::Old1 | GcAge::Touched1 | GcAge::Touched2
-            ) {
-                let id = ptr.as_ptr() as *const () as usize;
-                marker.mark_box(ptr, header, id);
-            }
+            let id = ptr.as_ptr() as *const () as usize;
+            marker.mark_box(ptr, header, id);
         }
     }
 
@@ -983,6 +984,8 @@ impl Heap {
     {
         if parent.age().is_old() && !child.age().is_old() {
             child.set_age(GcAge::Old0);
+            let ptr: NonNull<GcBox<dyn Trace>> = child.ptr;
+            self.remember_minor_revisit(ptr);
         }
         self.barrier(parent, child);
     }
@@ -997,6 +1000,8 @@ impl Heap {
         if parent.age().is_old() {
             parent.set_color(Color::Gray);
             parent.set_age(GcAge::Touched1);
+            let ptr: NonNull<GcBox<dyn Trace>> = parent.ptr;
+            self.remember_minor_revisit(ptr);
         }
     }
 
@@ -1058,6 +1063,7 @@ impl Heap {
             header.age.set(GcAge::Old);
             header.color.set(Color::Black);
         });
+        self.minor_revisit.borrow_mut().clear();
     }
 
     /// Metadata transition used when returning to incremental mode: Lua clears
@@ -1068,6 +1074,7 @@ impl Heap {
             header.age.set(GcAge::New);
             header.color.set(current_white);
         });
+        self.minor_revisit.borrow_mut().clear();
     }
 
     /// Run a complete young-generation collection.
@@ -1373,6 +1380,7 @@ impl Heap {
 
     fn sweep_young(&self) {
         let mut freed_bytes = 0usize;
+        let mut next_revisit = Vec::new();
         let current_white = self.current_white();
         let mut prev_next_ptr = NonNull::from(&self.head);
         loop {
@@ -1394,11 +1402,18 @@ impl Heap {
 
             if !header.color.get().is_white() {
                 let age = header.age.get();
-                header.age.set(age.next_after_minor());
+                let next_age = age.next_after_minor();
+                header.age.set(next_age);
                 match age {
                     GcAge::New => header.color.set(current_white),
                     GcAge::Touched1 | GcAge::Touched2 => header.color.set(Color::Black),
                     _ => {}
+                }
+                if matches!(
+                    next_age,
+                    GcAge::Old0 | GcAge::Old1 | GcAge::Touched1 | GcAge::Touched2
+                ) {
+                    next_revisit.push(ptr);
                 }
             }
             prev_next_ptr = unsafe { NonNull::from(&(*ptr.as_ptr()).header.next) };
@@ -1406,6 +1421,7 @@ impl Heap {
         if freed_bytes > 0 {
             self.bytes.set(self.bytes.get().saturating_sub(freed_bytes));
         }
+        *self.minor_revisit.borrow_mut() = next_revisit;
     }
 
     fn finish_cycle(&self) {
@@ -1473,6 +1489,7 @@ impl Heap {
     pub fn drop_all(&self) {
         *self.marker.borrow_mut() = None;
         self.sweep_prev_next.set(None);
+        self.minor_revisit.borrow_mut().clear();
         self.state.set(GcState::Pause);
         let mut cursor = self.head.get();
         self.head.set(None);
@@ -1848,6 +1865,46 @@ mod tests {
         assert_eq!(young_child.marker_calls.get(), 1);
         assert_eq!(old_root.age(), GcAge::Touched2);
         assert_eq!(young_child.age(), GcAge::Survival);
+    }
+
+    #[test]
+    fn minor_revisit_list_carries_old1_until_old() {
+        let heap = Heap::new();
+        heap.unpause();
+        let survivor = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+
+        heap.minor_collect_with_post_mark(&OneRoot(Some(survivor)), |_| {});
+        assert_eq!(survivor.age(), GcAge::Survival);
+
+        heap.minor_collect_with_post_mark(&OneRoot(Some(survivor)), |_| {});
+        assert_eq!(survivor.age(), GcAge::Old1);
+
+        heap.minor_collect_with_post_mark(&OneRoot(None), |_| {});
+        assert_eq!(survivor.age(), GcAge::Old);
+        assert_eq!(heap.allgc_count(), 1);
+    }
+
+    #[test]
+    fn minor_revisit_list_carries_touched2_until_old() {
+        let heap = Heap::new();
+        heap.unpause();
+        let parent = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        parent.set_age(GcAge::Old);
+        parent.set_color(Color::Black);
+        heap.generational_backward_barrier(parent);
+
+        heap.minor_collect_with_post_mark(&OneRoot(None), |_| {});
+        assert_eq!(parent.age(), GcAge::Touched2);
+
+        heap.minor_collect_with_post_mark(&OneRoot(None), |_| {});
+        assert_eq!(parent.age(), GcAge::Old);
+        assert_eq!(parent.marker_calls.get(), 2);
     }
 
     #[test]

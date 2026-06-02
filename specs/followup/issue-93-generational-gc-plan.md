@@ -45,6 +45,10 @@ The current tree is no longer only startup/default scaffolding:
   `G_OLD` objects are counted as live but are not drained, while `G_OLD0`,
   `G_OLD1`, `G_TOUCHED1`, and `G_TOUCHED2` objects are explicitly revisited.
   The first telemetry canary dropped from `tracedold=246` to `tracedold=1`.
+- The revisit set is now collector-owned. Forward/backward barriers and minor
+  sweep record objects that must be revisited by the next young collection, so
+  minor marking no longer scans `allgc` just to discover `OLD0`/`OLD1`/touched
+  objects.
 - Minor weak/ephemeron/finalizer cleanup uses age-aware liveness, so objects
   deliberately skipped because they are old are not misclassified as dead.
 - Internal testC telemetry exists for GC state, age/color, type counts, warning
@@ -53,10 +57,10 @@ The current tree is no longer only startup/default scaffolding:
 
 The real generational collector is still not complete:
 
-- `minor_collect_with_post_mark` no longer drains plain `G_OLD` objects, but
-  it still discovers revisit cohorts by scanning `allgc`. It is not yet a true
-  intrusive cohort-list young collection with `survival`, `old1`, `reallyold`,
-  and `firstold1` cursors.
+- `minor_collect_with_post_mark` no longer drains plain `G_OLD` objects and no
+  longer scans `allgc` to find revisit objects, but young sweep still walks the
+  full allgc list. It is not yet a true intrusive cohort-list young collection
+  with `survival`, `old1`, `reallyold`, and `firstold1` cursors.
 - Normal-list cohort boundaries equivalent to `survival`, `old1`,
   `reallyold`, and `firstold1` are not represented as collector cursors.
 - Finalizers still live in VM-side `pending_finalizers` / `to_be_finalized`

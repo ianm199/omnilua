@@ -1081,7 +1081,10 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         debt,
         threshold,
         allgc,
+        allgc_cohorts,
         collections,
+        minor_collections,
+        full_collections,
         weak,
         weaklive,
         weakdead,
@@ -1107,6 +1110,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         let g = state.global();
         let finstats = g.finalizers.stats();
         let weakstats = g.weak_tables_registry.stats();
+        let allgc_cohorts = g.heap.allgc_cohort_stats();
         (
             if g.is_gen_mode() { "generational" } else { "incremental" },
             String::from_utf8_lossy(testc_gc_state_name(g.heap.gc_state())).into_owned(),
@@ -1114,7 +1118,10 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
             g.gc_debt(),
             g.heap.threshold_bytes(),
             g.heap.allgc_count(),
+            allgc_cohorts,
             g.heap.collections(),
+            g.heap.minor_collections(),
+            g.heap.full_collections(),
             g.weak_tables_registry.len(),
             weakstats.snapshot_live,
             weakstats.snapshot_dead,
@@ -1144,14 +1151,20 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
     let userdata = testc_type_count(state, b"userdata")?;
     let strings = testc_type_count(state, b"string")?;
     let stats = format!(
-        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} weaklive={} weakdead={} weakretained={} weakvalues={} ephemeron={} allweak={} grayagain={} pendingfin={} tobefin={} pendingfinyoung={} pendingfinold={} tobefinyoung={} tobefinold={} finobjnew={} finobjsur={} finobjold1={} finobjrold={} finobjscan={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
+        "mode={} state={} bytes={} debt={} threshold={} allgc={} allgcnew={} allgcsurvival={} allgcold1={} allgcold={} collections={} minorcollections={} fullcollections={} weak={} weaklive={} weakdead={} weakretained={} weakvalues={} ephemeron={} allweak={} grayagain={} pendingfin={} tobefin={} pendingfinyoung={} pendingfinold={} tobefinyoung={} tobefinold={} finobjnew={} finobjsur={} finobjold1={} finobjrold={} finobjscan={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
         mode,
         gc_state,
         bytes,
         debt,
         threshold,
         allgc,
+        allgc_cohorts.new,
+        allgc_cohorts.survival,
+        allgc_cohorts.old1,
+        allgc_cohorts.old,
         collections,
+        minor_collections,
+        full_collections,
         weak,
         weaklive,
         weakdead,

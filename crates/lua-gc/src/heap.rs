@@ -947,6 +947,15 @@ impl SweepStats {
     }
 }
 
+/// Diagnostic counts for the allgc list split by generational cursors.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct AllGcCohortStats {
+    pub new: usize,
+    pub survival: usize,
+    pub old1: usize,
+    pub old: usize,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum MarkerMode {
     Full,
@@ -1225,8 +1234,12 @@ pub struct Heap {
     /// If true, `step` and `barrier` are no-ops (for bootstrap before the
     /// world is consistent).
     paused: Cell<bool>,
-    /// Counter of full collections performed (for diagnostics).
+    /// Counter of completed collections performed (for diagnostics).
     collections: Cell<usize>,
+    /// Counter of completed young-generation collections.
+    minor_collections: Cell<usize>,
+    /// Counter of explicit stop-the-world full-collection requests.
+    full_collections: Cell<usize>,
     /// Diagnostic counters from the most recently completed mark phase.
     last_mark_stats: Cell<MarkerStats>,
     /// Diagnostic counters from the most recent sweep phase.
@@ -1273,6 +1286,8 @@ impl Heap {
             state: Cell::new(GcState::Pause),
             paused: Cell::new(true), // start paused; caller enables when world is consistent
             collections: Cell::new(0),
+            minor_collections: Cell::new(0),
+            full_collections: Cell::new(0),
             last_mark_stats: Cell::new(MarkerStats::default()),
             last_sweep_stats: Cell::new(SweepStats::default()),
             grayagain: Cell::new(None),
@@ -1367,12 +1382,51 @@ impl Heap {
         self.collections.get()
     }
 
+    pub fn minor_collections(&self) -> usize {
+        self.minor_collections.get()
+    }
+
+    pub fn full_collections(&self) -> usize {
+        self.full_collections.get()
+    }
+
     pub fn last_mark_stats(&self) -> MarkerStats {
         self.last_mark_stats.get()
     }
 
     pub fn last_sweep_stats(&self) -> SweepStats {
         self.last_sweep_stats.get()
+    }
+
+    pub fn allgc_cohort_stats(&self) -> AllGcCohortStats {
+        let survival = self.survival.get();
+        let old1 = self.old1.get();
+        let reallyold = self.reallyold.get();
+        let mut stats = AllGcCohortStats::default();
+        let mut cursor = self.head.get();
+        let mut seen = HashSet::new();
+        let mut cohort = 0u8;
+        while let Some(ptr) = cursor {
+            let id = ptr.as_ptr() as *const () as usize;
+            if !seen.insert(id) {
+                break;
+            }
+            if Some(ptr) == reallyold {
+                cohort = 3;
+            } else if Some(ptr) == old1 {
+                cohort = 2;
+            } else if Some(ptr) == survival {
+                cohort = 1;
+            }
+            match cohort {
+                0 => stats.new += 1,
+                1 => stats.survival += 1,
+                2 => stats.old1 += 1,
+                _ => stats.old += 1,
+            }
+            cursor = self.header_from_ptr(ptr).next.get();
+        }
+        stats
     }
 
     fn next_token(&self) -> usize {
@@ -1849,6 +1903,7 @@ impl Heap {
         self.sweep_prev_next.set(None);
         self.state.set(GcState::Pause);
         self.collections.set(self.collections.get() + 1);
+        self.minor_collections.set(self.minor_collections.get() + 1);
     }
 
     /// Stop-the-world full collect with a post-mark hook.
@@ -1868,6 +1923,7 @@ impl Heap {
         if !self.state.get().is_pause() {
             self.abort_cycle();
         }
+        self.full_collections.set(self.full_collections.get() + 1);
         let unlimited = StepBudget { remaining_work: isize::MAX, max_credit: isize::MAX };
         loop {
             let outcome = self.incremental_step_with_post_mark(roots, unlimited, &mut post_mark);
@@ -2199,7 +2255,7 @@ impl Heap {
         limit: Option<NonNull<GcBox<dyn Trace>>>,
         next_revisit: &mut Vec<NonNull<GcBox<dyn Trace>>>,
         next_revisit_seen: &mut HashSet<usize>,
-        processed: &mut HashSet<usize>,
+        processed: &mut Option<HashSet<usize>>,
         firstold1: &mut Option<NonNull<GcBox<dyn Trace>>>,
         freed_bytes: &mut usize,
         stats: &mut SweepStats,
@@ -2220,7 +2276,9 @@ impl Heap {
             let next = header.next.get();
             let age = header.age.get();
             stats.record_visit(age);
-            processed.insert(ptr.as_ptr() as *const () as usize);
+            if let Some(processed) = processed.as_mut() {
+                processed.insert(ptr.as_ptr() as *const () as usize);
+            }
             if header.color.get().is_white() && !age.is_old() {
                 prev_cell.set(next);
                 let size = header.size.get();
@@ -2257,10 +2315,14 @@ impl Heap {
         let mut freed_bytes = 0usize;
         let mut next_revisit = Vec::new();
         let mut next_revisit_seen = HashSet::new();
-        let mut processed = HashSet::new();
         let mut firstold1 = None;
         let mut stats = SweepStats::default();
         let old_revisit = self.take_grayagain();
+        let mut processed = if old_revisit.is_empty() {
+            None
+        } else {
+            Some(HashSet::new())
+        };
         let survival = self.survival.get();
         let old1 = self.old1.get();
 
@@ -2320,7 +2382,10 @@ impl Heap {
         );
 
         for ptr in old_revisit {
-            if processed.contains(&(ptr.as_ptr() as *const () as usize)) {
+            if processed
+                .as_ref()
+                .is_some_and(|processed| processed.contains(&(ptr.as_ptr() as *const () as usize)))
+            {
                 continue;
             }
             stats.revisit += 1;

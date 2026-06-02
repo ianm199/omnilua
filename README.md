@@ -3,7 +3,7 @@
 A pure-Rust Lua interpreter — one implementation that runs **Lua 5.1, 5.2, 5.3,
 5.4, and 5.5**, selected per instance. Runs as a standalone binary with no C
 dependency, embeds in Rust programs and in the browser. The stable 5.4 backend
-passes the full upstream PUC-Rio test suite (44/44).
+passes the full upstream PUC-Rio test suite.
 
 [![CI](https://github.com/ianm199/lua-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/ianm199/lua-rs/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/lua-cli.svg?label=crates.io%2Flua-cli)](https://crates.io/crates/lua-cli)
@@ -69,7 +69,7 @@ version is verified against its unmodified upstream reference binary.
 
 Maturity, by version:
 
-- **5.4** — stable; passes the full upstream PUC-Rio suite (44/44).
+- **5.4** — stable; passes the full upstream PUC-Rio suite.
 - **5.3 / 5.5** — beta; long tails closed (compat-math, error wording, `global`
   declarations, named varargs, traceback fidelity), verified against the
   reference. A few documented divergences remain (see the open issues).
@@ -135,8 +135,8 @@ supported yet.
 ## More
 
 - Conformance: `TEST_TIMEOUT_S=90 ./harness/run_official_all.sh` runs the
-  unmodified upstream suite against `lua-rs` (44/44). This is Lua
-  source/runtime compatibility, not C API/ABI compatibility.
+  unmodified upstream suite against `lua-rs` and reports the live pass count.
+  This is Lua source/runtime compatibility, not C API/ABI compatibility.
 - Building, testing, and contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 - Embedding internals and roadmap:
   [docs/EMBEDDING_API_IMPLEMENTATION.md](docs/EMBEDDING_API_IMPLEMENTATION.md),

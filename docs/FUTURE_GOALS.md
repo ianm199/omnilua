@@ -3,17 +3,14 @@
 This document separates the compatibility targets for `lua-rs`. They are often
 collapsed into one phrase, but they are very different engineering projects.
 
-## Current Target: Lua Source Compatibility
+## Achieved: Lua Source Compatibility (5.1–5.5)
 
-The current project target is Lua 5.4.7 source/runtime compatibility:
-
-- parse and execute Lua source;
-- implement Lua 5.4 value, table, closure, coroutine, metatable, error, and GC
-  semantics;
-- provide the Lua standard libraries through the Rust runtime;
-- pass the upstream Lua 5.4.7 official test suite in the repo harness.
-
-As of 2026-05-26, the harnessed official suite passes 44/44 tests.
+Source/runtime compatibility across Lua 5.1, 5.2, 5.3, 5.4, and 5.5 is shipped —
+value/table/closure/coroutine/metatable/error/GC semantics, the standard
+libraries, and the upstream 5.4 official suite (run `harness/run_official_all.sh`
+for the live pass count). 5.4 is the stable baseline; see the README's maturity
+table and `CHANGELOG.md` for per-version status. This doc is about what comes
+*next* (below); current state lives in GitHub issues + the changelog.
 
 That is strong evidence for Lua language compatibility. It is not the same as
 being a drop-in replacement for PUC-Rio Lua's C API or binary ABI.

@@ -5,8 +5,8 @@ name = "lua"
 repo = "https://www.lua.org/ftp/lua-5.4.7.tar.gz"
 commit = "5.4.7"
 license = "MIT"
-source_dir = "reference/lua-c"
-primary_file = "reference/lua-c/lua.c"
+source_dir = "reference/lua-5.4.7/src"
+primary_file = "reference/lua-5.4.7/src/lua.c"
 c_loc = 28000
 
 [build]

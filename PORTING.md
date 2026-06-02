@@ -1,5 +1,14 @@
 # Lua C → Safe Rust Porting Guide
 
+> **Historical.** This is the original Phase-A C→Rust translation rulebook. The
+> port is complete (Lua 5.1–5.5 all ship), so this is reference, not an active
+> runbook. It is kept at the repo root because ~17 `.rs` files cite it in their
+> PORT STATUS trailers, and the trailer convention (§12) is still enforced. The
+> still-live code-style rules (no inline comments, no fallbacks, bytes-not-String,
+> unsafe budget) are restated in `CLAUDE.md`; **note that "we target 5.4 only"
+> below is obsolete — the project is now multi-version and the version-gated
+> compat code is load-bearing.**
+
 You are translating one Lua C file to Rust. Read this whole document before
 writing any code. The goal of **Phase A** is a draft `.rs` next to the `.c`
 that captures the logic — it does **not** need to compile. **Phase B** makes

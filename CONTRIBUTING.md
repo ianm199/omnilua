@@ -1,8 +1,10 @@
 # Contributing to lua-rs
 
-Thanks for your interest in `lua-rs` — a Lua 5.4.7 runtime implemented in safe
-Rust. This guide covers how to build it, how to run the tests, the project
-layout, and the code-style rules the project enforces.
+Thanks for your interest in `lua-rs` — a pure-Rust Lua interpreter that runs Lua
+5.1 through 5.5 from one core (5.4 is the stable baseline). This guide covers how
+to build it, how to run the tests, the project layout, and the code-style rules
+the project enforces. For the agent-facing operational guide (the iteration
+ladder, the multi-version oracle, benchmarks), see [CLAUDE.md](CLAUDE.md).
 
 ## Prerequisites
 
@@ -26,10 +28,10 @@ The debug binary lands at `target/debug/lua-rs`.
 target/debug/lua-rs script.lua             # run a source file
 target/debug/lua-rs -e 'print(1 + 2)'      # run a one-liner
 target/debug/lua-rs 'print("bare source")' # a bare argument is treated as source
+target/debug/lua-rs                        # REPL (no arguments)
+target/debug/lua-rs -                      # read a script from stdin
+LUA_RS_VERSION=5.1 target/debug/lua-rs s.lua  # select a Lua version (5.1–5.5; default 5.4)
 ```
-
-There is no REPL or stdin execution yet — see the roadmap in the
-[README](README.md).
 
 ## Tests: the oracle is the source of truth
 
@@ -127,9 +129,13 @@ The full debugging playbook lives in [CLAUDE.md](CLAUDE.md).
 
 ## Further reading
 
+- [CLAUDE.md](CLAUDE.md) — the operational guide: iteration ladder, multi-version
+  oracle, benchmarks, debugging playbook.
 - [README.md](README.md) — what the project is and where it stands.
-- [PORTING.md](PORTING.md) — the C→Rust translation rules.
-- [HARNESS_DESIGN.md](HARNESS_DESIGN.md) — the harness and its enforcement model.
+- [specs/MULTIVERSION_PLAYBOOK.md](specs/MULTIVERSION_PLAYBOOK.md) — how to add or
+  fix a Lua version (and the harness/enforcement model).
+- [PORTING.md](PORTING.md) — the original C→Rust translation rules (historical;
+  the port is complete, but the PORT STATUS trailer convention is still in use).
 - [docs/LUA_SYSTEM_DEEP_DIVE.md](docs/LUA_SYSTEM_DEEP_DIVE.md) — architecture, GC,
   and the unsafe model.
 

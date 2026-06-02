@@ -1,6 +1,6 @@
 # file_deps.txt — canonical crate assignment for each C file
 # Format: <c-file>  <target-crate>  <target-rust-file>
-# STATUS: STUB. Verified before Phase A.
+# STATUS: populated.
 
 # --- lua-types: foundation (no C analogue, written from scratch) ---
 

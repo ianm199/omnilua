@@ -657,6 +657,14 @@ Follow-up rejected call/frame spikes:
   `closure_ops` to 1.88x and `fibonacci` to 1.83x, but regressed
   `binarytrees` to 2.02x. It was dropped. The signal is that cached frame data
   has to avoid per-call write cost.
+- Returning `(CallInfoIdx, GcRef<LuaLClosure>)` from `precall` and carrying the
+  already-matched closure into the immediate next `execute` frame avoided the
+  per-frame cached-closure write, but failed correctness before benchmarking.
+  `cargo check -p lua-vm`, `cargo test -p lua-vm --lib`, `calls.lua`, and
+  `coroutine.lua` passed; the debug-hook-heavy `db.lua` official runner
+  segfaulted before execution completed. It was dropped. The signal is that a
+  lower-write active-frame design must account for hook/resume/debug state, not
+  only the direct no-hook recursive call path.
 - Co-loading `CallInfo.func` and `savedpc` at frame entry was behavior-neutral
   and performance-neutral. The best-of-5 focused matrix
   (`harness/bench/results/20260602T190952Z-89161f2-compare.tsv`) matched the
@@ -678,15 +686,63 @@ Follow-up rejected call/frame spikes:
   workload itself was noisy at this duration (`table_hash_pressure` 1.40x), so
   this remains rejected until a longer controlled A/B shows otherwise.
 
+### 12. `perf/vm-opaque-offset-telemetry` — line-zero VM samples get offset neighbors
+
+The post-retain profiles showed the next VM problem clearly but still left a
+material `UNKNOWN_INLINED` bucket. This packet keeps the source-region buckets
+honest and adds a second view for line-zero rows: visible opaque offsets are
+compared with resolved offsets from the same sample, and the report prints the
+nearest known source-region neighbors. The row count stays attached to the
+collapsed opaque row because `/usr/bin/sample` does not expose per-offset
+counts inside `vm.rs:0`.
+
+Fresh profile evidence on the current stack:
+
+- `closure_ops_x40`
+  (`harness/bench/profiles/20260602T200734Z-2174071-closure_ops_x40/summary.txt`,
+  regenerated VM report from
+  `harness/bench/profiles/20260602T200734Z-2174071-closure_ops_x40/sample.txt`):
+  `execute` is 90.4% of leaf samples. VM self-samples are
+  `DISPATCH_FETCH` 28.2%, `OP_CALL` 14.5%, `UNKNOWN_INLINED` 10.7%,
+  `FRAME_SETUP` 10.1%, `OP_GETUPVAL` 7.5%, and `OP_SETUPVAL` 7.3%.
+  The visible opaque offsets point at dispatch fetch (`offset 460`, nearest
+  `vm.rs:1777` / `vm.rs:1775`) and `OP_FORLOOP` (`offset 32356`, nearest
+  `vm.rs:2887` / `vm.rs:2886`).
+- `fibonacci_x2`
+  (`harness/bench/profiles/20260602T200747Z-2174071-fibonacci_x2/summary.txt`,
+  regenerated VM report from
+  `harness/bench/profiles/20260602T200747Z-2174071-fibonacci_x2/sample.txt`):
+  `execute` is 100.0% of leaf samples. VM self-samples are
+  `DISPATCH_FETCH` 21.9%, `UNKNOWN_INLINED` 15.1%, `OP_CALL` 14.9%,
+  `OP_ADD` 12.4%, `FRAME_SETUP` 8.1%, `OP_SUB` 7.9%, and `OP_GETUPVAL` 5.6%.
+  The visible opaque offsets again include a dispatch-near offset (`460`).
+  The larger visible offset (`28436`) only has arithmetic-side nearest
+  neighbors in this sample, so it remains a hint rather than a precise opcode
+  assignment.
+
+What this changes in the roadmap:
+
+- VM call/frame remains the runtime target: `OP_CALL`, frame setup, return
+  re-entry, and repeated dispatch fetch are still the tallest reusable buckets.
+- The remaining opaque bucket is no longer a single undifferentiated mystery:
+  part of it is visibly dispatch-near, and part is workload-specific compiled
+  code layout that needs either better native tooling or a carefully scoped
+  runtime experiment.
+- A future runtime packet should use `compare_bins.sh` for Rust-vs-Rust A/B
+  before the reference-C matrix. The next plausible safe attempts are
+  dispatch/trap branch reshaping or a lower-write-cost active-frame design; the
+  previous cached-closure and return-re-entry spikes remain rejected until this
+  attribution points to a more specific intervention.
+
 Tool gaps:
 
 - `sample` plus `vm-execute.txt` still leaves `UNKNOWN_INLINED` samples and
   cannot provide exact per-op timing. The report now records
   `opaque_self_samples` and an opaque-source table so line-0 samples can at
   least be split by source file before escalating to heavier tools. The table
-  also preserves compact address-offset bundles from `sample`; these are not
-  per-offset counts, but they reveal when `vm.rs:0` aggregates multiple code
-  addresses.
+  also preserves compact address-offset bundles from `sample` and adds visible
+  offset-neighbor hints when possible; these are not per-offset counts, but
+  they reveal when `vm.rs:0` aggregates multiple code addresses.
 - `vm-execute-attribution.py` records `execute_source_nodes` and warns when
   `sample` has no source-line data for `lua_vm::vm::execute`. Without
   `CARGO_PROFILE_RELEASE_DEBUG=true` and frame pointers, the profiler may show

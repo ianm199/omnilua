@@ -174,7 +174,11 @@ section, so `UNKNOWN_INLINED` time can be separated into `vm.rs:0`,
 `result.rs:0`, `value.rs:0`, or other inlined source buckets before reaching
 for heavier tooling. Opaque rows also show compact address-offset bundles from
 the raw sample output; those offsets are not per-offset counts, but they show
-when one line-0 row is aggregating multiple code addresses.
+when one line-0 row is aggregating multiple code addresses. When visible
+opaque offsets can be compared with resolved offsets from the same sample, the
+report adds nearest-known source-region neighbors as hints; those rows keep the
+aggregate row count because `/usr/bin/sample` does not expose per-offset counts
+inside a collapsed line-zero row.
 
 This is still sampling telemetry, not exact per-op timing. It is useful for
 distinguishing "all time vanished into `vm::execute`" from concrete buckets

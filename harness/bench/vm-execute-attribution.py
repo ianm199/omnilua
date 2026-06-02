@@ -17,6 +17,7 @@ import argparse
 import dataclasses
 import pathlib
 import re
+from bisect import bisect_left
 from collections import defaultdict
 
 
@@ -43,7 +44,9 @@ class Node:
     frame: str
     file: str | None = None
     line: int | None = None
-    offsets: str = ""
+    offsets_text: str = ""
+    offsets: tuple[int, ...] = ()
+    offsets_truncated: bool = False
     children: list["Node"] = dataclasses.field(default_factory=list)
 
     @property
@@ -57,6 +60,14 @@ class Region:
     start: int
     end: int
     name: str
+
+
+@dataclasses.dataclass(frozen=True)
+class KnownOffset:
+    offset: int
+    file_name: str
+    line: int
+    region: str
 
 
 def opcode_name(variant: str) -> str:
@@ -140,13 +151,54 @@ def is_opaque_region(region: str) -> bool:
     )
 
 
-def compact_offsets(offsets: str, limit: int = 36) -> str:
+def parse_offsets(offsets: str) -> tuple[str, tuple[int, ...], bool]:
+    compact = re.sub(r"\s+", "", offsets)
+    values = tuple(int(match.group(0)) for match in re.finditer(r"\d+", compact))
+    return compact, values, "..." in compact
+
+
+def compact_offsets(offsets: str, limit: int = 64) -> str:
     if not offsets:
         return ""
     compact = re.sub(r"\s+", "", offsets)
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
+
+
+def nearest_known_offsets(
+    known_offsets: list[KnownOffset],
+    offset: int,
+    limit: int = 3,
+) -> list[KnownOffset]:
+    if not known_offsets:
+        return []
+    values = [known.offset for known in known_offsets]
+    pos = bisect_left(values, offset)
+    candidates: list[KnownOffset] = []
+    seen: set[tuple[int, str, int]] = set()
+    for idx in range(max(0, pos - 3), min(len(known_offsets), pos + 4)):
+        known = known_offsets[idx]
+        key = (known.offset, known.file_name, known.line)
+        if key not in seen:
+            candidates.append(known)
+            seen.add(key)
+    candidates.sort(key=lambda known: (abs(known.offset - offset), known.offset))
+    return candidates[:limit]
+
+
+def format_offset_neighbors(known_offsets: list[KnownOffset], offset: int) -> str:
+    neighbors = nearest_known_offsets(known_offsets, offset)
+    if not neighbors:
+        return ""
+    parts = []
+    for known in neighbors:
+        delta = known.offset - offset
+        parts.append(
+            f"{known.offset}:{known.file_name}:{known.line}/"
+            f"{known.region}({delta:+d})"
+        )
+    return ", ".join(parts)
 
 
 def parse_call_graph(sample_text: str) -> list[Node]:
@@ -181,7 +233,10 @@ def parse_call_graph(sample_text: str) -> list[Node]:
             node.line = int(exec_match.group("line"))
             offset_match = OFFSET_RE.search(raw_line)
             if offset_match:
-                node.offsets = compact_offsets(offset_match.group("offsets"))
+                raw_offsets, offsets, truncated = parse_offsets(offset_match.group("offsets"))
+                node.offsets_text = compact_offsets(raw_offsets)
+                node.offsets = offsets
+                node.offsets_truncated = truncated
 
         while stack and indent <= stack[-1].indent:
             stack.pop()
@@ -207,9 +262,10 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
 
     region_self: dict[str, int] = defaultdict(int)
     line_self: dict[tuple[str, int, str], int] = defaultdict(int)
-    opaque_self: dict[tuple[str, int, str, str], int] = defaultdict(int)
+    opaque_self: dict[tuple[str, int, str, str, tuple[int, ...], bool], int] = defaultdict(int)
     region_inclusive: dict[str, int] = defaultdict(int)
     total_thread_samples = sum(root.count for root in roots) or 1
+    known_offsets: list[KnownOffset] = []
 
     execute_nodes = 0
     execute_nodes_with_source = 0
@@ -226,10 +282,32 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
             file_name = pathlib.PurePath(node.file or "?").name
             line_self[(file_name, node.line or 0, region)] += node.self_count
             if is_opaque_region(region):
-                opaque_self[(file_name, node.line or 0, region, node.offsets)] += node.self_count
+                opaque_self[
+                    (
+                        file_name,
+                        node.line or 0,
+                        region,
+                        node.offsets_text,
+                        node.offsets,
+                        node.offsets_truncated,
+                    )
+                ] += node.self_count
+            elif node.offsets and file_name == "vm.rs" and node.line:
+                for offset in node.offsets:
+                    known_offsets.append(
+                        KnownOffset(
+                            offset=offset,
+                            file_name=file_name,
+                            line=node.line,
+                            region=region,
+                        )
+                    )
+
+    known_offsets.sort(key=lambda known: known.offset)
 
     total_execute_self = sum(region_self.values()) or 1
     total_opaque_self = sum(opaque_self.values())
+    opaque_rows_with_truncated_offsets = sum(1 for key in opaque_self if key[5])
     lines: list[str] = []
     lines.append(f"sample:                {sample}")
     lines.append(f"source:                {source}")
@@ -238,6 +316,7 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
     lines.append(f"execute_source_nodes:  {execute_nodes_with_source}")
     lines.append(f"execute_self_samples:  {sum(region_self.values())}")
     lines.append(f"opaque_self_samples:   {total_opaque_self}")
+    lines.append(f"opaque_offset_rows_with_ellipsis: {opaque_rows_with_truncated_offsets}")
     if execute_nodes > 0 and execute_nodes_with_source == 0:
         lines.append(
             "warning: no source-line data found for lua_vm::vm::execute; "
@@ -256,15 +335,48 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
         lines.append("")
         lines.append("Opaque VM execute self samples by source file:")
         lines.append(f"  {'count':>8}  {'vm_pct':>6}  {'thread_pct':>10}  location  region  offsets")
-        for (file_name, line_no, region, offsets), count in sorted(
+        for (file_name, line_no, region, offsets_text, _, _), count in sorted(
             opaque_self.items(), key=lambda row: (-row[1], row[0][0], row[0][1])
         )[:20]:
             vm_pct = 100.0 * count / total_execute_self
             thread_pct = 100.0 * count / total_thread_samples
             lines.append(
                 f"  {count:>8}  {vm_pct:>5.1f}%  {thread_pct:>9.1f}%  "
-                f"{file_name}:{line_no:<5}  {region:<18}  {offsets}"
+                f"{file_name}:{line_no:<5}  {region:<18}  {offsets_text}"
             )
+
+        offset_rows: list[tuple[int, str, int, str, int, str, bool]] = []
+        for (file_name, line_no, region, _, offsets, truncated), count in opaque_self.items():
+            for offset in offsets[:6]:
+                offset_rows.append(
+                    (
+                        count,
+                        file_name,
+                        line_no,
+                        region,
+                        offset,
+                        format_offset_neighbors(known_offsets, offset),
+                        truncated,
+                    )
+                )
+        if offset_rows:
+            lines.append("")
+            lines.append(
+                "Visible opaque VM offset neighbors "
+                "(row_count is the aggregate row count, not per-offset samples):"
+            )
+            lines.append(
+                f"  {'row_count':>9}  location  region  "
+                f"{'offset':>8}  {'ellipsis':>8}  nearest_known_offsets"
+            )
+            for count, file_name, line_no, region, offset, neighbors, truncated in sorted(
+                offset_rows, key=lambda row: (-row[0], row[1], row[2], row[4])
+            )[:30]:
+                ellipsis = "yes" if truncated else "no"
+                lines.append(
+                    f"  {count:>9}  {file_name}:{line_no:<5}  {region:<18}  "
+                    f"{offset:>8}  {ellipsis:>8}  {neighbors}"
+                )
 
     lines.append("")
     lines.append("Top VM execute self samples by source line:")

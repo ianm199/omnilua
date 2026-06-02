@@ -429,7 +429,9 @@ barriers, skipped metamethod checks, or benchmark-only dispatch.
   `opaque_self_samples` and the opaque-source table before treating
   `UNKNOWN_INLINED` as one bucket; it often distinguishes `vm.rs:0` from
   standard-library inlining such as `result.rs:0` or `value.rs:0`. It is
-  sampled line/offset evidence, not exact opcode timing, so pair it with
+  sampled line/offset evidence, not exact opcode timing. When the report shows
+  visible opaque offset neighbors, treat them as hints attached to an aggregate
+  line-zero row, not per-offset timing. Pair the report with
   `opcode-profile.sh` when you need executed-op counts.
 
 ## What about JIT?

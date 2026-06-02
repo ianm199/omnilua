@@ -3278,7 +3278,9 @@ impl LuaState {
         };
         self.gc_check_needed = should_keep_checking;
     }
-    pub fn gc_barrier_back<T, U>(&mut self, _t: T, _v: U) { /* phase-b no-op */ }
+    pub fn gc_barrier_back(&mut self, t: &dyn std::any::Any, v: &LuaValue) {
+        self.gc().barrier_back(t, v);
+    }
     pub fn gc_barrier_upval<T, U, V>(&mut self, _cl: T, _uv: U, _v: V) { /* phase-b no-op */ }
     ///
     /// Phase E-1: compares `GlobalState::current_thread_id` against
@@ -3342,6 +3344,86 @@ impl<'a> lua_gc::Trace for CollectRoots<'a> {
     fn trace(&self, m: &mut lua_gc::Marker) {
         self.global.trace(m);
         self.thread.trace(m);
+    }
+}
+
+fn barrier_lua_value<P>(heap: &lua_gc::Heap, parent: GcRef<P>, child: &LuaValue)
+where
+    P: lua_gc::Trace + 'static,
+{
+    match child {
+        LuaValue::Str(c) => heap.barrier(parent.0, c.0),
+        LuaValue::Table(c) => heap.barrier(parent.0, c.0),
+        LuaValue::Function(LuaClosure::Lua(c)) => heap.barrier(parent.0, c.0),
+        LuaValue::Function(LuaClosure::C(c)) => heap.barrier(parent.0, c.0),
+        LuaValue::UserData(c) => heap.barrier(parent.0, c.0),
+        LuaValue::Thread(c) => heap.barrier(parent.0, c.0),
+        LuaValue::Nil
+        | LuaValue::Bool(_)
+        | LuaValue::Int(_)
+        | LuaValue::Float(_)
+        | LuaValue::LightUserData(_)
+        | LuaValue::Function(LuaClosure::LightC(_)) => {}
+    }
+}
+
+fn barrier_child_any<P>(heap: &lua_gc::Heap, parent: GcRef<P>, child: &dyn std::any::Any)
+where
+    P: lua_gc::Trace + 'static,
+{
+    if let Some(v) = child.downcast_ref::<LuaValue>() {
+        barrier_lua_value(heap, parent, v);
+    } else if let Some(c) = child.downcast_ref::<GcRef<LuaString>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<LuaTable>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<LuaClosureLua>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<LuaClosureC>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<LuaUserData>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<lua_types::value::LuaThread>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<LuaProto>>() {
+        heap.barrier(parent.0, c.0);
+    } else if let Some(c) = child.downcast_ref::<GcRef<UpVal>>() {
+        heap.barrier(parent.0, c.0);
+    }
+}
+
+fn barrier_any(heap: &lua_gc::Heap, parent: &dyn std::any::Any, child: &dyn std::any::Any) {
+    if let Some(v) = parent.downcast_ref::<LuaValue>() {
+        match v {
+            LuaValue::Str(p) => barrier_child_any(heap, *p, child),
+            LuaValue::Table(p) => barrier_child_any(heap, *p, child),
+            LuaValue::Function(LuaClosure::Lua(p)) => barrier_child_any(heap, *p, child),
+            LuaValue::Function(LuaClosure::C(p)) => barrier_child_any(heap, *p, child),
+            LuaValue::UserData(p) => barrier_child_any(heap, *p, child),
+            LuaValue::Thread(p) => barrier_child_any(heap, *p, child),
+            LuaValue::Nil
+            | LuaValue::Bool(_)
+            | LuaValue::Int(_)
+            | LuaValue::Float(_)
+            | LuaValue::LightUserData(_)
+            | LuaValue::Function(LuaClosure::LightC(_)) => {}
+        }
+    } else if let Some(p) = parent.downcast_ref::<GcRef<LuaString>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<LuaTable>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<LuaClosureLua>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<LuaClosureC>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<LuaUserData>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<lua_types::value::LuaThread>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<LuaProto>>() {
+        barrier_child_any(heap, *p, child);
+    } else if let Some(p) = parent.downcast_ref::<GcRef<UpVal>>() {
+        barrier_child_any(heap, *p, child);
     }
 }
 
@@ -3814,22 +3896,34 @@ impl<'a> GcHandle<'a> {
 
     /// GC write barrier for a TValue.
     ///
-    /// macros.tsv: `luaC_barrier → state.gc().barrier(p, v)` — no-op in Phases A–C
-    pub fn barrier(&self, _p: &dyn std::any::Any, _v: &LuaValue) {}
+    /// macros.tsv: `luaC_barrier → state.gc().barrier(p, v)`
+    pub fn barrier(&self, p: &dyn std::any::Any, v: &LuaValue) {
+        let g = self._state.global();
+        barrier_any(&g.heap, p, v);
+    }
 
     /// Backward write barrier.
     ///
-    /// macros.tsv: `luaC_barrierback → state.gc().barrier_back(p, v)` — no-op
-    pub fn barrier_back(&self, _p: &dyn std::any::Any, _v: &LuaValue) {}
+    /// macros.tsv: `luaC_barrierback → state.gc().barrier_back(p, v)`
+    pub fn barrier_back(&self, p: &dyn std::any::Any, v: &LuaValue) {
+        let g = self._state.global();
+        barrier_any(&g.heap, p, v);
+    }
 
     /// Object write barrier.
     ///
-    /// macros.tsv: `luaC_objbarrier → state.gc().obj_barrier(p, o)` — no-op
-    pub fn obj_barrier(&self, _p: &dyn std::any::Any, _o: &dyn std::any::Any) {}
+    /// macros.tsv: `luaC_objbarrier → state.gc().obj_barrier(p, o)`
+    pub fn obj_barrier(&self, p: &dyn std::any::Any, o: &dyn std::any::Any) {
+        let g = self._state.global();
+        barrier_any(&g.heap, p, o);
+    }
 
     /// Backward object write barrier.
     ///
-    pub fn obj_barrier_back(&self, _p: &dyn std::any::Any, _o: &dyn std::any::Any) {}
+    pub fn obj_barrier_back(&self, p: &dyn std::any::Any, o: &dyn std::any::Any) {
+        let g = self._state.global();
+        barrier_any(&g.heap, p, o);
+    }
 }
 
 // ─── Functions from lstate.c ──────────────────────────────────────────────────
@@ -4907,6 +5001,47 @@ mod tests {
             assert!(state.external_unroot_value(key).is_some());
         }
         state.gc().full_collect();
+    }
+
+    #[test]
+    fn gc_barrier_keeps_new_child_stored_in_black_parent() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let parent = state.new_table();
+        let parent_key = state.external_root_value(LuaValue::Table(parent));
+        state.gc().incremental_step(1);
+        assert!(
+            state.global().keep_invariant(),
+            "test setup should leave the parent marked during an active cycle"
+        );
+
+        let child = state.new_table();
+        let parent_value = LuaValue::Table(parent);
+        let child_value = LuaValue::Table(child);
+        parent
+            .raw_set_int(&mut state, 1, child_value)
+            .expect("table store should succeed");
+        state.gc_barrier_back(&parent_value, &child_value);
+
+        for _ in 0..128 {
+            if state.gc().incremental_step(1) {
+                break;
+            }
+        }
+
+        assert_eq!(state.global().heap.allgc_count(), 2);
+        assert_eq!(
+            parent.get_int(1).as_table().map(|t| t.identity()),
+            Some(child.identity())
+        );
+
+        assert!(state.external_unroot_value(parent_key).is_some());
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.allgc_count(), 0);
     }
 }
 

@@ -7,6 +7,7 @@
 
 use lua_types::{GcRef, LuaError, LuaTable, LuaType, LuaValue};
 use crate::state_stub::{LuaState, LuaStateStubExt as _, CompareOp};
+use lua_vm::state::LuaTableRefExt as _;
 
 // ─── Operation flags ──────────────────────────────────────────────────────────
 const TAB_R: u32 = 1;
@@ -113,8 +114,9 @@ fn raw_set_int(
     key: i64,
     value: LuaValue,
 ) -> Result<(), LuaError> {
-    state.gc_barrier_back(LuaValue::Table(tbl), value);
-    tbl.try_raw_set_int(key, value)
+    let parent = LuaValue::Table(tbl);
+    state.gc_barrier_back(&parent, &value);
+    tbl.raw_set_int(state, key, value)
 }
 
 // ─── table.insert ─────────────────────────────────────────────────────────────

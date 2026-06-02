@@ -3444,7 +3444,9 @@ fn body(
     if parent.f.p.len() <= slot {
         parent.f.p.resize_with(slot + 1, || GcRef::new(LuaProto::placeholder()));
     }
-    parent.f.p[slot] = GcRef::new(*inner_proto);
+    let inner_ref = GcRef::new(*inner_proto);
+    inner_ref.account_buffer(inner_ref.buffer_bytes() as isize);
+    parent.f.p[slot] = inner_ref;
     Ok(())
 }
 

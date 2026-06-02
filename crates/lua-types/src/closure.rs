@@ -61,6 +61,18 @@ impl LuaLClosure {
     pub fn set_upval(&self, i: usize, new: GcRef<UpVal>) {
         self.upvals[i].set(new);
     }
+
+    /// Bytes owned outside the `GcBox` header/object allocation.
+    pub fn buffer_bytes(&self) -> usize {
+        self.upvals.capacity() * std::mem::size_of::<Cell<GcRef<UpVal>>>()
+    }
+}
+
+impl LuaCClosure {
+    /// Bytes owned outside the `GcBox` header/object allocation.
+    pub fn buffer_bytes(&self) -> usize {
+        self.upvalues.borrow().capacity() * std::mem::size_of::<LuaValue>()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

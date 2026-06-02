@@ -508,7 +508,9 @@ fn load_protos(s: &mut LoadState<'_>, f: &mut LuaProto) -> Result<(), LuaError> 
         // PORT NOTE: In C f->p[i] is a Proto * held by the proto's GC roots.
         // In Rust Phase A it becomes Rc<LuaProto>.
         // TODO(D-1c-bridge): wraps fully-populated LuaProto value; state.new_proto produces a placeholder
-        protos.push(GcRef::new(sub));
+        let sub_ref = GcRef::new(sub);
+        sub_ref.account_buffer(sub_ref.buffer_bytes() as isize);
+        protos.push(sub_ref);
     }
 
     f.p = protos;
@@ -957,6 +959,7 @@ pub(crate) fn undump(
     // Wrap the proto in a GcRef and attach it to the closure.
     // TODO(D-1c-bridge): wraps fully-populated LuaProto value; state.new_proto produces a placeholder
     let proto_ref = GcRef::new(proto);
+    proto_ref.account_buffer(proto_ref.buffer_bytes() as isize);
 
     // macros.tsv: lua_assert → debug_assert!
     // nupvalues is the byte we read; sizeupvalues = proto_ref.upvalues.len()
@@ -974,6 +977,7 @@ pub(crate) fn undump(
     // Wrap the closure in GcRef.
     // TODO(D-1c-bridge): wraps fully-populated LuaLClosure value; state.new_lclosure makes Nil-filled upvals
     let cl_ref = GcRef::new(cl);
+    cl_ref.account_buffer(cl_ref.buffer_bytes() as isize);
 
     // Replace the stack placeholder with the real closure value.
     // macros.tsv: setclLvalue2s → state.set_at(o, LuaValue::Function(LuaClosure::Lua(...)))

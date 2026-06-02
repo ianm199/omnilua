@@ -2620,7 +2620,9 @@ impl LuaState {
         for _ in 0..nupvals {
             upvals.push(std::cell::Cell::new(self.new_upval_closed(LuaValue::Nil)));
         }
-        GcRef::new(LuaClosureLua { proto, upvals })
+        let closure = GcRef::new(LuaClosureLua { proto, upvals });
+        closure.account_buffer(closure.buffer_bytes() as isize);
+        closure
     }
 
     /// Allocate a closed upvalue holding the given value.
@@ -2697,6 +2699,7 @@ impl LuaState {
             proto: child_proto.clone(),
             upvals,
         });
+        new_cl.account_buffer(new_cl.buffer_bytes() as isize);
         if cache_enabled {
             *child_proto.cache.borrow_mut() = Some(new_cl.clone());
         }
@@ -5406,6 +5409,83 @@ mod tests {
             state.global().heap.bytes_used(),
             allocated_bytes,
             "rooted userdata payload bytes should remain charged after collection"
+        );
+
+        assert!(state.external_unroot_value(key).is_some());
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.bytes_used(), 0);
+        assert_eq!(state.global().heap.allgc_count(), 0);
+    }
+
+    #[test]
+    fn cclosure_upvalue_accounting_refunds_on_sweep() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let nupvalues = 64;
+        for i in 0..nupvalues {
+            state.push(LuaValue::Int(i as i64));
+        }
+        crate::api::push_cclosure(&mut state, test_noop_cclosure, nupvalues as i32)
+            .expect("C closure creation should succeed");
+        let LuaValue::Function(LuaClosure::C(ccl)) = state.get_at(state.top_idx() - 1) else {
+            panic!("expected heavy C closure");
+        };
+        let expected_payload = ccl.buffer_bytes();
+        let key = state.external_root_value(LuaValue::Function(LuaClosure::C(ccl)));
+        state.pop_n(1);
+        let allocated_bytes = state.global().heap.bytes_used();
+        assert!(
+            allocated_bytes >= expected_payload,
+            "C closure upvalue vector bytes must be charged to the GC heap"
+        );
+
+        state.gc().full_collect();
+        assert_eq!(
+            state.global().heap.bytes_used(),
+            allocated_bytes,
+            "rooted C closure payload bytes should remain charged after collection"
+        );
+
+        assert!(state.external_unroot_value(key).is_some());
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.bytes_used(), 0);
+        assert_eq!(state.global().heap.allgc_count(), 0);
+    }
+
+    #[test]
+    fn proto_and_lclosure_accounting_refunds_on_sweep() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let mut proto = LuaProto::placeholder();
+        proto.code = vec![lua_types::opcode::Instruction(0); 2048];
+        proto.lineinfo = vec![0; 2048];
+        proto.k = vec![LuaValue::Int(1); 512];
+        let expected_proto_payload = proto.buffer_bytes();
+        let proto = GcRef::new(proto);
+        proto.account_buffer(expected_proto_payload as isize);
+
+        let closure = state.new_lclosure(proto, 16);
+        let expected_closure_payload = closure.buffer_bytes();
+        let key = state.external_root_value(LuaValue::Function(LuaClosure::Lua(closure)));
+        let allocated_bytes = state.global().heap.bytes_used();
+        assert!(
+            allocated_bytes >= expected_proto_payload + expected_closure_payload,
+            "proto and Lua closure vector bytes must be charged to the GC heap"
+        );
+
+        state.gc().full_collect();
+        assert_eq!(
+            state.global().heap.bytes_used(),
+            allocated_bytes,
+            "rooted proto and Lua closure payload bytes should remain charged after collection"
         );
 
         assert!(state.external_unroot_value(key).is_some());

@@ -3332,10 +3332,14 @@ fn parser_hook(
             RawLuaValue::Nil,
         ))));
     }
-    Ok(GcRef::new(LuaLClosure {
-        proto: GcRef::new(*proto),
+    let proto_ref = GcRef::new(*proto);
+    proto_ref.account_buffer(proto_ref.buffer_bytes() as isize);
+    let closure = GcRef::new(LuaLClosure {
+        proto: proto_ref,
         upvals,
-    }))
+    });
+    closure.account_buffer(closure.buffer_bytes() as isize);
+    Ok(closure)
 }
 
 // ────────────────────────────── Sandboxing ──────────────────────────────

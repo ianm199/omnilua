@@ -60,6 +60,21 @@ impl LuaProto {
             vararg_table_reg: None,
         }
     }
+
+    /// Bytes owned outside the `GcBox` header/object allocation.
+    ///
+    /// C allocates these arrays through Lua's allocator. The Rust port stores
+    /// them as `Vec`s, so GC byte accounting charges their backing capacity
+    /// explicitly when a populated proto is wrapped in `GcRef`.
+    pub fn buffer_bytes(&self) -> usize {
+        self.upvalues.capacity() * std::mem::size_of::<UpvalDesc>()
+            + self.k.capacity() * std::mem::size_of::<LuaValue>()
+            + self.code.capacity() * std::mem::size_of::<Instruction>()
+            + self.p.capacity() * std::mem::size_of::<GcRef<LuaProto>>()
+            + self.lineinfo.capacity() * std::mem::size_of::<i8>()
+            + self.abslineinfo.capacity() * std::mem::size_of::<AbsLineInfo>()
+            + self.locvars.capacity() * std::mem::size_of::<LocalVar>()
+    }
 }
 
 #[derive(Debug, Clone)]

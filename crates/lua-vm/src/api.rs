@@ -1163,6 +1163,9 @@ pub fn push_cclosure(
             func: idx,
             upvalues: std::cell::RefCell::new(upvalues),
         }));
+        if let LuaClosure::C(ccl) = &cl {
+            ccl.account_buffer(ccl.buffer_bytes() as isize);
+        }
         state.push(LuaValue::Function(cl));
         state.gc().check_step();
     }

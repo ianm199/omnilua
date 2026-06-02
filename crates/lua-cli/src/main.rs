@@ -801,10 +801,14 @@ fn parser_hook(
     for _ in 0..nupvals {
         upvals.push(std::cell::Cell::new(GcRef::new(UpVal::closed(LuaValue::Nil))));
     }
-    Ok(GcRef::new(LuaLClosure {
-        proto: GcRef::new(*proto),
+    let proto_ref = GcRef::new(*proto);
+    proto_ref.account_buffer(proto_ref.buffer_bytes() as isize);
+    let closure = GcRef::new(LuaLClosure {
+        proto: proto_ref,
         upvals,
-    }))
+    });
+    closure.account_buffer(closure.buffer_bytes() as isize);
+    Ok(closure)
 }
 
 fn testc_push_string(state: &mut LuaState, bytes: &[u8]) -> Result<(), LuaError> {

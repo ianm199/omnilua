@@ -17,7 +17,7 @@
 //!   5. Reference `reference/lua-5.4.7/src/lgc.c`'s `reallymarkobject`
 
 use lua_gc::{Marker, Trace};
-use crate::state::{LuaState, GlobalState};
+use crate::state::{FinalizerObject, LuaState, GlobalState};
 use crate::string::{LuaStringImpl, LuaUserDataImpl};
 use lua_types::{LuaClosure, LuaValue};
 
@@ -32,6 +32,15 @@ impl Trace for LuaStringImpl {
 /// real when userdata machinery lands post-D-1.
 impl Trace for LuaUserDataImpl {
     fn trace(&self, _m: &mut Marker) {}
+}
+
+impl Trace for FinalizerObject {
+    fn trace(&self, m: &mut Marker) {
+        match self {
+            FinalizerObject::Table(t) => t.trace(m),
+            FinalizerObject::UserData(u) => u.trace(m),
+        }
+    }
 }
 
 impl Trace for LuaState {
@@ -173,12 +182,12 @@ impl Trace for GlobalState {
         // unvisited entry is moved to `to_be_finalized` and explicitly
         // marked there so it survives the sweep.
         //
-        // `to_be_finalized` IS traced as a strong root: tables in this list
+        // `to_be_finalized` IS traced as a strong root: objects in this list
         // are awaiting their `__gc` call but are otherwise dead, and the
-        // table (plus its descendants) must survive long enough for the
+        // object (plus its descendants) must survive long enough for the
         // finalizer to run.
-        for t in self.to_be_finalized.iter() {
-            t.trace(m);
+        for object in self.to_be_finalized.iter() {
+            object.trace(m);
         }
 
         // Trace suspended parent stacks. When a coroutine is running, any

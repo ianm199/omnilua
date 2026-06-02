@@ -10,7 +10,7 @@
 use std::convert::Infallible;
 #[allow(unused_imports)] use crate::prelude::*;
 
-use crate::state::{LuaState, LuaCFunction, LuaCallable, StackIdx,
+use crate::state::{FinalizerObject, LuaState, LuaCFunction, LuaCallable, StackIdx,
     LuaValueExt, LuaTypeExt, StackIdxExt,
     LuaTableRefExt, LuaUserDataRefExt};
 use lua_types::{
@@ -1440,31 +1440,20 @@ fn metatable_has_gc(state: &LuaState, mt: &GcRef<LuaTable>) -> bool {
     !matches!(mt.get_short_str(&name), LuaValue::Nil)
 }
 
-/// Pin `tbl` in `pending_finalizers` if not already present.
-fn register_finalizable_table(state: &mut LuaState, tbl: &GcRef<LuaTable>) {
+fn register_finalizable_object(state: &mut LuaState, object: FinalizerObject) {
+    let id = object.identity();
     let already = state
         .global()
         .pending_finalizers
         .iter()
-        .any(|t| GcRef::ptr_eq(t, tbl));
+        .any(|o| o.identity() == id);
     if !already {
-        state.global_mut().pending_finalizers.push(tbl.clone());
+        state.global_mut().pending_finalizers.push(object);
     }
 }
 
-/// Phase-B `__gc` driver.
-///
-/// Scans `pending_finalizers` for tables whose only strong ref is the list
-/// itself (`Rc::strong_count == 1`), runs their `__gc` metamethod in a
-/// protected call, then drops the list's pin so the table can be freed.
-/// Iterates in reverse so the most-recently registered finalizers run first,
-/// matching C-Lua's order (`finobj` is a LIFO stack).
-///
-/// PORT NOTE: This stands in for C-Lua's `GCSatomic` finalizer-promotion step
-/// plus `GCTM`. The real GC walks the heap to decide which `finobj` entries
-/// are unreachable; in Phase B we use the `Rc` strong-count as the proxy.
-/// Replaced by `lua_gc::run_pending_finalizers` when Phase D's incremental
-/// GC lands.
+/// Drain objects already promoted from `pending_finalizers` to
+/// `to_be_finalized` by the heap mark phase.
 pub fn run_pending_finalizers(state: &mut LuaState) {
     let _ = run_pending_finalizers_inner(state, false);
 }
@@ -1495,10 +1484,9 @@ pub fn run_pending_finalizers_inner(
     let version = state.global().lua_version;
     let mut did_run = false;
     loop {
-        // `to_be_finalized` was populated by the most recent
-        // `collect_via_heap` mark phase. Drain in LIFO order so the most
-        // recently dead object runs its `__gc` first — matches C-Lua's
-        // `finobj` stack ordering.
+        // `to_be_finalized` was populated by the most recent mark phase.
+        // Drain in LIFO order so the most recently dead object runs its `__gc`
+        // first, matching C-Lua's `finobj`/`tobefnz` ordering.
         let target_idx = {
             let to_fin = &state.global().to_be_finalized;
             if to_fin.is_empty() { None } else { Some(to_fin.len() - 1) }
@@ -1513,8 +1501,8 @@ pub fn run_pending_finalizers_inner(
         // ordering (finalizer-visible state) still requires reachability-
         // based detection of which finalizable tables are about to die — a
         // gap tracked under D-2 ephemeron/finalizer follow-up.
-        let tbl = state.global_mut().to_be_finalized.swap_remove(i);
-        let mt = tbl.metatable();
+        let object = state.global_mut().to_be_finalized.swap_remove(i);
+        let mt = object.metatable();
         let gc_fn = match mt {
             Some(ref m) => {
                 let name = state.global().tmname[crate::tagmethods::TagMethod::Gc as usize].clone();
@@ -1533,7 +1521,7 @@ pub fn run_pending_finalizers_inner(
             state.set_top(ci_top);
         }
         state.push(gc_fn);
-        state.push(LuaValue::Table(tbl));
+        state.push(object.as_lua_value());
         let func_idx = state.top_idx() - 2;
         let _heap_guard = {
             let g = state.global.borrow();
@@ -1620,25 +1608,24 @@ pub fn run_pending_finalizers_inner(
 /// what emits messages like `>>> closing state <<<` from `gc.lua`.
 ///
 /// Phase-B note: the live registry of finalizable objects is
-/// `pending_finalizers`. A single snapshot of that list is promoted into
-/// `to_be_finalized` and drained by [`run_pending_finalizers`]. We snapshot
+    /// `pending_finalizers`. A single snapshot of that list is promoted into
+    /// `to_be_finalized` and drained by [`run_pending_finalizers`]. We snapshot
 /// once (matching C's single `separatetobefnz` call): a finalizer may
 /// resurrect its object or register new finalizables via `setmetatable`, but
 /// C does not re-finalize those at close (`gcstp = GCSTPCLS`), so neither do
 /// we — the freshly-registered entries are left in `pending_finalizers` and
 /// simply dropped with the state.
 pub fn run_close_finalizers(state: &mut LuaState) {
-    let pending: Vec<GcRef<lua_types::value::LuaTable>> =
-        std::mem::take(&mut state.global_mut().pending_finalizers);
+    let pending: Vec<FinalizerObject> = std::mem::take(&mut state.global_mut().pending_finalizers);
     if pending.is_empty() {
         return;
     }
     let mut seen = std::collections::HashSet::<usize>::new();
     {
         let mut g = state.global_mut();
-        for tbl in pending {
-            if seen.insert(tbl.identity()) {
-                g.to_be_finalized.push(tbl);
+        for object in pending {
+            if seen.insert(object.identity()) {
+                g.to_be_finalized.push(object);
             }
         }
     }
@@ -1709,7 +1696,7 @@ pub fn set_metatable(state: &mut LuaState, objindex: i32) -> Result<bool, LuaErr
             if tables_finalizable {
                 if let Some(ref mt_table) = mt {
                     if metatable_has_gc(state, mt_table) {
-                        register_finalizable_table(state, tbl);
+                        register_finalizable_object(state, FinalizerObject::Table(tbl.clone()));
                     }
                 }
             }
@@ -1717,7 +1704,9 @@ pub fn set_metatable(state: &mut LuaState, objindex: i32) -> Result<bool, LuaErr
         LuaValue::UserData(ref ud) => {
             if let Some(ref mt_table) = mt {
                 state.gc().obj_barrier(ud, mt_table);
-                // TODO(port): luaC_checkfinalizer
+                if metatable_has_gc(state, mt_table) {
+                    register_finalizable_object(state, FinalizerObject::UserData(ud.clone()));
+                }
             }
             ud.set_metatable(mt);
         }

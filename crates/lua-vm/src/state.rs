@@ -110,6 +110,42 @@ impl LuaCallable {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum FinalizerObject {
+    Table(GcRef<LuaTable>),
+    UserData(GcRef<LuaUserData>),
+}
+
+impl FinalizerObject {
+    pub fn identity(&self) -> usize {
+        match self {
+            FinalizerObject::Table(t) => t.identity(),
+            FinalizerObject::UserData(u) => u.identity(),
+        }
+    }
+
+    pub fn metatable(&self) -> Option<GcRef<LuaTable>> {
+        match self {
+            FinalizerObject::Table(t) => t.metatable(),
+            FinalizerObject::UserData(u) => u.metatable(),
+        }
+    }
+
+    pub fn as_lua_value(&self) -> LuaValue {
+        match self {
+            FinalizerObject::Table(t) => LuaValue::Table(t.clone()),
+            FinalizerObject::UserData(u) => LuaValue::UserData(u.clone()),
+        }
+    }
+
+    pub fn mark(&self, marker: &mut lua_gc::Marker) {
+        match self {
+            FinalizerObject::Table(t) => marker.mark(t.0),
+            FinalizerObject::UserData(u) => marker.mark(u.0),
+        }
+    }
+}
+
 // ─── Constants (from macros.tsv) ──────────────────────────────────────────────
 
 // macros.tsv: EXTRA_STACK → const EXTRA_STACK: u32 = 5
@@ -1241,25 +1277,17 @@ pub struct GlobalState {
     /// Phase D's incremental sweep lands.
     pub weak_tables_registry: Vec<lua_types::gc::GcWeak<lua_types::value::LuaTable>>,
 
-    /// Phase-B pending-finalizer registry.
-    ///
-    /// Each entry is a strong `GcRef<LuaTable>` to a table whose metatable
-    /// carried `__gc` at the time `setmetatable` was called. The strong ref
-    /// pins the table so a normal `Rc::drop` does not destroy it before its
-    /// `__gc` metamethod runs. The Phase-B finalizer sweep
-    /// (`crate::api::run_pending_finalizers`) scans this list, takes any
-    /// entry whose strong count is 1 (only this list holds it — i.e. the
-    /// user has dropped every reference), and invokes its `__gc` before
-    /// releasing the ref. Replaced by `finobj` / `tobefnz` when the real
-    /// incremental GC lands in Phase D.
-    pub pending_finalizers: Vec<GcRef<lua_types::value::LuaTable>>,
+    /// Finalizable tables and userdata whose metatable carried `__gc` when
+    /// installed. This mirrors C-Lua's `finobj` list: entries are deliberately
+    /// not traced as roots, so a mark phase can detect when an object is
+    /// reachable only through the finalizer registry.
+    pub pending_finalizers: Vec<FinalizerObject>,
 
-    /// Tables identified by the most recent `collect_via_heap` mark phase as
-    /// reachable only through `pending_finalizers` (i.e. the user has dropped
-    /// every reference). Their `__gc` runs the next time
-    /// `run_pending_finalizers` executes; entries are then cleared. Traced as
-    /// strong roots so they survive the sweep that scheduled them.
-    pub to_be_finalized: Vec<GcRef<lua_types::value::LuaTable>>,
+    /// Finalizable objects promoted by the most recent atomic mark phase
+    /// because they were otherwise unreachable. This mirrors C-Lua's
+    /// `tobefnz` list and is traced as a temporary root so the object survives
+    /// until its `__gc` call runs.
+    pub to_be_finalized: Vec<FinalizerObject>,
 
     /// Error raised by a `__gc` finalizer during an explicit `collectgarbage`
     /// on 5.2 / 5.3, parked here for the `collectgarbage` wrapper to re-raise.
@@ -3556,14 +3584,14 @@ impl<'a> GcHandle<'a> {
         // does NOT root these — that's how the post-mark hook below can
         // distinguish "still reachable from program state" from "only kept
         // alive by the finalizer registry."
-        let pending_snapshot: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> = {
+        let pending_snapshot: Vec<FinalizerObject> = {
             let g = state_ref.global.borrow();
             g.pending_finalizers.clone()
         };
 
         let alive_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
-        let newly_unreachable: std::cell::RefCell<Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>>> =
+        let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
@@ -3598,7 +3626,7 @@ impl<'a> GcHandle<'a> {
                 }
                 for pf in &pending_snapshot {
                     if !marker.is_visited(pf.identity()) {
-                        marker.mark(pf.0);
+                        pf.mark(marker);
                         newly_unreachable.borrow_mut().push(pf.clone());
                     }
                 }
@@ -3659,8 +3687,7 @@ impl<'a> GcHandle<'a> {
         // upgrade those handles (current placeholder GcWeak always returns
         // Some) and the prune walk would deref freed memory.
         let alive_set = alive_ids.into_inner();
-        let promote: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> =
-            newly_unreachable.into_inner();
+        let promote: Vec<FinalizerObject> = newly_unreachable.into_inner();
         let promote_ids: std::collections::HashSet<usize> =
             promote.iter().map(|t| t.identity()).collect();
         let alive_thread_ids = alive_thread_ids.into_inner();
@@ -3708,14 +3735,14 @@ impl<'a> GcHandle<'a> {
                 .collect()
         };
 
-        let pending_snapshot: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> = {
+        let pending_snapshot: Vec<FinalizerObject> = {
             let g = state_ref.global.borrow();
             g.pending_finalizers.clone()
         };
 
         let alive_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
-        let newly_unreachable: std::cell::RefCell<Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>>> =
+        let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
@@ -3750,7 +3777,7 @@ impl<'a> GcHandle<'a> {
                 }
                 for pf in &pending_snapshot {
                     if !marker.is_visited(pf.identity()) {
-                        marker.mark(pf.0);
+                        pf.mark(marker);
                         newly_unreachable.borrow_mut().push(pf.clone());
                     }
                 }
@@ -3800,8 +3827,7 @@ impl<'a> GcHandle<'a> {
 
         if atomic_ran.get() {
             let alive_set = alive_ids.into_inner();
-            let promote: Vec<lua_types::gc::GcRef<lua_types::value::LuaTable>> =
-                newly_unreachable.into_inner();
+            let promote: Vec<FinalizerObject> = newly_unreachable.into_inner();
             let promote_ids: std::collections::HashSet<usize> =
                 promote.iter().map(|t| t.identity()).collect();
             let alive_thread_ids = alive_thread_ids.into_inner();

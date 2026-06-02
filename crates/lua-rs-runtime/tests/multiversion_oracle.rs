@@ -1760,6 +1760,23 @@ fn v52_plus_gc_on_table_fires() {
 }
 
 #[test]
+fn v51_gc_on_userdata_registered_by_setmetatable_fires() {
+    // 5.1 has no table finalizers, but full userdata finalizers are active.
+    // This pins the VM's `luaC_checkfinalizer` equivalent for userdata
+    // metatable assignment: before that path was wired, the finalizer never ran.
+    eq(
+        LuaVersion::V51,
+        "local flag = 'no'; \
+         do local u = newproxy(false); \
+            debug.setmetatable(u, {__gc = function(x) flag = type(x) end}); \
+            u = nil \
+         end; \
+         collectgarbage(); collectgarbage(); return flag",
+        "userdata",
+    );
+}
+
+#[test]
 fn v51_fenv_roster_present() {
     eq(LuaVersion::V51, "return type(getfenv)", "function");
     eq(LuaVersion::V51, "return type(setfenv)", "function");

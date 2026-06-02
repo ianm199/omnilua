@@ -21,7 +21,8 @@ use lua_types::gc::GcRef;
 use lua_types::upval::UpVal;
 use lua_types::value::LuaValue;
 use lua_vm::state::{
-    new_state, DynLibId, DynamicSymbol, GcKind, LuaState, OsExecuteReason, OsExecuteResult,
+    new_state, DynLibId, DynamicSymbol, FinalizerObject, GcKind, LuaState, OsExecuteReason,
+    OsExecuteResult,
 };
 
 mod interp;
@@ -1059,6 +1060,16 @@ fn testc_checkmemory(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(0)
 }
 
+fn testc_finalizer_age_counts(objects: &[FinalizerObject]) -> (usize, usize) {
+    objects.iter().fold((0usize, 0usize), |(young, old), object| {
+        if object.age().is_old() {
+            (young, old + 1)
+        } else {
+            (young + 1, old)
+        }
+    })
+}
+
 fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
     let (
         mode,
@@ -1071,10 +1082,18 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         weak,
         pendingfin,
         tobefin,
+        pendingfinyoung,
+        pendingfinold,
+        tobefinyoung,
+        tobefinold,
         markstats,
         sweepstats,
     ) = {
         let g = state.global();
+        let (pendingfinyoung, pendingfinold) =
+            testc_finalizer_age_counts(&g.pending_finalizers);
+        let (tobefinyoung, tobefinold) =
+            testc_finalizer_age_counts(&g.to_be_finalized);
         (
             if g.is_gen_mode() { "generational" } else { "incremental" },
             String::from_utf8_lossy(testc_gc_state_name(g.heap.gc_state())).into_owned(),
@@ -1086,6 +1105,10 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
             g.weak_tables_registry.len(),
             g.pending_finalizers.len(),
             g.to_be_finalized.len(),
+            pendingfinyoung,
+            pendingfinold,
+            tobefinyoung,
+            tobefinold,
             g.heap.last_mark_stats(),
             g.heap.last_sweep_stats(),
         )
@@ -1096,7 +1119,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
     let userdata = testc_type_count(state, b"userdata")?;
     let strings = testc_type_count(state, b"string")?;
     let stats = format!(
-        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} pendingfin={} tobefin={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
+        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} pendingfin={} tobefin={} pendingfinyoung={} pendingfinold={} tobefinyoung={} tobefinold={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
         mode,
         gc_state,
         bytes,
@@ -1107,6 +1130,10 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         weak,
         pendingfin,
         tobefin,
+        pendingfinyoung,
+        pendingfinold,
+        tobefinyoung,
+        tobefinold,
         markstats.marked,
         markstats.marked_young,
         markstats.marked_old,

@@ -1,0 +1,2 @@
+METRIC finalizercohorts mode=generational state=pause bytes=40990 debt=-8180 threshold=49170 allgc=253 collections=4 weak=0 pendingfin=5 tobefin=1 pendingfinyoung=0 pendingfinold=5 tobefinyoung=1 tobefinold=0 marked=107 markedyoung=33 markedold=74 traced=33 tracedyoung=33 tracedold=0 sweepvisited=9 sweepvisitedyoung=9 sweepvisitedold=0 sweeprevisit=0 sweepfreed=6 sweepfreedbytes=1516 tables=22 functions=8 threads=0 userdata=3 strings=215
+PASS canary_m

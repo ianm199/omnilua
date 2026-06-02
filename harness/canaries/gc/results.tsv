@@ -20,5 +20,7 @@ canary_j_testc_sweep_uservalue_barrier	incremental	PASS	-
 canary_j_testc_sweep_uservalue_barrier	generational	PASS	-
 canary_k_testc_accounting	incremental	PASS	-
 canary_k_testc_accounting	generational	PASS	-
-canary_l_testc_minor_stats	incremental	PASS	METRIC minorstats mode=generational state=pause bytes=41060 debt=-8200 threshold=49260 allgc=254 collections=4 weak=0 pendingfin=4 tobefin=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 sweepvisited=6 sweepvis
-canary_l_testc_minor_stats	generational	PASS	METRIC minorstats mode=generational state=pause bytes=41060 debt=-8200 threshold=49260 allgc=254 collections=4 weak=0 pendingfin=4 tobefin=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 sweepvisited=6 sweepvis
+canary_l_testc_minor_stats	incremental	PASS	METRIC minorstats mode=generational state=pause bytes=41060 debt=-8200 threshold=49260 allgc=254 collections=4 weak=0 pendingfin=4 tobefin=0 pendingfinyoung=0 pendingfinold=4 tobefinyoung=0 tobefinold=0 marked=105 markedyoung=32 markedold=7
+canary_l_testc_minor_stats	generational	PASS	METRIC minorstats mode=generational state=pause bytes=41060 debt=-8200 threshold=49260 allgc=254 collections=4 weak=0 pendingfin=4 tobefin=0 pendingfinyoung=0 pendingfinold=4 tobefinyoung=0 tobefinold=0 marked=105 markedyoung=32 markedold=7
+canary_m_testc_finalizer_cohorts	incremental	PASS	METRIC finalizercohorts mode=generational state=pause bytes=40990 debt=-8180 threshold=49170 allgc=253 collections=4 weak=0 pendingfin=5 tobefin=1 pendingfinyoung=0 pendingfinold=5 tobefinyoung=1 tobefinold=0 marked=107 markedyoung=33 marke
+canary_m_testc_finalizer_cohorts	generational	PASS	METRIC finalizercohorts mode=generational state=pause bytes=40990 debt=-8180 threshold=49170 allgc=253 collections=4 weak=0 pendingfin=5 tobefin=1 pendingfinyoung=0 pendingfinold=5 tobefinyoung=1 tobefinold=0 marked=107 markedyoung=33 marke

@@ -59,6 +59,11 @@ The current tree is no longer only startup/default scaffolding:
   white reset so old objects can die during a major collection.
 - Minor weak/ephemeron/finalizer cleanup uses age-aware liveness, so objects
   deliberately skipped because they are old are not misclassified as dead.
+- Finalizer registry telemetry now splits pending and to-be-finalized objects
+  by young vs old age (`pendingfinyoung`, `pendingfinold`, `tobefinyoung`,
+  `tobefinold`). `canary_m_testc_finalizer_cohorts.lua` pins the current
+  VM-side behavior: a rooted old finalizer stays pending-old across a minor
+  step, while a young unreachable finalizer moves to to-be-finalized-young.
 - Internal testC telemetry exists for GC state, age/color, type counts, warning
   capture, and memory accounting. Both normal and `LUA_RS_TESTC=1` official
   `gc.lua`/`gengc.lua` currently pass.
@@ -199,6 +204,7 @@ Deliverables:
 Verification:
 
 - existing multiversion `__gc` tests
+- `canary_m_testc_finalizer_cohorts.lua` for pending/to-be-finalized age splits
 - new tests for order, resurrection, errors, and finalizer-list age movement
 - official `gc.lua` finalizer sections
 

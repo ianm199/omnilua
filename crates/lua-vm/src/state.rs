@@ -144,6 +144,13 @@ impl FinalizerObject {
             FinalizerObject::UserData(u) => marker.mark(u.0),
         }
     }
+
+    pub fn age(&self) -> lua_gc::GcAge {
+        match self {
+            FinalizerObject::Table(t) => t.0.age(),
+            FinalizerObject::UserData(u) => u.0.age(),
+        }
+    }
 }
 
 // ─── Constants (from macros.tsv) ──────────────────────────────────────────────

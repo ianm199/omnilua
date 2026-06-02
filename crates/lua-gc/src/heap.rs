@@ -189,6 +189,91 @@ impl GcAge {
     }
 }
 
+/// Minimal metadata a finalizable VM object must expose for collector-owned
+/// finalizer-list bookkeeping.
+pub trait FinalizerEntry: Clone {
+    fn identity(&self) -> usize;
+    fn age(&self) -> GcAge;
+}
+
+#[derive(Clone, Debug)]
+pub struct FinalizerRegistry<T: FinalizerEntry> {
+    pending: Vec<T>,
+    to_be_finalized: Vec<T>,
+}
+
+impl<T: FinalizerEntry> Default for FinalizerRegistry<T> {
+    fn default() -> Self {
+        Self {
+            pending: Vec::new(),
+            to_be_finalized: Vec::new(),
+        }
+    }
+}
+
+impl<T: FinalizerEntry> FinalizerRegistry<T> {
+    pub fn pending(&self) -> &[T] {
+        &self.pending
+    }
+
+    pub fn pending_snapshot(&self) -> Vec<T> {
+        self.pending.clone()
+    }
+
+    pub fn to_be_finalized(&self) -> &[T] {
+        &self.to_be_finalized
+    }
+
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn to_be_finalized_len(&self) -> usize {
+        self.to_be_finalized.len()
+    }
+
+    pub fn has_to_be_finalized(&self) -> bool {
+        !self.to_be_finalized.is_empty()
+    }
+
+    pub fn push_pending_unique(&mut self, object: T) {
+        let id = object.identity();
+        if !self.pending.iter().any(|o| o.identity() == id) {
+            self.pending.push(object);
+        }
+    }
+
+    pub fn take_pending(&mut self) -> Vec<T> {
+        std::mem::take(&mut self.pending)
+    }
+
+    fn retain_pending_not_in(&mut self, ids: &std::collections::HashSet<usize>) {
+        self.pending.retain(|object| !ids.contains(&object.identity()));
+    }
+
+    pub fn push_to_be_finalized(&mut self, object: T) {
+        self.to_be_finalized.push(object);
+    }
+
+    fn extend_to_be_finalized(&mut self, objects: Vec<T>) {
+        self.to_be_finalized.extend(objects);
+    }
+
+    pub fn promote_pending_to_finalized(&mut self, objects: Vec<T>) {
+        if objects.is_empty() {
+            return;
+        }
+        let ids: std::collections::HashSet<usize> =
+            objects.iter().map(|object| object.identity()).collect();
+        self.retain_pending_not_in(&ids);
+        self.extend_to_be_finalized(objects);
+    }
+
+    pub fn pop_to_be_finalized(&mut self) -> Option<T> {
+        self.to_be_finalized.pop()
+    }
+}
+
 /// Per-object GC metadata. Lives at the start of every `GcBox`.
 #[repr(C)]
 pub struct GcHeader {

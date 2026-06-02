@@ -153,72 +153,13 @@ impl FinalizerObject {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct FinalizerRegistry {
-    pending: Vec<FinalizerObject>,
-    to_be_finalized: Vec<FinalizerObject>,
-}
-
-impl FinalizerRegistry {
-    pub fn pending(&self) -> &[FinalizerObject] {
-        &self.pending
+impl lua_gc::FinalizerEntry for FinalizerObject {
+    fn identity(&self) -> usize {
+        FinalizerObject::identity(self)
     }
 
-    pub fn pending_snapshot(&self) -> Vec<FinalizerObject> {
-        self.pending.clone()
-    }
-
-    pub fn to_be_finalized(&self) -> &[FinalizerObject] {
-        &self.to_be_finalized
-    }
-
-    pub fn pending_len(&self) -> usize {
-        self.pending.len()
-    }
-
-    pub fn to_be_finalized_len(&self) -> usize {
-        self.to_be_finalized.len()
-    }
-
-    pub fn has_to_be_finalized(&self) -> bool {
-        !self.to_be_finalized.is_empty()
-    }
-
-    pub fn push_pending_unique(&mut self, object: FinalizerObject) {
-        let id = object.identity();
-        if !self.pending.iter().any(|o| o.identity() == id) {
-            self.pending.push(object);
-        }
-    }
-
-    pub fn take_pending(&mut self) -> Vec<FinalizerObject> {
-        std::mem::take(&mut self.pending)
-    }
-
-    fn retain_pending_not_in(&mut self, ids: &std::collections::HashSet<usize>) {
-        self.pending.retain(|object| !ids.contains(&object.identity()));
-    }
-
-    pub fn push_to_be_finalized(&mut self, object: FinalizerObject) {
-        self.to_be_finalized.push(object);
-    }
-
-    fn extend_to_be_finalized(&mut self, objects: Vec<FinalizerObject>) {
-        self.to_be_finalized.extend(objects);
-    }
-
-    pub fn promote_pending_to_finalized(&mut self, objects: Vec<FinalizerObject>) {
-        if objects.is_empty() {
-            return;
-        }
-        let ids: std::collections::HashSet<usize> =
-            objects.iter().map(|object| object.identity()).collect();
-        self.retain_pending_not_in(&ids);
-        self.extend_to_be_finalized(objects);
-    }
-
-    pub fn pop_to_be_finalized(&mut self) -> Option<FinalizerObject> {
-        self.to_be_finalized.pop()
+    fn age(&self) -> lua_gc::GcAge {
+        FinalizerObject::age(self)
     }
 }
 
@@ -1360,7 +1301,7 @@ pub struct GlobalState {
 
     /// Finalizable tables/userdata split into pending `finobj`-like entries
     /// and `tobefnz`-like entries waiting for their `__gc` call.
-    pub finalizers: FinalizerRegistry,
+    pub finalizers: lua_gc::FinalizerRegistry<FinalizerObject>,
 
     /// Error raised by a `__gc` finalizer during an explicit `collectgarbage`
     /// on 5.2 / 5.3, parked here for the `collectgarbage` wrapper to re-raise.
@@ -5143,7 +5084,7 @@ pub fn new_state() -> Option<LuaState> {
         gc55_params: [20, 50, 68, 250, 200, 9600],
         sweepgc_cursor: 0,
         weak_tables_registry: Vec::new(),
-        finalizers: FinalizerRegistry::default(),
+        finalizers: lua_gc::FinalizerRegistry::default(),
         gc_finalizer_error: None,
         twups: Vec::new(),
         panic: None,

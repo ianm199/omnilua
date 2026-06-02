@@ -74,9 +74,11 @@ The real generational collector is still not complete:
   allgc architecture, but this is still not exact C-Lua parity: touched objects
   are held in a collector-owned revisit vector instead of an intrusive
   `grayagain` list.
-- Finalizers now live behind a VM-side `FinalizerRegistry` abstraction with
-  pending and to-be-finalized lists, but that registry is still not
-  collector-owned `finobj` / `tobefnz` with generational finalizer cohorts.
+- Finalizers now live behind a generic `lua-gc::FinalizerRegistry<T>` with
+  pending and to-be-finalized list mechanics owned by the collector crate.
+  `lua-vm::FinalizerObject` implements the small `FinalizerEntry` trait, but
+  the registry still lacks `finobjsur` / `finobjold1` / `finobjrold`
+  generational finalizer cohorts.
 - Weak/ephemeron handling is correct enough for the current gates but still runs
   through VM snapshots and post-mark hooks instead of collector-owned weak-list
   processing for minor and major cycles.
@@ -196,8 +198,9 @@ Goal: stop treating finalization as an after-the-fact API drain.
 Deliverables:
 
 - Model `finobj` and `tobefnz` lists.
-- Done as a first structural slice: replace scattered raw VM vectors with a
-  single `FinalizerRegistry` abstraction.
+- Done as structural slices: replace scattered raw VM vectors with a single
+  `lua-gc::FinalizerRegistry<T>` abstraction, and move pending-to-finalized
+  promotion mechanics into that registry.
 - Track finalizable cohorts: `finobjsur`, `finobjold1`, `finobjrold`.
 - Use the reserved finalized state consistently.
 - Separate, mark, run, and sweep finalizers from collector phases.

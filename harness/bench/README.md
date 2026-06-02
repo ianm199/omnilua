@@ -122,6 +122,20 @@ PROFILE_LUA_EVAL='for i=1,100 do dofile("harness/bench/workloads/gc_pressure.lua
 A calltree/xctrace runner can be added when the hotspot summary is not enough
 to explain a packet.
 
+`opcode-profile.sh` is a feature-gated VM opcode counter for cases where stack
+sampling collapses into `vm::execute`:
+
+```bash
+bash harness/bench/opcode-profile.sh fibonacci
+PROFILE_LUA_EVAL='for i=1,10 do dofile("harness/bench/workloads/closure_ops.lua") end' \
+  bash harness/bench/opcode-profile.sh closure_ops_x10
+```
+
+It builds `lua-rs` with `--features opcode-profile`, writes
+`profiles/opcode-profile/<UTC>-<sha>-<label>/opcodes.tsv`, and overwrites
+`target/release/lua-rs` with the instrumented binary. Rebuild a normal release
+binary before running `compare.sh`.
+
 ## Reproducibility rules
 
 - Always run with the matching `target/release/lua-rs` build (NOT `target/debug`)
@@ -131,15 +145,17 @@ to explain a packet.
 
 ## Current follow-ups
 
-1. The latest table lesson is PR #120's typed write-barrier fast path; see
-   `docs/MATCHING_C_PERFORMANCE.md`.
+1. The latest table lesson is the no-metatable `OP_SET*` fast path after
+   PR #121; see `docs/MATCHING_C_PERFORMANCE.md`.
 2. `profile-hotspots.sh` is wired for `/usr/bin/sample` summaries and supports
    `PROFILE_LUA_EVAL` for scaled short-workload probes. Add a calltree/xctrace
    runner only when a packet needs deeper attribution.
-3. `compare.sh` appends ledger rows directly. Typed bench runner entries in
+3. `opcode-profile.sh` covers per-op counts when stack samples flatten into
+   `vm::execute`; it does not provide per-op timing.
+4. `compare.sh` appends ledger rows directly. Typed bench runner entries in
    `harness/runners.toml` are still useful future cleanup, but not required
    for evidence-backed perf work.
-4. Backfill remains future work for answering "when did this regress?" across
+5. Backfill remains future work for answering "when did this regress?" across
    older commits.
-5. Keep `results/` and `profiles/` generated artifacts ignored unless a run is
+6. Keep `results/` and `profiles/` generated artifacts ignored unless a run is
    deliberately promoted into committed evidence.

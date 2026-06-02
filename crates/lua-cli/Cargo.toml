@@ -24,6 +24,7 @@ path = "src/main.rs"
 [features]
 dhat-heap = ["dep:dhat"]
 fast-alloc = ["dep:mimalloc"]
+opcode-profile = ["lua-vm/opcode-profile"]
 
 [dependencies]
 lua-gc.workspace = true

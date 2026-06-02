@@ -21,20 +21,25 @@ microbench shape; that is not the goal. Regressions and unexplained >2× gaps
 are backlog until measured otherwise.
 
 Current selected matrix (best-of-5, Apple M3 Max, latest local evidence
-`harness/bench/results/20260602T132632Z-2d5cffe-compare.json`):
+`harness/bench/results/20260602T140413Z-858cc5e-compare.json`):
 
 | workload | wall ratio | category |
 |---|---:|---|
-| table_ops_long | 1.00× | table insert/remove long run, now at parity |
-| table_ops | 1.25× | short table insert/remove/iterate, passes 1.5× gate |
-| binarytrees | 2.23× | allocation + tree traversal / GC pressure |
-| string_ops_long | 2.23× | byte-string library hot paths |
-| gc_pressure | 3.00× | allocation/collection throughput under churn |
+| table_ops | 1.00× | short table insert/remove/iterate, passes 1.5× gate |
+| table_ops_long | 1.06× | table insert/remove long run, still at parity |
+| string_ops_long | 1.86× | byte-string pattern/gsub hot paths |
+| table_hash_pressure | 1.88× | hash-part insertion + string-key construction |
+| closure_ops | 1.94× | closure calls + upvalue reads/writes |
+| binarytrees | 2.11× | allocation + tree traversal / GC pressure |
+| gc_pressure | 2.50× | allocation/collection throughput under churn |
 
-The latest focused pass moved `binarytrees,gc_pressure,string_ops_long` from
-2.67× overall (`20260602T125546Z-2d5cffe`) to 2.24× overall. The table
-workloads are no longer the first target. The next tall poles are collector
-visited-set cost, table allocation/free throughput, and core VM dispatch.
+The latest broad pass moved the full matrix from 1.64× overall
+(`20260602T134659Z-858cc5e`) to 1.60× overall. The useful movement was in
+`binarytrees` (2.49× -> 2.11×), `string_ops_long` (2.14× -> 1.86×),
+`closure_ops` (2.12× -> 1.94×), and `gc_pressure` (3.00× -> 2.50×).
+The next tall poles are core VM call/upvalue/field dispatch, Lua pattern
+matching (`match_pat`), table/string-key construction, and collector
+sweep/allocation mechanics.
 
 ## The gate
 

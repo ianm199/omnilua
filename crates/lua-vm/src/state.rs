@@ -20,6 +20,9 @@
 // arithmetic and is not translated. Rust owns the allocations via Rc/Box.
 
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::Rc;
 
 use crate::string::StringPool;
@@ -60,6 +63,45 @@ pub use lua_types::closure::{LuaCFnPtr, LuaClosure, LuaLClosure as LuaClosureLua
 pub use lua_types::proto::LuaProto;
 pub use lua_types::upval::{UpVal, UpValState};
 pub use lua_types::gc::GcRef;
+
+pub struct LuaByteHasher {
+    hash: u64,
+}
+
+impl Default for LuaByteHasher {
+    fn default() -> Self {
+        Self { hash: 0xcbf2_9ce4_8422_2325 }
+    }
+}
+
+impl Hasher for LuaByteHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for &byte in bytes {
+            self.hash ^= u64::from(byte);
+            self.hash = self.hash.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.write(&[i]);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.write(&i.to_ne_bytes());
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+pub type LuaByteBuildHasher = BuildHasherDefault<LuaByteHasher>;
+pub type InternedStringMap = HashMap<Box<[u8]>, GcRef<LuaString>, LuaByteBuildHasher>;
 
 /// A Lua-callable function pointer. C: `lua_CFunction`.
 ///
@@ -1452,7 +1494,7 @@ pub struct GlobalState {
     /// stdlib need pointer-equality across `intern_str` calls so
     /// `GcRef::ptr_eq` can resolve variable identity. Without this map each
     /// call allocates a fresh `GcRef` and locals/upvalues fail to resolve.
-    pub interned_lt: std::collections::HashMap<Box<[u8]>, GcRef<LuaString>>,
+    pub interned_lt: InternedStringMap,
 
     // types.tsv: global_State.warnf → Option<Box<dyn FnMut(&[u8], bool)>>
     pub warnf: Option<Box<dyn FnMut(&[u8], bool)>>,
@@ -2199,16 +2241,25 @@ impl LuaState {
     /// macros.tsv: `luaS_new → state.intern_str(s)`
     pub fn intern_str(&mut self, bytes: &[u8]) -> Result<GcRef<LuaString>, LuaError> {
         if bytes.len() <= crate::string::MAX_SHORT_LEN {
-            if let Some(existing) = self.global().interned_lt.get(bytes) {
-                return Ok(existing.clone());
+            let mut inserted = false;
+            let interned = {
+                let key = bytes.to_vec().into_boxed_slice();
+                let mut global = self.global_mut();
+                match global.interned_lt.entry(key) {
+                    Entry::Occupied(existing) => existing.get().clone(),
+                    Entry::Vacant(vacant) => {
+                        let new_ref = GcRef::new(LuaString::from_bytes(vacant.key().to_vec()));
+                        new_ref.account_buffer(new_ref.buffer_bytes() as isize);
+                        vacant.insert(new_ref.clone());
+                        inserted = true;
+                        new_ref
+                    }
+                }
+            };
+            if inserted {
+                self.mark_gc_check_needed();
             }
-            self.mark_gc_check_needed();
-            let new_ref = GcRef::new(LuaString::from_bytes(bytes.to_vec()));
-            new_ref.account_buffer(new_ref.buffer_bytes() as isize);
-            self.global_mut()
-                .interned_lt
-                .insert(bytes.to_vec().into_boxed_slice(), new_ref.clone());
-            Ok(new_ref)
+            Ok(interned)
         } else {
             self.mark_gc_check_needed();
             let new_ref = GcRef::new(LuaString::from_bytes(bytes.to_vec()));
@@ -5259,7 +5310,7 @@ pub fn new_state() -> Option<LuaState> {
         strcache: std::array::from_fn(|_| {
             std::array::from_fn(|_| placeholder_str.clone())
         }),
-        interned_lt: std::collections::HashMap::new(),
+        interned_lt: InternedStringMap::default(),
         warnf: None,
         warn_mode: WarnMode::Off,
         test_warn_enabled: false,

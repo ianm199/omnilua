@@ -1702,6 +1702,8 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                 let i: Instruction = state.proto_code(&cl, pc);
                 pc += 1;
                 let op = i.opcode();
+                #[cfg(feature = "opcode-profile")]
+                crate::opcode_profile::record(op);
 
                 debug_assert!(base == state.ci_base(ci));
 
@@ -1920,14 +1922,26 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         } else {
                             state.get_at(base + i.arg_c())
                         };
-                        let fast = if let LuaValue::Int(n) = &rb_v {
-                            state.fast_get_int(&ra_v, *n)?
-                        } else {
-                            state.fast_get(&ra_v, &rb_v)?
-                        };
-                        if fast.is_some() {
-                            state.table_raw_set(&ra_v, rb_v, rc_v.clone())?;
-                            state.gc_value_barrier_back(&ra_v, &rc_v);
+                        if let LuaValue::Table(tbl) = ra_v {
+                            if tbl.metatable().is_none() {
+                                state.gc_table_barrier_back(&tbl, &rc_v);
+                                state.table_raw_set(&ra_v, rb_v, rc_v)?;
+                            } else {
+                                let fast = if let LuaValue::Int(n) = &rb_v {
+                                    state.fast_get_int(&ra_v, *n)?
+                                } else {
+                                    state.fast_get(&ra_v, &rb_v)?
+                                };
+                                if fast.is_some() {
+                                    state.table_raw_set(&ra_v, rb_v, rc_v.clone())?;
+                                    state.gc_value_barrier_back(&ra_v, &rc_v);
+                                } else {
+                                    state.set_ci_savedpc(ci, pc);
+                                    state.set_top(state.ci_top(ci));
+                                    finish_set(state, ra_v, rb_v, rc_v, false, Some(ra_idx), None)?;
+                                    trap = state.ci_trap(ci);
+                                }
+                            }
                         } else {
                             state.set_ci_savedpc(ci, pc);
                             state.set_top(state.ci_top(ci));
@@ -1945,10 +1959,22 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         } else {
                             state.get_at(base + i.arg_c())
                         };
-                        let fast = state.fast_get_int(&ra_v, c)?;
-                        if fast.is_some() {
-                            state.table_raw_set(&ra_v, LuaValue::Int(c), rc_v.clone())?;
-                            state.gc_value_barrier_back(&ra_v, &rc_v);
+                        if let LuaValue::Table(tbl) = ra_v {
+                            if tbl.metatable().is_none() {
+                                state.gc_table_barrier_back(&tbl, &rc_v);
+                                state.table_raw_set(&ra_v, LuaValue::Int(c), rc_v)?;
+                            } else {
+                                let fast = state.fast_get_int(&ra_v, c)?;
+                                if fast.is_some() {
+                                    state.table_raw_set(&ra_v, LuaValue::Int(c), rc_v.clone())?;
+                                    state.gc_value_barrier_back(&ra_v, &rc_v);
+                                } else {
+                                    state.set_ci_savedpc(ci, pc);
+                                    state.set_top(state.ci_top(ci));
+                                    finish_set(state, ra_v, LuaValue::Int(c), rc_v, false, Some(ra_idx), None)?;
+                                    trap = state.ci_trap(ci);
+                                }
+                            }
                         } else {
                             state.set_ci_savedpc(ci, pc);
                             state.set_top(state.ci_top(ci));
@@ -1967,17 +1993,29 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         } else {
                             state.get_at(base + i.arg_c())
                         };
-                        match state.fast_get_short_str(&ra_v, &key)? {
-                            Some(_) => {
-                                state.table_raw_set(&ra_v, key, rc_v.clone())?;
-                                state.gc_value_barrier_back(&ra_v, &rc_v);
+                        if let LuaValue::Table(tbl) = ra_v {
+                            if tbl.metatable().is_none() {
+                                state.gc_table_barrier_back(&tbl, &rc_v);
+                                state.table_raw_set(&ra_v, key, rc_v)?;
+                            } else {
+                                match state.fast_get_short_str(&ra_v, &key)? {
+                                    Some(_) => {
+                                        state.table_raw_set(&ra_v, key, rc_v.clone())?;
+                                        state.gc_value_barrier_back(&ra_v, &rc_v);
+                                    }
+                                    None => {
+                                        state.set_ci_savedpc(ci, pc);
+                                        state.set_top(state.ci_top(ci));
+                                        finish_set(state, ra_v, key, rc_v, false, Some(ra_idx), None)?;
+                                        trap = state.ci_trap(ci);
+                                    }
+                                }
                             }
-                            None => {
-                                state.set_ci_savedpc(ci, pc);
-                                state.set_top(state.ci_top(ci));
-                                finish_set(state, ra_v, key, rc_v, false, Some(ra_idx), None)?;
-                                trap = state.ci_trap(ci);
-                            }
+                        } else {
+                            state.set_ci_savedpc(ci, pc);
+                            state.set_top(state.ci_top(ci));
+                            finish_set(state, ra_v, key, rc_v, false, Some(ra_idx), None)?;
+                            trap = state.ci_trap(ci);
                         }
                     }
                     // ── OP_NEWTABLE ───────────────────────────────────────────

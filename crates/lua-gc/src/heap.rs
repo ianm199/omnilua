@@ -39,8 +39,49 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
+
+#[derive(Default)]
+struct IdentityHasher {
+    value: u64,
+}
+
+impl Hasher for IdentityHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for &byte in bytes {
+            self.value ^= u64::from(byte);
+            self.value = self.value.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.value = i as u64;
+    }
+
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.value = i;
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        let mut x = self.value;
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+}
+
+type IdentityBuildHasher = BuildHasherDefault<IdentityHasher>;
+type IdentityHashSet = HashSet<usize, IdentityBuildHasher>;
+type IdentityHashMap<V> = HashMap<usize, V, IdentityBuildHasher>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase D-1c — scoped thread-local HeapGuard
@@ -1013,7 +1054,7 @@ enum MarkerMode {
 /// Holds the gray queue during a mark phase. Passed to `Trace::trace`.
 pub struct Marker {
     gray_queue: Vec<NonNull<GcBox<dyn Trace>>>,
-    visited: std::collections::HashSet<usize>,
+    visited: IdentityHashSet,
     stats: MarkerStats,
     mode: MarkerMode,
 }
@@ -1022,7 +1063,7 @@ impl Marker {
     fn new_with_capacity(mode: MarkerMode, capacity: usize) -> Self {
         Self {
             gray_queue: Vec::with_capacity(256),
-            visited: std::collections::HashSet::with_capacity(capacity),
+            visited: IdentityHashSet::with_capacity_and_hasher(capacity, IdentityBuildHasher::default()),
             stats: MarkerStats::default(),
             mode,
         }
@@ -1272,7 +1313,7 @@ pub struct Heap {
     /// Heap-owned allocation tokens keyed by box address. Weak handles store
     /// these tokens so address reuse after sweep cannot resurrect a stale weak
     /// target.
-    allocation_tokens: RefCell<HashMap<usize, usize>>,
+    allocation_tokens: RefCell<IdentityHashMap<usize>>,
     /// Next non-zero token for a collected allocation.
     next_allocation_token: Cell<usize>,
     /// Threshold above which `step` triggers a collection.
@@ -1330,7 +1371,7 @@ impl Heap {
             bytes: Cell::new(0),
             objects: Cell::new(0),
             current_white: Cell::new(Color::White0),
-            allocation_tokens: RefCell::new(HashMap::new()),
+            allocation_tokens: RefCell::new(IdentityHashMap::default()),
             next_allocation_token: Cell::new(1),
             threshold: Cell::new(64 * 1024), // initial threshold: 64 KB
             pause_multiplier: Cell::new(200), // 200% = collect when bytes 2x threshold

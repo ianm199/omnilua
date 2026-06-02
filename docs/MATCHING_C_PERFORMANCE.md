@@ -220,6 +220,78 @@ right Rust fix is often to restore the same code-generation boundary C had:
 inline the helper, split cold paths away, or move the tiny operation back into
 the dispatch arm.
 
+### 6. `20260602T140413Z-858cc5e` — broad safe-Rust pass after PR #121
+
+**Pattern:** *Use specialized internal data structures for internal identities,
+and skip generic table-set scaffolding only when the metatable precondition
+proves it unnecessary.*
+
+Starting matrix after PR #121
+(`harness/bench/results/20260602T134659Z-858cc5e-compare.json`) to final
+matrix (`harness/bench/results/20260602T140413Z-858cc5e-compare.json`):
+
+| workload | before | after |
+|---|---:|---:|
+| binarytrees | 2.49x | 2.11x |
+| closure_ops | 2.12x | 1.94x |
+| fibonacci | 1.84x | 1.88x |
+| gc_pressure | 3.00x | 2.50x |
+| mandelbrot | 1.75x | 1.88x |
+| mandelbrot_long | 1.79x | 1.82x |
+| string_ops | 2.00x | 2.00x |
+| string_ops_long | 2.14x | 1.86x |
+| table_hash_pressure | 2.00x | 1.88x |
+| table_ops | 1.00x | 1.00x |
+| table_ops_long | 1.04x | 1.06x |
+| overall | 1.64x | 1.60x |
+
+What changed:
+
+- The global short-string intern map stopped using Rust's default hasher for
+  byte keys. The replacement is an internal fast byte hasher plus `entry` for
+  new short strings, preserving intern semantics while removing the
+  `DefaultHasher::write` pole from string-key workloads.
+- `OP_SETTABLE`, `OP_SETI`, and `OP_SETFIELD` now set directly when the target
+  is definitely a table with no metatable. That is the same result
+  `finish_set` would reach after checking `__newindex`; the GC table barrier
+  still runs.
+- GC pointer-identity maps/sets (`Marker.visited`, allocation tokens) use an
+  internal identity hasher. These keys are heap addresses, not user table keys,
+  so the change removes SipHash-style overhead without changing Lua-visible
+  hashing or equality.
+- Added feature-gated opcode count telemetry:
+  `cargo build --release -p lua-cli --features opcode-profile` plus
+  `harness/bench/opcode-profile.sh`. Normal builds have no dispatch-loop
+  counter branch.
+
+Profile evidence:
+
+- Pre-pass `table_hash_pressure_x80`
+  (`harness/bench/profiles/20260602T134940Z-858cc5e-table_hash_pressure_x80/summary.txt`)
+  had `DefaultHasher::write` at 19.9%.
+- Post-pass `table_hash_pressure_x80`
+  (`harness/bench/profiles/20260602T140609Z-858cc5e-table_hash_pressure_x80/summary.txt`)
+  has no default-hasher pole; remaining top frames are real key construction
+  and table lookup (`get_short_str_slot`, `concat`, raw set/new key).
+- `fibonacci` opcode telemetry
+  (`harness/bench/profiles/opcode-profile/20260602T135755Z-858cc5e-fibonacci/opcodes.tsv`)
+  shows the opaque `vm::execute` time is spread across `LOADI`, `CALL`, `LTI`,
+  `RETURN1`, `GETUPVAL`, `SUB`, and `ADD`, not one obvious arithmetic helper.
+- `closure_ops` opcode telemetry
+  (`harness/bench/profiles/opcode-profile/20260602T135818Z-858cc5e-closure_ops_x10/opcodes.tsv`)
+  shows `MOVE` + `GETUPVAL` at about 39.6% of executed opcodes, with
+  `SETUPVAL`, `CALL`, `ADD`, and `RETURN1` behind them.
+
+What did *not* change:
+
+- No skipped metatable checks except in the proven no-metatable table case.
+- No skipped GC barriers, weak/finalizer behavior, or error checks.
+- No new unsafe.
+- `string_ops_long` still has `match_pat` as the top frame
+  (`harness/bench/profiles/20260602T140609Z-858cc5e-string_ops_long_x5/summary.txt`).
+  A meaningful next packet is likely pattern precompile/cache or a deeper
+  matcher rewrite, not another local allocation tweak.
+
 ### 5. `20260602T132632Z-2d5cffe` — focused safe-Rust pass on string/GC poles
 
 **Pattern:** *Keep semantics, restore the C shape, and remove scratch work that
@@ -707,7 +779,8 @@ This doc is a living journal. When a new perf commit lands, the lessons
 that generalize should make their way back into "The patterns by name" or
 "Distilled rules" above. Things to add as we encounter them:
 
-- The string-library hot path investigation (next session's likely target).
+- Lua pattern matcher precompile/cache investigation (`match_pat` remains the
+  string hot pole after the allocation and gmatch-state fixes).
 - Follow-ups enabled by primitive accessors on ORDER/BITWISE opcodes.
 - The `RefCell`-on-hot-path audit (deeper refactor when ready).
 - Remaining GC pressure allocation/accounting work after the PR #120 scratch

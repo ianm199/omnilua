@@ -1359,6 +1359,11 @@ fn main() -> ExitCode {
             );
         }
 
+        #[cfg(feature = "opcode-profile")]
+        if let Err(err) = lua_vm::opcode_profile::write_report_from_env() {
+            eprintln!("[opcode-profile] failed to write report: {}", err);
+        }
+
         Ok(code)
     }));
 

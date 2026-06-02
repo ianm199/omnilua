@@ -10,6 +10,8 @@ pub mod do_;
 pub mod dump;
 pub mod func;
 pub mod object;
+#[cfg(feature = "opcode-profile")]
+pub mod opcode_profile;
 pub mod state;
 pub mod string;
 pub mod table;

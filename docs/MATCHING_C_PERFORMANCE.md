@@ -734,6 +734,60 @@ What this changes in the roadmap:
   previous cached-closure and return-re-entry spikes remain rejected until this
   attribution points to a more specific intervention.
 
+### 13. `perf/grayagain-unlink-fastpath` — skip absent grayagain unlink work
+
+`binarytrees_x15` and `gc_pressure_x300` re-profiles on the current stack showed
+the same GC/table pressure shape after the intern-retain packet: `vm::execute`
+remains the top frame, but `Heap::sweep_young_range` is the next reusable
+collector pole. The `binarytrees_x15` profile
+(`harness/bench/profiles/20260602T202031Z-41d495c-binarytrees_x15/summary.txt`)
+had `sweep_young_range` at 16.0% and `correct_generation_pointers` at about
+1.0%; `gc_pressure_x300`
+(`harness/bench/profiles/20260602T202020Z-41d495c-gc_pressure_x300/summary.txt`)
+had `sweep_young_range` at 17.6%.
+
+The kept safe packet is a small precondition guard: when a swept object is not
+listed in the collector's `grayagain` revisit list, `correct_generation_pointers`
+now skips the `unlink_grayagain` walk. This preserves the existing unlink path
+for the only case where removal can matter (`header.gray_listed == true`) and
+avoids revisit-list work on the common young-free path.
+
+Evidence:
+
+- Direct Rust A/B, best-of-20
+  (`harness/bench/results/20260602T202300Z-41d495c-bin-ab.tsv`):
+  `binarytrees` improved to 0.975x candidate/base, while `closure_ops`,
+  `gc_pressure`, and `table_hash_pressure` were flat; all outputs matched.
+- Longer direct Rust A/B, best-of-40
+  (`harness/bench/results/20260602T202408Z-41d495c-bin-ab.tsv`):
+  `binarytrees` repeated a smaller positive at 0.987x candidate/base, with
+  `gc_pressure` still flat.
+- Focused reference-C matrix, best-of-10
+  (`harness/bench/results/20260602T202552Z-41d495c-compare.tsv`):
+  `binarytrees` 1.90x, `gc_pressure` 2.00x, `table_hash_pressure` 1.33x,
+  `closure_ops` 2.00x.
+- Post-packet `binarytrees_x15`
+  (`harness/bench/profiles/20260602T202537Z-41d495c-binarytrees_x15/summary.txt`)
+  put `sweep_young_range` at 15.1% and `correct_generation_pointers` at 0.9%.
+
+Correctness gates:
+
+- `cargo test -p lua-gc --lib`
+- `cargo test -p lua-vm interned_short_string_cache --lib`
+- `./harness/canaries/gc/run_canaries.sh`
+- `make test` passed, including 44/44 official tests
+
+Rejected follow-up:
+
+- Replacing integer `format!("{}", i)` in `number_to_str_buf` with a manual
+  i64 decimal formatter passed `cargo check -p lua-vm` and a targeted
+  `i64::MIN` unit test, but did not move the intended workload. Direct
+  Rust A/B, best-of-20
+  (`harness/bench/results/20260602T203114Z-d44ead4-bin-ab.tsv`), left
+  `table_hash_pressure`, `gc_pressure`, and `string_ops` flat, slightly
+  regressed `string_ops_long` to 1.009x candidate/base, and only moved
+  `binarytrees` to 0.988x. It was dropped.
+
 Tool gaps:
 
 - `sample` plus `vm-execute.txt` still leaves `UNKNOWN_INLINED` samples and

@@ -1614,7 +1614,9 @@ impl Heap {
         if self.finobjrold.get() == Some(removed) {
             self.finobjrold.set(next);
         }
-        self.unlink_grayagain(removed);
+        if self.header_from_ptr(removed).gray_listed.get() {
+            self.unlink_grayagain(removed);
+        }
     }
 
     fn unlink_from_list(

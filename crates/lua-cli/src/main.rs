@@ -1072,6 +1072,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         pendingfin,
         tobefin,
         markstats,
+        sweepstats,
     ) = {
         let g = state.global();
         (
@@ -1086,6 +1087,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
             g.pending_finalizers.len(),
             g.to_be_finalized.len(),
             g.heap.last_mark_stats(),
+            g.heap.last_sweep_stats(),
         )
     };
     let tables = testc_type_count(state, b"table")?;
@@ -1094,7 +1096,7 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
     let userdata = testc_type_count(state, b"userdata")?;
     let strings = testc_type_count(state, b"string")?;
     let stats = format!(
-        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} pendingfin={} tobefin={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} tables={} functions={} threads={} userdata={} strings={}",
+        "mode={} state={} bytes={} debt={} threshold={} allgc={} collections={} weak={} pendingfin={} tobefin={} marked={} markedyoung={} markedold={} traced={} tracedyoung={} tracedold={} sweepvisited={} sweepvisitedyoung={} sweepvisitedold={} sweeprevisit={} sweepfreed={} sweepfreedbytes={} tables={} functions={} threads={} userdata={} strings={}",
         mode,
         gc_state,
         bytes,
@@ -1111,6 +1113,12 @@ fn testc_gcstats(state: &mut LuaState) -> Result<usize, LuaError> {
         markstats.traced,
         markstats.traced_young,
         markstats.traced_old,
+        sweepstats.visited,
+        sweepstats.visited_young,
+        sweepstats.visited_old,
+        sweepstats.revisit,
+        sweepstats.freed,
+        sweepstats.freed_bytes,
         tables,
         functions,
         threads,

@@ -1,7 +1,7 @@
 # Issue #93: Generational GC Plan
 
-Status audited on `issue-93-gc-current` after GC checkpoint `b20eb7a` plus
-the minor-traversal telemetry slice.
+Status audited on `issue-93-gc-current` after the minor-traversal and
+normal-list cohort-sweep checkpoints.
 
 ## What #109 Fixed
 
@@ -38,9 +38,10 @@ The current tree is no longer only startup/default scaffolding:
 - Payload bytes are charged/refunded for tables, strings, userdata payloads and
   uservalues, C-closure upvalue vectors, Lua-closure upvalue slots, and compiled
   proto vectors.
-- `lua-gc::MarkerStats` records marked/traced object counts split by young vs
-  old age. `T.gcstats()` exposes those counters, and GC canary pass rows can
-  now carry `METRIC ...` telemetry instead of only PASS/FAIL.
+- `lua-gc::MarkerStats` and `SweepStats` record mark/drain work and sweep work
+  split by young vs old age. `T.gcstats()` exposes those counters, and GC
+  canary pass rows can now carry `METRIC ...` telemetry instead of only
+  PASS/FAIL.
 - Minor collection now runs the marker in a young-generation mode: plain
   `G_OLD` objects are counted as live but are not drained, while `G_OLD0`,
   `G_OLD1`, `G_TOUCHED1`, and `G_TOUCHED2` objects are explicitly revisited.
@@ -49,6 +50,13 @@ The current tree is no longer only startup/default scaffolding:
   sweep record objects that must be revisited by the next young collection, so
   minor marking no longer scans `allgc` just to discover `OLD0`/`OLD1`/touched
   objects.
+- The normal `allgc` list now has collector cursors for `survival`, `old1`,
+  `reallyold`, and `firstold1`. Young sweep walks the nursery and survival
+  ranges instead of the full old tail, and the telemetry canary now asserts
+  `sweepvisitedold=0` while still recording touched-object revisit work.
+- Full/incremental major sweep now corrects generation cursors when it frees a
+  cursor object, and a new regression covers the generational black-to-major
+  white reset so old objects can die during a major collection.
 - Minor weak/ephemeron/finalizer cleanup uses age-aware liveness, so objects
   deliberately skipped because they are old are not misclassified as dead.
 - Internal testC telemetry exists for GC state, age/color, type counts, warning
@@ -57,12 +65,10 @@ The current tree is no longer only startup/default scaffolding:
 
 The real generational collector is still not complete:
 
-- `minor_collect_with_post_mark` no longer drains plain `G_OLD` objects and no
-  longer scans `allgc` to find revisit objects, but young sweep still walks the
-  full allgc list. It is not yet a true intrusive cohort-list young collection
-  with `survival`, `old1`, `reallyold`, and `firstold1` cursors.
-- Normal-list cohort boundaries equivalent to `survival`, `old1`,
-  `reallyold`, and `firstold1` are not represented as collector cursors.
+- Normal-list minor marking and sweeping are now cursor-bounded for the current
+  allgc architecture, but this is still not exact C-Lua parity: touched objects
+  are held in a collector-owned revisit vector instead of an intrusive
+  `grayagain` list.
 - Finalizers still live in VM-side `pending_finalizers` / `to_be_finalized`
   registries, not collector-owned `finobj` / `tobefnz` lists with generational
   finalizer cohorts.
@@ -204,10 +210,13 @@ Deliverables:
 
 - Extend `GcHeader` beyond `Color::{White, Gray, Black}` to represent dual
   whites, black/gray state, finalized, and age bits.
-- Add normal-list cohort boundaries equivalent to `survival`, `old1`,
+- Done: add normal-list cohort boundaries equivalent to `survival`, `old1`,
   `reallyold`, and `firstold1`.
 - Make new allocations enter the correct age for the current collector state.
-- Implement `sweep2old`, `sweepgen`, `correctgraylist(s)`, and `markold`.
+- Done for the normal allgc list: `sweep2old`-equivalent promotion and
+  cursor-bounded young `sweepgen`.
+- Remaining: exact `correctgraylist(s)`/`markold` parity for intrusive
+  `grayagain`, weak, and finalizer lists.
 - Ensure `enterinc` clears ages and cohort pointers safely.
 
 Verification:

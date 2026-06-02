@@ -20,5 +20,5 @@ canary_j_testc_sweep_uservalue_barrier	incremental	PASS	-
 canary_j_testc_sweep_uservalue_barrier	generational	PASS	-
 canary_k_testc_accounting	incremental	PASS	-
 canary_k_testc_accounting	generational	PASS	-
-canary_l_testc_minor_stats	incremental	PASS	METRIC minorstats mode=generational state=pause bytes=40382 debt=-8060 threshold=48442 allgc=248 collections=4 weak=0 pendingfin=4 tobefin=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 tables=21 functions=7 t
-canary_l_testc_minor_stats	generational	PASS	METRIC minorstats mode=generational state=pause bytes=40382 debt=-8060 threshold=48442 allgc=248 collections=4 weak=0 pendingfin=4 tobefin=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 tables=21 functions=7 t
+canary_l_testc_minor_stats	incremental	PASS	METRIC minorstats mode=generational state=pause bytes=41060 debt=-8200 threshold=49260 allgc=254 collections=4 weak=0 pendingfin=4 tobefin=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 sweepvisited=6 sweepvis
+canary_l_testc_minor_stats	generational	PASS	METRIC minorstats mode=generational state=pause bytes=41060 debt=-8200 threshold=49260 allgc=254 collections=4 weak=0 pendingfin=4 tobefin=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 sweepvisited=6 sweepvis

@@ -38,7 +38,7 @@
 //! `state.heap().allocate(value)` so the new box joins the allgc chain.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
@@ -483,6 +483,42 @@ pub struct MarkerStats {
     pub traced_old: usize,
 }
 
+/// Diagnostic counters for the latest sweep phase.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct SweepStats {
+    pub visited: usize,
+    pub visited_young: usize,
+    pub visited_old: usize,
+    pub revisit: usize,
+    pub freed: usize,
+    pub freed_bytes: usize,
+}
+
+impl SweepStats {
+    fn record_visit(&mut self, age: GcAge) {
+        self.visited += 1;
+        if age.is_old() {
+            self.visited_old += 1;
+        } else {
+            self.visited_young += 1;
+        }
+    }
+
+    fn record_free(&mut self, bytes: usize) {
+        self.freed += 1;
+        self.freed_bytes += bytes;
+    }
+
+    fn add(&mut self, other: Self) {
+        self.visited += other.visited;
+        self.visited_young += other.visited_young;
+        self.visited_old += other.visited_old;
+        self.revisit += other.revisit;
+        self.freed += other.freed;
+        self.freed_bytes += other.freed_bytes;
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum MarkerMode {
     Full,
@@ -702,6 +738,18 @@ const GC_MIN_THRESHOLD: usize = 1024 * 1024;
 pub struct Heap {
     /// Head of the singly-linked allgc list (every live `GcBox`).
     head: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
+    /// First object that survived one minor collection. Objects before this
+    /// cursor are the current nursery/new generation.
+    survival: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
+    /// First object that survived two minor collections. Objects from
+    /// `survival` up to this cursor are the survival generation.
+    old1: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
+    /// First regular old object. Objects from `old1` up to this cursor became
+    /// old in the previous young collection.
+    reallyold: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
+    /// First OLD1 object when one may appear before the `old1` cursor due to
+    /// barriers aging objects in younger list segments.
+    firstold1: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
     /// Total bytes allocated (sum of header sizes; rough).
     bytes: Cell<usize>,
     /// White bit used for new allocations and for survivors after a sweep.
@@ -725,6 +773,8 @@ pub struct Heap {
     collections: Cell<usize>,
     /// Diagnostic counters from the most recently completed mark phase.
     last_mark_stats: Cell<MarkerStats>,
+    /// Diagnostic counters from the most recent sweep phase.
+    last_sweep_stats: Cell<SweepStats>,
     /// Objects that young collections must revisit even if they are not
     /// reached through normal roots: OLD0/OLD1 and touched old objects.
     minor_revisit: RefCell<Vec<NonNull<GcBox<dyn Trace>>>>,
@@ -748,6 +798,10 @@ impl Heap {
     pub fn new() -> Self {
         Self {
             head: Cell::new(None),
+            survival: Cell::new(None),
+            old1: Cell::new(None),
+            reallyold: Cell::new(None),
+            firstold1: Cell::new(None),
             bytes: Cell::new(0),
             current_white: Cell::new(Color::White0),
             allocation_tokens: RefCell::new(HashMap::new()),
@@ -758,6 +812,7 @@ impl Heap {
             paused: Cell::new(true), // start paused; caller enables when world is consistent
             collections: Cell::new(0),
             last_mark_stats: Cell::new(MarkerStats::default()),
+            last_sweep_stats: Cell::new(SweepStats::default()),
             minor_revisit: RefCell::new(Vec::new()),
             marker: RefCell::new(None),
             sweep_prev_next: Cell::new(None),
@@ -854,6 +909,10 @@ impl Heap {
         self.last_mark_stats.get()
     }
 
+    pub fn last_sweep_stats(&self) -> SweepStats {
+        self.last_sweep_stats.get()
+    }
+
     fn next_token(&self) -> usize {
         let token = self.next_allocation_token.get().max(1);
         let next = token.checked_add(1).unwrap_or(1).max(1);
@@ -884,6 +943,47 @@ impl Heap {
 
     fn header_from_ptr<'a>(&'a self, ptr: NonNull<GcBox<dyn Trace>>) -> &'a GcHeader {
         unsafe { &(*ptr.as_ptr()).header }
+    }
+
+    fn clear_generation_cursors(&self) {
+        self.survival.set(None);
+        self.old1.set(None);
+        self.reallyold.set(None);
+        self.firstold1.set(None);
+        self.minor_revisit.borrow_mut().clear();
+    }
+
+    fn set_all_cursors_to_head(&self) {
+        let head = self.head.get();
+        self.survival.set(head);
+        self.old1.set(head);
+        self.reallyold.set(head);
+        self.firstold1.set(None);
+        self.minor_revisit.borrow_mut().clear();
+    }
+
+    fn correct_generation_pointers(
+        &self,
+        removed: NonNull<GcBox<dyn Trace>>,
+        next: Option<NonNull<GcBox<dyn Trace>>>,
+    ) {
+        if self.survival.get() == Some(removed) {
+            self.survival.set(next);
+        }
+        if self.old1.get() == Some(removed) {
+            self.old1.set(next);
+        }
+        if self.reallyold.get() == Some(removed) {
+            self.reallyold.set(next);
+        }
+        if self.firstold1.get() == Some(removed) {
+            self.firstold1.set(next);
+        }
+        let mut revisit = self.minor_revisit.borrow_mut();
+        if !revisit.is_empty() {
+            let removed_id = removed.as_ptr() as *const () as usize;
+            revisit.retain(|candidate| candidate.as_ptr() as *const () as usize != removed_id);
+        }
     }
 
     fn remember_minor_revisit(&self, ptr: NonNull<GcBox<dyn Trace>>) {
@@ -1063,7 +1163,7 @@ impl Heap {
             header.age.set(GcAge::Old);
             header.color.set(Color::Black);
         });
-        self.minor_revisit.borrow_mut().clear();
+        self.set_all_cursors_to_head();
     }
 
     /// Metadata transition used when returning to incremental mode: Lua clears
@@ -1074,7 +1174,7 @@ impl Heap {
             header.age.set(GcAge::New);
             header.color.set(current_white);
         });
-        self.minor_revisit.borrow_mut().clear();
+        self.clear_generation_cursors();
     }
 
     /// Run a complete young-generation collection.
@@ -1097,6 +1197,7 @@ impl Heap {
 
         self.state.set(GcState::Propagate);
         let mut marker = Marker::new_minor();
+        self.last_sweep_stats.set(SweepStats::default());
         self.mark_minor_revisit_objects(&mut marker);
         roots.trace(&mut marker);
         marker.drain_gray_queue();
@@ -1284,6 +1385,10 @@ impl Heap {
 
     fn start_cycle(&self, roots: &dyn Trace) {
         self.flip_current_white();
+        let dead_white = self.other_white();
+        self.for_each_header(|header| {
+            header.color.set(dead_white);
+        });
         let mut marker = Marker::new();
         roots.trace(&mut marker);
         *self.marker.borrow_mut() = Some(marker);
@@ -1328,12 +1433,14 @@ impl Heap {
             marker.drain_gray_queue();
         }
         self.sweep_prev_next.set(Some(NonNull::from(&self.head)));
+        self.last_sweep_stats.set(SweepStats::default());
     }
 
     fn sweep_budgeted(&self, max_units: isize) -> usize {
         let mut work = 0usize;
         let mut budget = max_units;
         let mut freed_bytes = 0usize;
+        let mut stats = SweepStats::default();
         let current_white = self.current_white();
         let dead_white = self.other_white();
         let mut prev_next_ptr = match self.sweep_prev_next.get() {
@@ -1352,10 +1459,15 @@ impl Heap {
             };
             let header = self.header_from_ptr(ptr);
             let next = header.next.get();
+            let age = header.age.get();
+            stats.record_visit(age);
             let color = header.color.get();
             if color == dead_white {
                 prev_cell.set(next);
-                freed_bytes += header.size.get();
+                let size = header.size.get();
+                freed_bytes += size;
+                stats.record_free(size);
+                self.correct_generation_pointers(ptr, next);
                 self.allocation_tokens
                     .borrow_mut()
                     .remove(&(ptr.as_ptr() as *const () as usize));
@@ -1375,22 +1487,65 @@ impl Heap {
         if freed_bytes > 0 {
             self.bytes.set(self.bytes.get().saturating_sub(freed_bytes));
         }
+        if stats.visited > 0 {
+            let mut total = self.last_sweep_stats.get();
+            total.add(stats);
+            self.last_sweep_stats.set(total);
+        }
         work
     }
 
-    fn sweep_young(&self) {
-        let mut freed_bytes = 0usize;
-        let mut next_revisit = Vec::new();
+    fn push_next_revisit(
+        next_revisit: &mut Vec<NonNull<GcBox<dyn Trace>>>,
+        seen: &mut HashSet<usize>,
+        ptr: NonNull<GcBox<dyn Trace>>,
+        age: GcAge,
+    ) {
+        if matches!(
+            age,
+            GcAge::Old0 | GcAge::Old1 | GcAge::Touched1 | GcAge::Touched2
+        ) {
+            let id = ptr.as_ptr() as *const () as usize;
+            if seen.insert(id) {
+                next_revisit.push(ptr);
+            }
+        }
+    }
+
+    fn sweep_young_range(
+        &self,
+        mut prev_next_ptr: NonNull<Cell<Option<NonNull<GcBox<dyn Trace>>>>>,
+        limit: Option<NonNull<GcBox<dyn Trace>>>,
+        next_revisit: &mut Vec<NonNull<GcBox<dyn Trace>>>,
+        next_revisit_seen: &mut HashSet<usize>,
+        processed: &mut HashSet<usize>,
+        firstold1: &mut Option<NonNull<GcBox<dyn Trace>>>,
+        freed_bytes: &mut usize,
+        stats: &mut SweepStats,
+    ) -> (
+        NonNull<Cell<Option<NonNull<GcBox<dyn Trace>>>>>,
+        Option<NonNull<GcBox<dyn Trace>>>,
+    ) {
         let current_white = self.current_white();
-        let mut prev_next_ptr = NonNull::from(&self.head);
         loop {
             let prev_cell = unsafe { prev_next_ptr.as_ref() };
-            let Some(ptr) = prev_cell.get() else { break; };
+            let Some(ptr) = prev_cell.get() else {
+                return (prev_next_ptr, None);
+            };
+            if Some(ptr) == limit {
+                return (prev_next_ptr, Some(ptr));
+            }
             let header = self.header_from_ptr(ptr);
             let next = header.next.get();
-            if header.color.get().is_white() && !header.age.get().is_old() {
+            let age = header.age.get();
+            stats.record_visit(age);
+            processed.insert(ptr.as_ptr() as *const () as usize);
+            if header.color.get().is_white() && !age.is_old() {
                 prev_cell.set(next);
-                freed_bytes += header.size.get();
+                let size = header.size.get();
+                *freed_bytes += size;
+                stats.record_free(size);
+                self.correct_generation_pointers(ptr, next);
                 self.allocation_tokens
                     .borrow_mut()
                     .remove(&(ptr.as_ptr() as *const () as usize));
@@ -1401,27 +1556,83 @@ impl Heap {
             }
 
             if !header.color.get().is_white() {
-                let age = header.age.get();
                 let next_age = age.next_after_minor();
                 header.age.set(next_age);
+                if next_age == GcAge::Old1 && firstold1.is_none() {
+                    *firstold1 = Some(ptr);
+                }
                 match age {
                     GcAge::New => header.color.set(current_white),
                     GcAge::Touched1 | GcAge::Touched2 => header.color.set(Color::Black),
                     _ => {}
                 }
-                if matches!(
-                    next_age,
-                    GcAge::Old0 | GcAge::Old1 | GcAge::Touched1 | GcAge::Touched2
-                ) {
-                    next_revisit.push(ptr);
-                }
+                Self::push_next_revisit(next_revisit, next_revisit_seen, ptr, next_age);
             }
             prev_next_ptr = unsafe { NonNull::from(&(*ptr.as_ptr()).header.next) };
         }
+    }
+
+    fn sweep_young(&self) {
+        let mut freed_bytes = 0usize;
+        let mut next_revisit = Vec::new();
+        let mut next_revisit_seen = HashSet::new();
+        let mut processed = HashSet::new();
+        let mut firstold1 = None;
+        let mut stats = SweepStats::default();
+        let survival = self.survival.get();
+        let old1 = self.old1.get();
+
+        let (psurvival, new_old1) = self.sweep_young_range(
+            NonNull::from(&self.head),
+            survival,
+            &mut next_revisit,
+            &mut next_revisit_seen,
+            &mut processed,
+            &mut firstold1,
+            &mut freed_bytes,
+            &mut stats,
+        );
+        self.sweep_young_range(
+            psurvival,
+            old1,
+            &mut next_revisit,
+            &mut next_revisit_seen,
+            &mut processed,
+            &mut firstold1,
+            &mut freed_bytes,
+            &mut stats,
+        );
+
+        for ptr in self.minor_revisit.borrow().iter().copied() {
+            if processed.contains(&(ptr.as_ptr() as *const () as usize)) {
+                continue;
+            }
+            stats.revisit += 1;
+            let header = self.header_from_ptr(ptr);
+            if header.color.get().is_white() {
+                continue;
+            }
+            let age = header.age.get();
+            let next_age = age.next_after_minor();
+            header.age.set(next_age);
+            if next_age == GcAge::Old1 && firstold1.is_none() {
+                firstold1 = Some(ptr);
+            }
+            if matches!(age, GcAge::Touched1 | GcAge::Touched2) {
+                header.color.set(Color::Black);
+            }
+            Self::push_next_revisit(&mut next_revisit, &mut next_revisit_seen, ptr, next_age);
+        }
+
         if freed_bytes > 0 {
             self.bytes.set(self.bytes.get().saturating_sub(freed_bytes));
         }
         *self.minor_revisit.borrow_mut() = next_revisit;
+        self.reallyold.set(old1);
+        self.old1.set(new_old1);
+        self.survival.set(self.head.get());
+        self.firstold1.set(firstold1);
+        self.last_sweep_stats.set(stats);
     }
 
     fn finish_cycle(&self) {
@@ -1489,7 +1700,7 @@ impl Heap {
     pub fn drop_all(&self) {
         *self.marker.borrow_mut() = None;
         self.sweep_prev_next.set(None);
-        self.minor_revisit.borrow_mut().clear();
+        self.clear_generation_cursors();
         self.state.set(GcState::Pause);
         let mut cursor = self.head.get();
         self.head.set(None);
@@ -1865,6 +2076,81 @@ mod tests {
         assert_eq!(young_child.marker_calls.get(), 1);
         assert_eq!(old_root.age(), GcAge::Touched2);
         assert_eq!(young_child.age(), GcAge::Survival);
+    }
+
+    #[test]
+    fn minor_sweep_uses_generation_cursors_to_skip_old_tail() {
+        let heap = Heap::new();
+        heap.unpause();
+        let mut old_objects = Vec::new();
+        for _ in 0..64 {
+            old_objects.push(heap.allocate(Cell0 {
+                next: Cell::new(None),
+                marker_calls: Cell::new(0),
+            }));
+        }
+        heap.promote_all_to_old();
+        let young_root = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+
+        heap.minor_collect_with_post_mark(&OneRoot(Some(young_root)), |_| {});
+
+        let stats = heap.last_sweep_stats();
+        assert_eq!(stats.visited, 1);
+        assert_eq!(stats.visited_young, 1);
+        assert_eq!(stats.visited_old, 0);
+        assert_eq!(heap.allgc_count(), old_objects.len() + 1);
+        assert_eq!(young_root.age(), GcAge::Survival);
+    }
+
+    #[test]
+    fn full_sweep_corrects_generation_cursors_when_cursor_object_is_freed() {
+        let heap = Heap::new();
+        heap.unpause();
+        let _old = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        heap.promote_all_to_old();
+        assert!(heap.survival.get().is_some());
+        assert!(heap.old1.get().is_some());
+        assert!(heap.reallyold.get().is_some());
+
+        heap.full_collect(&OneRoot(None));
+
+        assert_eq!(heap.allgc_count(), 0);
+        assert_eq!(heap.survival.get(), None);
+        assert_eq!(heap.old1.get(), None);
+        assert_eq!(heap.reallyold.get(), None);
+        assert_eq!(heap.firstold1.get(), None);
+        assert_eq!(heap.last_sweep_stats().freed, 1);
+    }
+
+    #[test]
+    fn full_sweep_prunes_freed_minor_revisit_entries() {
+        let heap = Heap::new();
+        heap.unpause();
+        let parent = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        heap.promote_all_to_old();
+        heap.generational_backward_barrier(parent);
+        assert_eq!(heap.minor_revisit.borrow().len(), 1);
+
+        heap.full_collect(&OneRoot(None));
+
+        assert_eq!(heap.allgc_count(), 0);
+        assert!(heap.minor_revisit.borrow().is_empty());
+
+        let young = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        heap.minor_collect_with_post_mark(&OneRoot(Some(young)), |_| {});
+        assert_eq!(young.age(), GcAge::Survival);
     }
 
     #[test]

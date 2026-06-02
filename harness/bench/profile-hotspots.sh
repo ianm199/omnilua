@@ -45,6 +45,7 @@ OUT_DIR="$ROOT/harness/bench/profiles/${TS}-${COMMIT}-${WORKLOAD}"
 mkdir -p "$OUT_DIR"
 SAMPLE_OUT="$OUT_DIR/sample.txt"
 SUMMARY="$OUT_DIR/summary.txt"
+VM_EXECUTE="$OUT_DIR/vm-execute.txt"
 
 if [ -n "$PROFILE_LUA_EVAL" ]; then
     echo "==> spawning $RS_BIN -e <PROFILE_LUA_EVAL>" >&2
@@ -121,3 +122,11 @@ PY
 
 echo "" >&2
 echo "==> summary: $SUMMARY" >&2
+
+if grep -q "lua_vm::vm::execute" "$SAMPLE_OUT"; then
+    python3 "$ROOT/harness/bench/vm-execute-attribution.py" \
+        "$SAMPLE_OUT" \
+        --source "$ROOT/crates/lua-vm/src/vm.rs" \
+        --output "$VM_EXECUTE"
+    echo "==> vm execute attribution: $VM_EXECUTE" >&2
+fi

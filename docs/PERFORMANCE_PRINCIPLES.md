@@ -61,6 +61,11 @@ profile artifact under harness/bench/profiles/ shows the previous top
 frame is no longer top, or has shrunk by the predicted amount
 ```
 
+When the previous top frame is `lua_vm::vm::execute`, read the adjacent
+`vm-execute.txt` from `profile-hotspots.sh` before forming the next packet.
+The summary frame is too coarse; the source-region report can usually separate
+dispatch fetch, `OP_CALL`, upvalue traffic, arithmetic, and return re-entry.
+
 If any step fails, the commit doesn't land. Profiling data that
 contradicts the hypothesis is the most valuable data you have — it
 means the hypothesis was wrong, and the fix would have been a coincidence.
@@ -412,6 +417,13 @@ barriers, skipped metamethod checks, or benchmark-only dispatch.
   they're telemetry, not evidence. Profile artifacts that motivate a
   commit get linked from the commit message.
 
+- **`vm::execute` needs source-region attribution.** If
+  `profile-hotspots.sh` sees `lua_vm::vm::execute` in the raw `sample.txt`, it
+  writes `vm-execute.txt` beside the hotspot summary. Treat that as the first
+  pass at per-region timing inside the interpreter loop. It is sampled
+  line/offset evidence, not exact opcode timing, so pair it with
+  `opcode-profile.sh` when you need executed-op counts.
+
 ## What about JIT?
 
 Out of scope. The lua-rs goal is *safe Rust*, no JIT, no tracing
@@ -431,7 +443,8 @@ When starting a perf push:
    current dashboard).
 3. Build the profile-friendly binary (`force-frame-pointers=yes`).
 4. Run `bash harness/bench/profile-hotspots.sh <workload>` to capture
-   a wall-clock sample. Read the top frames.
+   a wall-clock sample. Read the top frames and, when present, the adjacent
+   `vm-execute.txt` source-region report.
 5. Form a hypothesis. Write it down (commit message body is fine).
 6. Apply *one* change. Smaller is better.
 7. `cargo build --release -p lua-cli`. Run the 44/44 suite.

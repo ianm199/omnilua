@@ -1677,21 +1677,25 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
         // PORT NOTE: `returning:` is the re-entry after a Lua call returns.
         // Re-enters 'returning without resetting trap.
         'returning: loop {
-            let cl = match state.ci_lua_closure(ci) {
-                Some(c) => c,
-                None => {
+            let ci_slot = ci.as_usize();
+            let func_idx = state.call_info[ci_slot].func;
+            let cl = match state.stack.get(func_idx.0 as usize).map(|slot| slot.val) {
+                Some(LuaValue::Function(lua_types::closure::LuaClosure::Lua(c))) => c,
+                _ => {
                     return Err(LuaError::runtime(format_args!(
                         "internal: execute called on non-Lua frame"
                     )));
                 }
             };
+            let code = &cl.proto.code;
+            let constants = &cl.proto.k;
             // pc is an index into proto.code (u32)
-            let mut pc: u32 = state.ci_savedpc(ci);
+            let mut pc: u32 = state.call_info[ci_slot].saved_pc();
 
             if trap {
                 trap = state.trace_call(ci)?;
             }
-            let mut base: StackIdx = state.ci_base(ci);
+            let mut base: StackIdx = state.call_info[ci.as_usize()].func + 1;
 
             // ── Main dispatch loop ──────────────────────────────────────────
             'dispatch: loop {
@@ -1699,7 +1703,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     trap = state.trace_exec(ci, pc)?;
                     base = state.ci_base(ci); // updatebase
                 }
-                let i: Instruction = state.proto_code(&cl, pc);
+                let i: Instruction = code[pc as usize];
                 pc += 1;
                 let op = i.opcode();
                 #[cfg(feature = "opcode-profile")]
@@ -1730,60 +1734,65 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::LoadI => {
                         let ra = base + i.arg_a();
                         let b = i.arg_s_bx() as i64;
-                        state.set_at(ra, LuaValue::Int(b));
+                        state.stack[ra.0 as usize].val = LuaValue::Int(b);
                     }
                     // ── OP_LOADF ─────────────────────────────────────────────
                     OpCode::LoadF => {
                         let ra = base + i.arg_a();
                         let b = i.arg_s_bx() as f64;
-                        state.set_at(ra, LuaValue::Float(b));
+                        state.stack[ra.0 as usize].val = LuaValue::Float(b);
                     }
                     // ── OP_LOADK ─────────────────────────────────────────────
                     OpCode::LoadK => {
                         let ra = base + i.arg_a();
                         let k_idx = i.arg_bx() as usize;
-                        let v = state.proto_const(&cl, k_idx).clone();
-                        state.set_at(ra, v);
+                        state.stack[ra.0 as usize].val = constants[k_idx];
                     }
                     // ── OP_LOADKX ────────────────────────────────────────────
                     OpCode::LoadKX => {
                         let ra = base + i.arg_a();
-                        let extra = state.proto_code(&cl, pc);
+                        let extra = code[pc as usize];
                         pc += 1;
                         let k_idx = extra.arg_ax() as usize;
-                        let v = state.proto_const(&cl, k_idx).clone();
-                        state.set_at(ra, v);
+                        state.stack[ra.0 as usize].val = constants[k_idx];
                     }
                     // ── OP_LOADFALSE ─────────────────────────────────────────
                     OpCode::LoadFalse => {
                         let ra = base + i.arg_a();
-                        state.set_at(ra, LuaValue::Bool(false));
+                        state.stack[ra.0 as usize].val = LuaValue::Bool(false);
                     }
                     // ── OP_LFALSESKIP ────────────────────────────────────────
                     OpCode::LFalseSkip => {
                         let ra = base + i.arg_a();
-                        state.set_at(ra, LuaValue::Bool(false));
+                        state.stack[ra.0 as usize].val = LuaValue::Bool(false);
                         pc += 1;
                     }
                     // ── OP_LOADTRUE ──────────────────────────────────────────
                     OpCode::LoadTrue => {
                         let ra = base + i.arg_a();
-                        state.set_at(ra, LuaValue::Bool(true));
+                        state.stack[ra.0 as usize].val = LuaValue::Bool(true);
                     }
                     // ── OP_LOADNIL ───────────────────────────────────────────
                     OpCode::LoadNil => {
                         let ra = base + i.arg_a();
                         let b = i.arg_b();
                         for k in 0..=b {
-                            state.set_at(ra + k, LuaValue::Nil);
+                            state.stack[(ra + k).0 as usize].val = LuaValue::Nil;
                         }
                     }
                     // ── OP_GETUPVAL ──────────────────────────────────────────
                     OpCode::GetUpVal => {
                         let ra = base + i.arg_a();
                         let b = i.arg_b() as usize;
-                        let v = state.upvalue_get(&cl, b);
-                        state.set_at(ra, v);
+                        let uv = cl.upval(b);
+                        let v = match uv.try_open_payload() {
+                            Some((thread_id, idx)) if thread_id as u64 == state.cached_thread_id => {
+                                state.stack[idx.0 as usize].val
+                            }
+                            Some(_) => state.upvalue_get(&cl, b),
+                            None => uv.closed_value(),
+                        };
+                        state.stack[ra.0 as usize].val = v;
                     }
                     // ── OP_SETUPVAL ──────────────────────────────────────────
                     //    setobj(L, uv->v.p, s2v(ra)); luaC_barrier(L, uv, s2v(ra));
@@ -1795,6 +1804,12 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         match uv.try_open_payload() {
                             Some((thread_id, idx)) if thread_id as u64 == state.cached_thread_id => {
                                 state.stack[idx.0 as usize].val = v;
+                                if v.is_collectable() {
+                                    state.gc_barrier_upval(&uv, &v);
+                                }
+                            }
+                            None => {
+                                uv.set_closed_value(v);
                                 if v.is_collectable() {
                                     state.gc_barrier_upval(&uv, &v);
                                 }
@@ -1812,7 +1827,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let b = i.arg_b() as usize;
                         let k_idx = i.arg_c() as usize;
                         let upval = state.upvalue_get(&cl, b);
-                        let key = state.proto_const(&cl, k_idx).clone();
+                        let key = constants[k_idx];
                         match state.fast_get_short_str(&upval, &key)? {
                             Some(v) => state.set_at(ra, v),
                             None => {
@@ -1870,7 +1885,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let rb_idx = base + i.arg_b();
                         let rb_v = state.get_at(rb_idx);
                         let k_idx = i.arg_c() as usize;
-                        let key = state.proto_const(&cl, k_idx).clone();
+                        let key = constants[k_idx];
                         match state.fast_get_short_str(&rb_v, &key)? {
                             Some(v) => state.set_at(ra, v),
                             None => {
@@ -1886,12 +1901,12 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let a = i.arg_a() as usize;
                         let b_idx = i.arg_b() as usize; // key is KB(i)
                         let rc_v = if i.test_k() {
-                            state.proto_const(&cl, i.arg_c() as usize).clone()
+                            constants[i.arg_c() as usize]
                         } else {
                             state.get_at(base + i.arg_c())
                         };
                         let upval = state.upvalue_get(&cl, a);
-                        let key = state.proto_const(&cl, b_idx).clone();
+                        let key = constants[b_idx];
                         match state.fast_get_short_str(&upval, &key)? {
                             Some(_slot) => {
                                 state.table_raw_set(&upval, key, rc_v.clone())?;
@@ -1920,7 +1935,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra_v = state.get_at(ra_idx);
                         let rb_v = state.get_at(base + i.arg_b());
                         let rc_v = if i.test_k() {
-                            state.proto_const(&cl, i.arg_c() as usize).clone()
+                            constants[i.arg_c() as usize]
                         } else {
                             state.get_at(base + i.arg_c())
                         };
@@ -1957,7 +1972,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra_v = state.get_at(ra_idx);
                         let c = i.arg_b() as i64;
                         let rc_v = if i.test_k() {
-                            state.proto_const(&cl, i.arg_c() as usize).clone()
+                            constants[i.arg_c() as usize]
                         } else {
                             state.get_at(base + i.arg_c())
                         };
@@ -1989,9 +2004,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra_idx = base + i.arg_a();
                         let ra_v = state.get_at(ra_idx);
                         let b_idx = i.arg_b() as usize;
-                        let key = state.proto_const(&cl, b_idx).clone();
+                        let key = constants[b_idx];
                         let rc_v = if i.test_k() {
-                            state.proto_const(&cl, i.arg_c() as usize).clone()
+                            constants[i.arg_c() as usize]
                         } else {
                             state.get_at(base + i.arg_c())
                         };
@@ -2030,7 +2045,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             b = 1 << (b - 1);
                         }
                         if i.test_k() {
-                            let extra = state.proto_code(&cl, pc);
+                            let extra = code[pc as usize];
                             pc += 1;
                             const MAXARG_C: i32 = (1 << 8) - 1;
                             c += extra.arg_ax() * (MAXARG_C + 1);
@@ -2058,7 +2073,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let rb_v = state.get_at(rb_idx);
                         let k_idx = i.arg_c() as usize; // RKC key (always a string)
                         let key = if i.test_k() {
-                            state.proto_const(&cl, k_idx).clone()
+                            constants[k_idx]
                         } else {
                             state.get_at(base + i.arg_c())
                         };
@@ -2131,7 +2146,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::ModK => {
                         let ra = base + i.arg_a();
                         let v1 = state.get_at(base + i.arg_b());
-                        let v2 = state.proto_const(&cl, i.arg_c() as usize).clone();
+                        let v2 = constants[i.arg_c() as usize];
                         state.set_ci_savedpc(ci, pc); // savestate for div-by-zero
                         state.set_top(state.ci_top(ci));
                         arith_op_checked(state, ra, &v1, &v2, &mut pc,
@@ -2159,7 +2174,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::IDivK => {
                         let ra = base + i.arg_a();
                         let v1 = state.get_at(base + i.arg_b());
-                        let v2 = state.proto_const(&cl, i.arg_c() as usize).clone();
+                        let v2 = constants[i.arg_c() as usize];
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
                         arith_op_checked(state, ra, &v1, &v2, &mut pc,
@@ -2168,19 +2183,19 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::BAndK => {
                         let ra = base + i.arg_a();
                         let v1 = state.get_at(base + i.arg_b());
-                        let v2 = state.proto_const(&cl, i.arg_c() as usize).clone();
+                        let v2 = constants[i.arg_c() as usize];
                         bitwise_op_k(state, ra, &v1, &v2, &mut pc, intop_band);
                     }
                     OpCode::BOrK => {
                         let ra = base + i.arg_a();
                         let v1 = state.get_at(base + i.arg_b());
-                        let v2 = state.proto_const(&cl, i.arg_c() as usize).clone();
+                        let v2 = constants[i.arg_c() as usize];
                         bitwise_op_k(state, ra, &v1, &v2, &mut pc, intop_bor);
                     }
                     OpCode::BXOrK => {
                         let ra = base + i.arg_a();
                         let v1 = state.get_at(base + i.arg_b());
-                        let v2 = state.proto_const(&cl, i.arg_c() as usize).clone();
+                        let v2 = constants[i.arg_c() as usize];
                         bitwise_op_k(state, ra, &v1, &v2, &mut pc, intop_bxor);
                     }
                     OpCode::ShrI => {
@@ -2323,7 +2338,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra_v = state.get_at(ra_idx);
                         let rb_v = state.get_at(rb_idx);
                         let tm = tagmethod_from_index(i.arg_c() as usize);
-                        let prev_inst = state.proto_code(&cl, pc - 2);
+                        let prev_inst = code[(pc - 2) as usize];
                         let result_idx = base + prev_inst.arg_a();
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
@@ -2336,7 +2351,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let imm = i.arg_s_b() as i64;
                         let tm = tagmethod_from_index(i.arg_c() as usize);
                         let flip = i.arg_k() != 0;
-                        let prev_inst = state.proto_code(&cl, pc - 2);
+                        let prev_inst = code[(pc - 2) as usize];
                         let result_idx = base + prev_inst.arg_a();
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
@@ -2346,10 +2361,10 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::MmBinK => {
                         let ra_idx = base + i.arg_a();
                         let ra_v = state.get_at(ra_idx);
-                        let imm = state.proto_const(&cl, i.arg_b() as usize).clone();
+                        let imm = constants[i.arg_b() as usize];
                         let tm = tagmethod_from_index(i.arg_c() as usize);
                         let flip = i.arg_k() != 0;
-                        let prev_inst = state.proto_code(&cl, pc - 2);
+                        let prev_inst = code[(pc - 2) as usize];
                         let result_idx = base + prev_inst.arg_a();
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
@@ -2453,7 +2468,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         if (cond as i32) != i.arg_k() {
                             pc += 1;
                         } else {
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2478,7 +2493,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         if (cond as i32) != i.arg_k() {
                             pc += 1;
                         } else {
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2503,7 +2518,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         if (cond as i32) != i.arg_k() {
                             pc += 1;
                         } else {
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2511,12 +2526,12 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     // ── OP_EQK ────────────────────────────────────────────────
                     OpCode::EqK => {
                         let ra_v = state.get_at(base + i.arg_a());
-                        let rb_v = state.proto_const(&cl, i.arg_b() as usize).clone();
+                        let rb_v = constants[i.arg_b() as usize];
                         let cond = equal_obj(None, &ra_v, &rb_v)? as u32;
                         if (cond as i32) != i.arg_k() {
                             pc += 1;
                         } else {
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2536,7 +2551,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         if (cond as i32) != i.arg_k() {
                             pc += 1;
                         } else {
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2606,7 +2621,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         if (cond as i32) != i.arg_k() {
                             pc += 1;
                         } else {
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2621,7 +2636,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             pc += 1;
                         } else {
                             state.set_at(ra, rb_v);
-                            let next = state.proto_code(&cl, pc);
+                            let next = code[pc as usize];
                             pc = (pc as i64 + next.arg_s_j() as i64 + 1) as u32;
                             trap = state.ci_trap(ci);
                         }
@@ -2832,7 +2847,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         state.set_top(state.ci_top(ci));
                         state.new_tbc_upval(ra + 3)?;
                         pc = (pc as i64 + i.arg_bx() as i64) as u32;
-                        let tfc_i = state.proto_code(&cl, pc);
+                        let tfc_i = code[pc as usize];
                         pc += 1;
                         debug_assert!(tfc_i.opcode() == OpCode::TForCall);
                         // inline l_tforcall:
@@ -2846,7 +2861,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         state.call_at(tfc_ra + 4, tfc_i.arg_c() as i32)?;
                         trap = state.ci_trap(ci);
                         base = state.ci_base(ci); // updatestack
-                        let tfl_i = state.proto_code(&cl, pc);
+                        let tfl_i = code[pc as usize];
                         pc += 1;
                         debug_assert!(tfl_i.opcode() == OpCode::TForLoop);
                         let tfl_ra = base + tfl_i.arg_a();
@@ -2869,7 +2884,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         state.call_at(ra + 4, i.arg_c() as i32)?;
                         trap = state.ci_trap(ci);
                         base = state.ci_base(ci); // updatestack
-                        let tfl_i = state.proto_code(&cl, pc);
+                        let tfl_i = code[pc as usize];
                         pc += 1;
                         debug_assert!(tfl_i.opcode() == OpCode::TForLoop);
                         let tfl_ra = base + tfl_i.arg_a();
@@ -2904,7 +2919,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         };
                         last += n;
                         if i.test_k() {
-                            let extra = state.proto_code(&cl, pc);
+                            let extra = code[pc as usize];
                             pc += 1;
                             const MAXARG_C: i32 = (1 << 8) - 1;
                             last += extra.arg_ax() * (MAXARG_C + 1);
@@ -2970,7 +2985,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             let name: Vec<u8> = if bx == 0 {
                                 b"?".to_vec()
                             } else {
-                                match state.proto_const(&cl, (bx - 1) as usize) {
+                                match constants[(bx - 1) as usize] {
                                     LuaValue::Str(s) => s.as_bytes().to_vec(),
                                     _ => b"?".to_vec(),
                                 }

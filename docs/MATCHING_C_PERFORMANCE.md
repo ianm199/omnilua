@@ -302,8 +302,118 @@ What did *not* change:
 - `gc_pressure` did not move. The new GC telemetry is useful, but this pass did
   not find a safe free lunch in pacer/phase mechanics.
 - `closure_ops` remains a VM dispatch problem. Opcode counts can identify
-  MOVE/GETUPVAL/SETUPVAL/CALL frequency; the current tooling still lacks
-  per-op timing.
+  MOVE/GETUPVAL/SETUPVAL/CALL frequency, but the pre-spike tooling still
+  lacked time attribution inside `lua_vm::vm::execute`.
+
+### 8. `perf/vm-execute-attribution` — source-region VM attribution and safe frame/upvalue locality
+
+**Pattern:** *When the profiler says "the VM", make the VM profileable before
+guessing.*
+
+The previous `closure_ops_x30` hotspot summary
+(`harness/bench/profiles/20260602T144856Z-ea6d8d4-closure_ops_x30/summary.txt`)
+showed `lua_vm::vm::execute` at about 89.8% of samples. That was true but not
+actionable. The raw `/usr/bin/sample` call graph already carried source
+lines/offsets for many `execute` frames; we just were not using them.
+
+This pass adds `harness/bench/vm-execute-attribution.py` and wires it into
+`profile-hotspots.sh`. When a sample contains `lua_vm::vm::execute`, the runner
+now writes `vm-execute.txt` beside `summary.txt`. The report maps source lines
+inside `crates/lua-vm/src/vm.rs` to buckets: frame setup, dispatch fetch,
+opcode arms, return re-entry, inlined/unknown lines, and inclusive call context.
+The main metric is self-samples, so an outer `OP_CALL` frame is not charged for
+work done by the nested callee frame.
+
+What the new attribution showed on the baseline `closure_ops_x30` sample:
+
+| region | self samples | VM share |
+|---|---:|---:|
+| dispatch fetch | 1,829 | 30.3% |
+| unknown/inlined | 723 | 12.0% |
+| `OP_CALL` | 697 | 11.5% |
+| `OP_SETUPVAL` | 598 | 9.9% |
+| `OP_GETUPVAL` | 539 | 8.9% |
+| frame setup | 495 | 8.2% |
+| `OP_ADD` | 285 | 4.7% |
+| `OP_FORLOOP` | 279 | 4.6% |
+
+Measured safe-Rust packet:
+
+- `execute` now caches the active Lua closure's code and constants at frame
+  entry and fetches same-frame instructions directly from that slice.
+- Hot scalar/load arms write through the proven stack slot directly instead of
+  routing through tiny state helpers.
+- Constant-bearing arms read from the cached constants slice.
+- Closed upvalues store their canonical payload in `Cell<LuaValue>` instead of
+  `RefCell<LuaValue>`, and scalar closed writes no longer refresh the legacy
+  `UpValState` mirror unless a collectable value is involved.
+- `GETUPVAL` and `SETUPVAL` expand the common open-current and closed paths in
+  the opcode arm, preserving the shared fallback for cross-thread/open cases.
+
+After the kept packet, the focused telemetry was noisy but directionally useful:
+
+| artifact | binarytrees | closure_ops | fibonacci | mandelbrot | mandelbrot_long |
+|---|---:|---:|---:|---:|---:|
+| baseline `20260602T144939Z-ea6d8d4` | 2.09x | 2.06x | 1.84x | 1.88x | 1.82x |
+| frame/code/constants packet `20260602T165133Z-876f9a0` | 1.95x | 1.94x | 1.82x | 1.75x | 1.84x |
+| closed-upvalue packet `20260602T165534Z-876f9a0` | 2.05x | 1.88x | 1.87x | 1.88x | 1.85x |
+| final kept closure-only probe `20260602T165805Z-876f9a0` | - | 1.94x | - | - | - |
+
+The best attribution re-sample after the kept changes
+(`harness/bench/profiles/20260602T165817Z-876f9a0-closure_ops_x30/vm-execute.txt`)
+showed:
+
+| region | self samples | VM share |
+|---|---:|---:|
+| dispatch fetch | 1,690 | 27.9% |
+| `OP_CALL` | 788 | 13.0% |
+| unknown/inlined | 694 | 11.5% |
+| frame setup | 578 | 9.6% |
+| `OP_SETUPVAL` | 470 | 7.8% |
+| `OP_GETUPVAL` | 469 | 7.8% |
+| `OP_FORLOOP` | 351 | 5.8% |
+| `OP_ADD` | 314 | 5.2% |
+
+Measured facts:
+
+- The new tool resolves the former `execute` monolith into actionable buckets.
+- The kept upvalue packet reduced sampled `GETUPVAL` / `SETUPVAL` self share
+  versus the baseline sample.
+- Wall-clock movement is real but modest and noisy: `closure_ops` probes ranged
+  from 1.88x to 1.94x after the kept changes, versus 2.06x in the baseline
+  broad pass.
+- No new unsafe was added.
+
+Negative result:
+
+- A naive safe exact-Lua-call fast path for simple fixed-arity Lua calls was
+  worse and was reverted. The focused matrix
+  (`harness/bench/results/20260602T165955Z-876f9a0-compare.tsv`) had
+  `closure_ops` at 2.00x and `fibonacci` at 1.95x, both worse than the kept
+  packet. The signal is that duplicating frame setup inside `OP_CALL` is not a
+  free lunch; the next call packet needs a deeper `CallInfo`/frame architecture
+  change or should wait for a deliberate value/stack representation discussion.
+
+Architecture comparison:
+
+- C Lua keeps `cl`, `k`, `pc`, `base`, and `CallInfo *` as local/raw-pointer
+  state in `luaV_execute`; `RA`, `RB`, `KC`, `vmfetch`, `savepc`, and upvalue
+  reads are macro-shaped pointer operations.
+- CppCXY/lua-rs pushes further toward that C shape: a 16-byte `LuaValue`
+  union, cached raw `chunk_ptr` / `upvalue_ptrs` in `CallInfo`, direct stack
+  pointer helpers, and an explicitly documented unsafe surface for hot
+  stack/upvalue/value paths.
+- Piccolo is useful as the opposite design point: mostly safe, sandbox-first,
+  stackless/trampoline VM, safe enum `Value`, and cached current
+  prototype/upvalues/registers in the loop. It is not trying to be a faithful
+  C-Lua performance baseline.
+
+Hypothesis after this pass: safe Rust still has local wins left in cold-path
+splitting and call-frame layout, but the broad "obvious helper traffic" is
+mostly gone. If `dispatch fetch`, `OP_CALL`, and value-stack copies remain the
+top buckets after one more careful call-frame packet, the next meaningful
+design discussion is likely unsafe/value layout: 16-byte `LuaValue`, raw stack
+slot access with proven frame invariants, and cached upvalue pointer arrays.
 
 ### 6. `20260602T140413Z-858cc5e` — broad safe-Rust pass after PR #121
 

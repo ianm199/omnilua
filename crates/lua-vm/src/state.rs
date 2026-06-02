@@ -2606,8 +2606,8 @@ impl LuaState {
     #[inline(always)]
     pub fn ci_lua_closure(&self, idx: CallInfoIdx) -> Option<GcRef<lua_types::closure::LuaLClosure>> {
         let func_idx = self.call_info[idx.as_usize()].func;
-        match self.get_at(func_idx) {
-            LuaValue::Function(lua_types::closure::LuaClosure::Lua(cl)) => Some(cl),
+        match self.stack.get(func_idx.0 as usize).map(|slot| slot.val) {
+            Some(LuaValue::Function(lua_types::closure::LuaClosure::Lua(cl))) => Some(cl),
             _ => None,
         }
     }
@@ -2855,7 +2855,7 @@ impl LuaState {
         let uv = cl.upval(n);
         let (thread_id, idx) = match uv.try_open_payload() {
             Some(p) => p,
-            None => return *uv.closed_value(),
+            None => return uv.closed_value(),
         };
         let current = self.cached_thread_id;
         let tid = thread_id as u64;

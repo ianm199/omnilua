@@ -12,7 +12,7 @@ use lua_gc::{Marker, Trace};
 use crate::gc::GcRef;
 use crate::value::LuaValue;
 use crate::table::LuaTable;
-use crate::upval::{UpVal, UpValState};
+use crate::upval::UpVal;
 use crate::string::LuaString;
 use crate::proto::LuaProto;
 use crate::closure::{LuaClosure, LuaLClosure, LuaCClosure};
@@ -72,20 +72,9 @@ impl Trace for LuaString {
 /// points at is traced through the owning thread's stack walk.
 impl Trace for UpVal {
     fn trace(&self, m: &mut Marker) {
-        let state = self.state.try_borrow();
-        if let Ok(state) = state {
-            match &*state {
-                UpValState::Open { .. } => {}
-                UpValState::Closed(v) => v.trace(m),
-            }
+        if self.try_open_payload().is_some() {
             return;
         }
-
-        // GC runs can happen while an upvalue is mutably borrowed in
-        // coroutine/close machinery. In that case a fallible borrow keeps
-        // the collector from panicking with a hard abort; open upvalues do not
-        // need tracing, and closed values may already be represented by
-        // stronger references while the mutable borrow is active.
         if let Some(v) = self.try_closed_value() {
             v.trace(m);
         }

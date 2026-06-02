@@ -122,6 +122,20 @@ PROFILE_LUA_EVAL='for i=1,100 do dofile("harness/bench/workloads/gc_pressure.lua
 A calltree/xctrace runner can be added when the hotspot summary is not enough
 to explain a packet.
 
+When the raw sample contains `lua_vm::vm::execute`, the same runner also writes
+`vm-execute.txt` next to `summary.txt`. That report is produced by
+`vm-execute-attribution.py`, which parses the raw call graph and buckets
+`execute` source-line samples into frame setup, dispatch fetch, opcode arms,
+return re-entry, and unknown-inlined regions. The headline table uses
+self-samples, so an outer `OP_CALL` frame is not charged for time spent in the
+nested callee's active VM frame.
+
+This is still sampling telemetry, not exact per-op timing. It is useful for
+distinguishing "all time vanished into `vm::execute`" from concrete buckets
+such as dispatch, `OP_CALL`, `OP_GETUPVAL`, and `OP_SETUPVAL`. Use
+`opcode-profile.sh` when you need execution counts; use `vm-execute.txt` when
+you need approximate time attribution inside the interpreter loop.
+
 `opcode-profile.sh` is a feature-gated VM opcode counter for cases where stack
 sampling collapses into `vm::execute`:
 
@@ -162,10 +176,12 @@ hot but cannot explain how many objects the phase is visiting or freeing.
 1. The latest table lesson is the no-metatable `OP_SET*` fast path after
    PR #121; see `docs/MATCHING_C_PERFORMANCE.md`.
 2. `profile-hotspots.sh` is wired for `/usr/bin/sample` summaries and supports
-   `PROFILE_LUA_EVAL` for scaled short-workload probes. Add a calltree/xctrace
-   runner only when a packet needs deeper attribution.
+   `PROFILE_LUA_EVAL` for scaled short-workload probes. When `vm::execute`
+   dominates, inspect the adjacent `vm-execute.txt` before adding deeper
+   profiler tooling.
 3. `opcode-profile.sh` covers per-op counts when stack samples flatten into
-   `vm::execute`; it does not provide per-op timing.
+   `vm::execute`; it does not provide per-op timing. Pair it with
+   `vm-execute.txt` when opcode frequency and sampled time diverge.
 4. `gc-profile.sh` covers end-of-run collector counters. It does not provide
    allocation stack attribution or cumulative per-phase timing.
 5. `compare.sh` appends ledger rows directly. Typed bench runner entries in

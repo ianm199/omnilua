@@ -10,7 +10,7 @@ use crate::value::LuaValue;
 /// Retained as the public read-side enum for out-of-crate consumers that
 /// pattern-match through `UpVal::slot()`. The canonical storage on `UpVal`
 /// is now a `Cell`-tagged shape; the `RefCell<UpValState>` mirror is
-/// updated in lockstep so existing `slot()` callers keep working.
+/// kept for existing `slot()` callers that need the open/closed shape.
 #[derive(Debug, Clone)]
 pub enum UpValState {
     Open {
@@ -25,9 +25,11 @@ pub enum UpValState {
 /// own the value.
 ///
 /// Canonical state lives in two `Cell` fields (the tag and the open payload)
-/// plus a `RefCell<LuaValue>` holding the closed payload. The `state`
-/// `RefCell<UpValState>` mirror is kept consistent so cold consumers that
-/// still call `slot()` see the correct view. The split lets
+/// plus a `Cell<LuaValue>` holding the closed payload. The `state`
+/// `RefCell<UpValState>` mirror is kept for cold consumers that still call
+/// `slot()` to inspect the open/closed shape. Scalar-to-scalar closed writes
+/// may leave the mirror's scalar payload stale; callers that need the current
+/// closed value must use `closed_value` / `try_closed_value`. The split lets
 /// `state.rs::upvalue_get` / `upvalue_set` short-circuit the Open path with
 /// zero `RefCell` borrow overhead, which is the dominant cost in
 /// fibonacci-class recursion benchmarks.
@@ -35,7 +37,7 @@ pub enum UpValState {
 pub struct UpVal {
     open_thread_id: Cell<i64>,
     open_idx: Cell<u32>,
-    closed_value: RefCell<LuaValue>,
+    closed_value: Cell<LuaValue>,
     pub state: RefCell<UpValState>,
 }
 
@@ -49,7 +51,7 @@ impl UpVal {
         UpVal {
             open_thread_id: Cell::new(thread_id as i64),
             open_idx: Cell::new(idx.0),
-            closed_value: RefCell::new(LuaValue::Nil),
+            closed_value: Cell::new(LuaValue::Nil),
             state: RefCell::new(UpValState::Open { thread_id, idx }),
         }
     }
@@ -58,7 +60,7 @@ impl UpVal {
         UpVal {
             open_thread_id: Cell::new(CLOSED_TAG),
             open_idx: Cell::new(0),
-            closed_value: RefCell::new(v.clone()),
+            closed_value: Cell::new(v),
             state: RefCell::new(UpValState::Closed(v)),
         }
     }
@@ -84,31 +86,66 @@ impl UpVal {
         }
     }
 
-    /// Borrows the closed-side value. Callers must have confirmed the
+    /// Returns the closed-side value. Callers must have confirmed the
     /// upvalue is closed (`try_open_payload` returned `None`).
     #[inline(always)]
-    pub fn closed_value(&self) -> Ref<'_, LuaValue> { self.closed_value.borrow() }
+    pub fn closed_value(&self) -> LuaValue { self.closed_value.get() }
 
     pub fn close_with(&self, v: LuaValue) {
         self.open_thread_id.set(CLOSED_TAG);
         self.open_idx.set(0);
-        *self.closed_value.borrow_mut() = v.clone();
+        self.closed_value.set(v);
         *self.state.borrow_mut() = UpValState::Closed(v);
     }
 
     pub fn set_closed_value(&self, v: LuaValue) {
         self.open_thread_id.set(CLOSED_TAG);
         self.open_idx.set(0);
-        *self.closed_value.borrow_mut() = v.clone();
-        *self.state.borrow_mut() = UpValState::Closed(v);
+        let old_collectable = self.closed_value.get().is_collectable();
+        self.closed_value.set(v);
+        if old_collectable || v.is_collectable() {
+            *self.state.borrow_mut() = UpValState::Closed(v);
+        }
     }
 
-    pub fn try_closed_value(&self) -> Option<std::cell::Ref<'_, LuaValue>> {
+    pub fn try_closed_value(&self) -> Option<LuaValue> {
         if self.is_closed() {
-            self.closed_value.try_borrow().ok()
+            Some(self.closed_value.get())
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closed_scalar_write_updates_canonical_value() {
+        let uv = UpVal::closed(LuaValue::Int(1));
+
+        uv.set_closed_value(LuaValue::Int(2));
+
+        assert_eq!(uv.closed_value(), LuaValue::Int(2));
+        assert_eq!(uv.try_closed_value(), Some(LuaValue::Int(2)));
+        match &*uv.slot() {
+            UpValState::Closed(v) => assert_eq!(*v, LuaValue::Int(1)),
+            UpValState::Open { .. } => panic!("closed upvalue mirror became open"),
+        };
+    }
+
+    #[test]
+    fn close_with_refreshes_legacy_mirror() {
+        let uv = UpVal::open(7, StackIdx(3));
+
+        uv.close_with(LuaValue::Bool(true));
+
+        assert_eq!(uv.closed_value(), LuaValue::Bool(true));
+        match &*uv.slot() {
+            UpValState::Closed(v) => assert_eq!(*v, LuaValue::Bool(true)),
+            UpValState::Open { .. } => panic!("closed upvalue mirror stayed open"),
+        };
     }
 }
 
@@ -125,7 +162,9 @@ impl UpVal {
 //                  use an enum with the equivalent two states. Canonical storage is
 //                  Cell-tagged (open_thread_id, open_idx, closed_value) so hot-path
 //                  upvalue_get/_set skip RefCell borrow guards on the Open branch.
-//                  The RefCell<UpValState> mirror is updated in lockstep so existing
+//                  The RefCell<UpValState> mirror is retained for existing
 //                  out-of-crate slot() consumers (api.rs, debug.rs, coro_lib.rs,
-//                  func.rs) keep working without migration.
+//                  func.rs). Scalar closed-value writes update the canonical payload
+//                  without refreshing the mirror payload, so value reads should use
+//                  closed_value()/try_closed_value().
 // ──────────────────────────────────────────────────────────────────────────────

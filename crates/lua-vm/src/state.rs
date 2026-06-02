@@ -4084,6 +4084,19 @@ impl<'a> GcHandle<'a> {
 
     /// Run one generational collection step.
     pub fn generational_step(&self) -> bool {
+        self.generational_step_with_major(true)
+    }
+
+    /// Run a generational step forced to the regular minor path.
+    ///
+    /// Used for `collectgarbage("step", 0)`: upstream `genstep` treats
+    /// `GCdebt <= 0` as an explicit zero-size step and performs a minor
+    /// collection, unless a previous bad major has already armed `lastatomic`.
+    pub fn generational_step_minor_only(&self) -> bool {
+        self.generational_step_with_major(false)
+    }
+
+    fn generational_step_with_major(&self, allow_major: bool) -> bool {
         let (lastatomic, majorbase, majorinc, should_major) = {
             let g = self._state.global();
             let majorbase = if g.gc_estimate == 0 {
@@ -4093,7 +4106,9 @@ impl<'a> GcHandle<'a> {
             };
             let majormul = g.gc_genmajormul_param().max(0) as usize;
             let majorinc = (majorbase / 100).saturating_mul(majormul);
-            let should_major = g.gc_debt() > 0
+            let debt_due = g.gc_debt() > 0 || g.heap.would_collect();
+            let should_major = allow_major
+                && debt_due
                 && g.total_bytes() > majorbase.saturating_add(majorinc);
             (g.lastatomic, majorbase, majorinc, should_major)
         };
@@ -5823,7 +5838,7 @@ mod tests {
         state.gc().obj_barrier(&parent, &metatable);
         assert_eq!(metatable.0.age(), lua_gc::GcAge::Old0);
 
-        assert!(state.gc().generational_step());
+        assert!(state.gc().generational_step_minor_only());
         assert_eq!(parent.0.age(), lua_gc::GcAge::Touched2);
         assert_eq!(child.0.age(), lua_gc::GcAge::Survival);
         assert_eq!(metatable.0.age(), lua_gc::GcAge::Old1);
@@ -6048,6 +6063,49 @@ mod tests {
         assert!(g.gc_estimate > 1);
         assert!(g.gc_debt() <= 0);
         assert_eq!(root.0.age(), lua_gc::GcAge::Old);
+        drop(g);
+
+        assert!(state.external_unroot_value(root_key).is_some());
+        state.gc().full_collect();
+    }
+
+    #[test]
+    fn generational_implicit_step_runs_major_when_heap_threshold_exceeded() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let root = state.new_table();
+        let root_key = state.external_root_value(LuaValue::Table(root));
+        state.gc().change_mode(GcKind::Generational);
+
+        let root_value = LuaValue::Table(root);
+        for i in 1..=64 {
+            let child = state.new_table();
+            let child_value = LuaValue::Table(child);
+            root
+                .raw_set_int(&mut state, i, child_value.clone())
+                .expect("table store should succeed");
+            state.gc_barrier_back(&root_value, &child_value);
+        }
+
+        {
+            let mut g = state.global_mut();
+            g.gc_estimate = 1;
+            set_debt(&mut *g, -1);
+            g.heap.set_threshold_bytes(1);
+        }
+
+        assert!(state.gc().generational_step());
+        let g = state.global();
+        assert!(g.is_gen_mode());
+        assert!(
+            g.lastatomic > 0,
+            "implicit threshold-triggered growth should arm a bad major"
+        );
+        assert!(g.gc_debt() <= 0);
         drop(g);
 
         assert!(state.external_unroot_value(root_key).is_some());

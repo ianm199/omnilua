@@ -576,6 +576,38 @@ What this says about the roadmap:
   frame invariants, cached frame/upvalue pointers, and larger table/upvalue
   heap objects.
 
+GC/table follow-up profiles after the same branch added the missing cadence
+view:
+
+- `gc_pressure_x300`
+  (`harness/bench/profiles/20260602T191942Z-e1483a6-gc_pressure_x300/summary.txt`,
+  `harness/bench/profiles/gc-profile/20260602T192753Z-e1483a6-gc_pressure_x300/gc-rates.tsv`)
+  has `execute` at 22.6% and `Heap::sweep_young_range` at 14.5% in the
+  sampler. The GC cadence probe normalizes this to 1,879,849 collections over
+  300 runs, about 6,266 collections per workload and 129k collections/sec.
+  Latest-cycle mark/sweep sizes are small, so this is primarily collection
+  cadence / fixed-step cost, not one huge trace.
+- `binarytrees_x15`
+  (`harness/bench/profiles/20260602T191955Z-e1483a6-binarytrees_x15/summary.txt`,
+  `harness/bench/profiles/gc-profile/20260602T192812Z-e1483a6-binarytrees_x15/gc-rates.tsv`)
+  has `execute` at 34.6% and `sweep_young_range` at 13.8%. Cadence is much
+  lower, about 373 collections per workload, but the latest cycle marked
+  35,428 objects, traced 35,355, swept 25,620 young objects, and revisited
+  9,705 old/grayagain objects. This is cohort/old-revisit volume, not just
+  pacer frequency.
+- `table_hash_pressure_x100`
+  (`harness/bench/profiles/20260602T192236Z-e1483a6-table_hash_pressure_x100/summary.txt`,
+  `harness/bench/profiles/gc-profile/20260602T192829Z-e1483a6-table_hash_pressure_x100/gc-rates.tsv`)
+  has `execute` at 27.1%, `get_short_str_slot` at 7.2%, `new_key` at 4.9%,
+  `intern_str` at 4.2%, and allocator/free frames around the write path. GC is
+  stopped in this workload, so the useful counter is the intern-table gauge:
+  net +199,920 short strings over 100 runs, about 1,999 per workload.
+
+The next GC packet should therefore be split. `gc_pressure` wants pacer/cadence
+experiments with correctness canaries; `binarytrees` wants old-revisit/cohort
+scan reduction; `table_hash_pressure` wants table string-key write-path and
+intern/concat allocation work.
+
 Follow-up rejected call/frame spikes:
 
 - A no-hook `RETURN0`/`RETURN1` direct re-entry cleanup removed the shared
@@ -612,8 +644,9 @@ Tool gaps:
   `CARGO_PROFILE_RELEASE_DEBUG=true` and frame pointers, the profiler may show
   a top `execute` symbol but still be unable to bucket VM time.
 - `opcode-profile.sh` gives execution counts but not time per opcode.
-- `gc-profile.sh` gives end-of-run counters but not allocation stack
-  attribution or cumulative per-phase timing.
+- `gc-profile.sh` now gives start/end counter deltas and per-run/per-second
+  rates, but still does not provide allocation stack attribution or cumulative
+  per-phase timing.
 - `harness/runners.toml` still has correctness runners only. Benchmark,
   profile, GC, opcode, layout, and inventory probes are reusable scripts but
   not typed runner entries with resource locks.

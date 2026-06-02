@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Write end-of-run GC counters for one lua-rs workload.
+# Write GC counters and cadence summaries for one lua-rs workload.
 #
 # This is telemetry, not a ledgered benchmark. It runs the normal release
-# binary and writes a TSV with collection counts, heap cohorts, latest
-# mark/sweep counters, and intern-table size.
+# binary and writes start/end TSV snapshots with collection counts, heap
+# cohorts, latest mark/sweep counters, and intern-table size.
 #
 # Usage:
 #   bash harness/bench/gc-profile.sh gc_pressure
@@ -45,7 +45,10 @@ fi
 OUT_DIR="$ROOT/harness/bench/profiles/gc-profile/${TS}-${COMMIT}-${WORKLOAD_LABEL}"
 mkdir -p "$OUT_DIR"
 
+export LUA_RS_GC_PROFILE_START="$OUT_DIR/gc-start.tsv"
 export LUA_RS_GC_PROFILE="$OUT_DIR/gc.tsv"
+
+START_SECONDS="$(python3 -c 'import time; print(f"{time.perf_counter():.9f}")')"
 
 if [ -n "$PROFILE_LUA_EVAL" ]; then
     echo "==> running $RS_BIN -e <PROFILE_LUA_EVAL> ($WORKLOAD_LABEL)" >&2
@@ -54,6 +57,25 @@ else
     echo "==> running $RS_BIN $WORKLOAD_FILE" >&2
     "$RS_BIN" "$WORKLOAD_FILE" >"$OUT_DIR/stdout.txt" 2>"$OUT_DIR/stderr.txt"
 fi
+END_SECONDS="$(python3 -c 'import time; print(f"{time.perf_counter():.9f}")')"
+ELAPSED_SECONDS="$(python3 - "$START_SECONDS" "$END_SECONDS" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.9f}")
+PY
+)"
+
+python3 harness/bench/gc-profile-summary.py \
+    --start "$LUA_RS_GC_PROFILE_START" \
+    --end "$LUA_RS_GC_PROFILE" \
+    --delta-out "$OUT_DIR/gc-delta.tsv" \
+    --rates-out "$OUT_DIR/gc-rates.tsv" \
+    --elapsed-seconds "$ELAPSED_SECONDS" \
+    --repeat "$PROFILE_REPEAT"
 
 echo "==> GC report: $LUA_RS_GC_PROFILE" >&2
 column -t -s $'\t' "$LUA_RS_GC_PROFILE"
+echo
+echo "==> GC rates: $OUT_DIR/gc-rates.tsv" >&2
+column -t -s $'\t' "$OUT_DIR/gc-rates.tsv"

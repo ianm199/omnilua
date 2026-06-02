@@ -1221,8 +1221,8 @@ fn register_testc_table(state: &mut LuaState) -> Result<(), LuaError> {
     lua_vm::api::set_global(state, b"T")
 }
 
-fn write_gc_profile_from_env(state: &LuaState) -> io::Result<()> {
-    let Some(path) = std::env::var_os("LUA_RS_GC_PROFILE") else {
+pub(crate) fn write_gc_profile_path_from_env(var: &str, state: &LuaState) -> io::Result<()> {
+    let Some(path) = std::env::var_os(var) else {
         return Ok(());
     };
     if path == "-" {
@@ -1232,6 +1232,10 @@ fn write_gc_profile_from_env(state: &LuaState) -> io::Result<()> {
     }
     let mut file = std::fs::File::create(std::path::PathBuf::from(path))?;
     write_gc_profile(&mut file, state)
+}
+
+fn write_gc_profile_from_env(state: &LuaState) -> io::Result<()> {
+    write_gc_profile_path_from_env("LUA_RS_GC_PROFILE", state)
 }
 
 fn write_gc_profile(mut writer: impl Write, state: &LuaState) -> io::Result<()> {

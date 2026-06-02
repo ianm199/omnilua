@@ -703,6 +703,9 @@ fn pmain_body(
         cli.report(Err(e));
         return false;
     }
+    if let Err(err) = crate::write_gc_profile_path_from_env("LUA_RS_GC_PROFILE_START", state) {
+        eprintln!("[gc-profile] failed to write start report: {}", err);
+    }
 
     let sandbox_opts = parse_sandbox_opts(argv);
     if sandbox_opts.active() {

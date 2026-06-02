@@ -177,18 +177,22 @@ It builds `lua-rs` with `--features opcode-profile`, writes
 `target/release/lua-rs` with the instrumented binary. Rebuild a normal release
 binary before running `compare.sh`.
 
-`gc-profile.sh` runs the normal release binary and writes end-of-run collector
-counters:
+`gc-profile.sh` runs the normal release binary and writes collector counters:
 
 ```bash
 bash harness/bench/gc-profile.sh gc_pressure
 PROFILE_REPEAT=10 bash harness/bench/gc-profile.sh binarytrees
 ```
 
-It writes `profiles/gc-profile/<UTC>-<sha>-<label>/gc.tsv`. The report covers
-collection counts, heap cohorts, latest mark/sweep counters, grayagain count,
-and intern-table size. It is useful when `/usr/bin/sample` says a GC phase is
-hot but cannot explain how many objects the phase is visiting or freeing.
+It writes `profiles/gc-profile/<UTC>-<sha>-<label>/gc-start.tsv`, `gc.tsv`,
+`gc-delta.tsv`, and `gc-rates.tsv`. The start snapshot is taken after
+CLI/library startup and before script or `-e` execution; the end snapshot is
+taken after close-time finalizers. The report covers collection counts, heap
+cohorts, latest mark/sweep counters, grayagain count, intern-table size,
+per-run/per-second rates for cumulative counters, and net deltas for live
+gauges such as the intern table. It is useful when
+`/usr/bin/sample` says a GC phase is hot but cannot explain how many objects
+the phase is visiting or freeing.
 
 `value-layout.sh` is a representation probe, not a benchmark:
 
@@ -220,8 +224,9 @@ unsafe representation ceilings.
 3. `opcode-profile.sh` covers per-op counts when stack samples flatten into
    `vm::execute`; it does not provide per-op timing. Pair it with
    `vm-execute.txt` when opcode frequency and sampled time diverge.
-4. `gc-profile.sh` covers end-of-run collector counters. It does not provide
-   allocation stack attribution or cumulative per-phase timing.
+4. `gc-profile.sh` covers collector counters and start/end cadence deltas. It
+   does not provide allocation stack attribution or cumulative per-phase
+   timing.
 5. `compare.sh` appends ledger rows directly. Typed bench runner entries in
    `harness/runners.toml` are still useful future cleanup, but not required
    for evidence-backed perf work.

@@ -41,8 +41,9 @@ recent 1.75×-2.00× band to 1.14× in the broad matrix and 1.17× in a
 best-of-10 focused run. The overall ratio stayed about 1.54× because the
 largest remaining workloads are VM-call and GC dominated, not string-key
 construction dominated.
-The next tall poles are core VM call/upvalue dispatch, collector
-sweep/allocation mechanics, and byte-string pattern matching.
+The next tall poles are core VM call/upvalue dispatch, GC cadence on
+`gc_pressure`, old-revisit/cohort volume on `binarytrees`, table string-key
+write paths on `table_hash_pressure`, and byte-string pattern matching.
 
 ## The gate
 

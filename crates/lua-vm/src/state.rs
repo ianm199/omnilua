@@ -3170,12 +3170,12 @@ impl LuaState {
     pub fn table_set_with_tm(&mut self, t: &LuaValue, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
         if let LuaValue::Table(tbl) = t {
             if tbl.metatable().is_none() {
-                self.gc_barrier_back(t, &v);
+                self.gc_table_barrier_back(tbl, &v);
                 return self.table_raw_set(t, k, v);
             }
         }
         if self.fast_get(t, &k)?.is_some() {
-            self.gc_barrier_back(t, &v);
+            self.gc_value_barrier_back(t, &v);
             return self.table_raw_set(t, k, v);
         }
         crate::vm::finish_set(self, t.clone(), k, v, true, None, None)
@@ -3416,6 +3416,16 @@ impl LuaState {
     }
     pub fn gc_barrier_back(&mut self, t: &dyn std::any::Any, v: &LuaValue) {
         self.gc().barrier_back(t, v);
+    }
+    pub fn gc_value_barrier_back(&mut self, t: &LuaValue, v: &LuaValue) {
+        if let LuaValue::Table(tbl) = t {
+            self.gc_table_barrier_back(tbl, v);
+        } else {
+            self.gc_barrier_back(t, v);
+        }
+    }
+    pub fn gc_table_barrier_back(&mut self, t: &GcRef<LuaTable>, v: &LuaValue) {
+        self.gc().table_barrier_back(t, v);
     }
     pub fn gc_barrier_upval(&mut self, uv: &GcRef<UpVal>, v: &LuaValue) {
         self.gc().barrier(uv, v);
@@ -3742,24 +3752,30 @@ fn close_open_upvalues_for_unreachable_threads(
 fn record_live_interned_strings(
     global: &GlobalState,
     marker: &lua_gc::Marker,
-    live_ids: &std::cell::RefCell<std::collections::HashSet<usize>>,
+    live_ids: &std::cell::RefCell<Vec<usize>>,
 ) {
     let mut live = live_ids.borrow_mut();
     for s in global.interned_lt.values() {
         let id = s.identity();
         if marker.is_visited(id) {
-            live.insert(id);
+            live.push(id);
         }
     }
 }
 
 fn retain_live_interned_strings(
     global: &mut GlobalState,
-    live_ids: &std::collections::HashSet<usize>,
+    mut live_ids: Vec<usize>,
 ) {
+    if live_ids.is_empty() {
+        global.interned_lt.clear();
+        return;
+    }
+    live_ids.sort_unstable();
+    live_ids.dedup();
     global
         .interned_lt
-        .retain(|_, s| live_ids.contains(&s.identity()));
+        .retain(|_, s| live_ids.binary_search(&s.identity()).is_ok());
 }
 
 impl<'a> GcHandle<'a> {
@@ -3940,13 +3956,20 @@ impl<'a> GcHandle<'a> {
         // does NOT root these — that's how the post-mark hook below can
         // distinguish "still reachable from program state" from "only kept
         // alive by the finalizer registry."
-        let pending_snapshot: Vec<FinalizerObject> = {
+        let weak_table_capacity = weak_tables_snapshot.len();
+        let (pending_snapshot, thread_capacity, interned_capacity): (
+            Vec<FinalizerObject>,
+            usize,
+            usize,
+        ) = {
             let g = state_ref.global.borrow();
-            match mode {
+            let pending = match mode {
                 HeapCollectMode::Minor => g.finalizers.pending_minor_snapshot(),
                 HeapCollectMode::Full | HeapCollectMode::Step => g.finalizers.pending_snapshot(),
-            }
+            };
+            (pending, g.threads.len(), g.interned_lt.len())
         };
+        let finalizer_capacity = pending_snapshot.len();
 
         let alive_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
@@ -3956,8 +3979,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(std::collections::HashSet::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
-        let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
-            std::cell::RefCell::new(std::collections::HashSet::new());
+        let live_interned_ids: std::cell::RefCell<Vec<usize>> =
+            std::cell::RefCell::new(Vec::new());
         let collect_ran = std::cell::Cell::new(false);
 
         {
@@ -3966,6 +3989,11 @@ impl<'a> GcHandle<'a> {
             let roots = CollectRoots { global: &*global, thread: state_ref };
             let hook = |marker: &mut lua_gc::Marker| {
                 collect_ran.set(true);
+                alive_ids.borrow_mut().reserve(weak_table_capacity);
+                newly_unreachable.borrow_mut().reserve(finalizer_capacity);
+                finalizing_ids.borrow_mut().reserve(finalizer_capacity);
+                alive_thread_ids.borrow_mut().reserve(thread_capacity);
+                live_interned_ids.borrow_mut().reserve(interned_capacity);
                 trace_reachable_threads(&*global, global.current_thread_id, marker);
                 close_open_upvalues_for_unreachable_threads(&*global, marker);
                 loop {
@@ -4062,7 +4090,7 @@ impl<'a> GcHandle<'a> {
         let alive_thread_ids = alive_thread_ids.into_inner();
         let live_interned_ids = live_interned_ids.into_inner();
         let mut g = state_ref.global.borrow_mut();
-        retain_live_interned_strings(&mut *g, &live_interned_ids);
+        retain_live_interned_strings(&mut *g, live_interned_ids);
         g.weak_tables_registry.retain_identities(&alive_set);
         let main_thread_id = g.main_thread_id;
         g.threads.retain(|id, _| alive_thread_ids.contains(id));
@@ -4182,10 +4210,16 @@ impl<'a> GcHandle<'a> {
             g.weak_tables_registry.live_snapshot_by_kind()
         };
 
-        let pending_snapshot: Vec<FinalizerObject> = {
+        let weak_table_capacity = weak_tables_snapshot.len();
+        let (pending_snapshot, thread_capacity, interned_capacity): (
+            Vec<FinalizerObject>,
+            usize,
+            usize,
+        ) = {
             let g = state_ref.global.borrow();
-            g.finalizers.pending_snapshot()
+            (g.finalizers.pending_snapshot(), g.threads.len(), g.interned_lt.len())
         };
+        let finalizer_capacity = pending_snapshot.len();
 
         let alive_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
@@ -4195,8 +4229,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(std::collections::HashSet::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
-        let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
-            std::cell::RefCell::new(std::collections::HashSet::new());
+        let live_interned_ids: std::cell::RefCell<Vec<usize>> =
+            std::cell::RefCell::new(Vec::new());
         let atomic_ran = std::cell::Cell::new(false);
 
         let stop_target = {
@@ -4214,6 +4248,11 @@ impl<'a> GcHandle<'a> {
             let roots = CollectRoots { global: &*global, thread: state_ref };
             let hook = |marker: &mut lua_gc::Marker| {
                 atomic_ran.set(true);
+                alive_ids.borrow_mut().reserve(weak_table_capacity);
+                newly_unreachable.borrow_mut().reserve(finalizer_capacity);
+                finalizing_ids.borrow_mut().reserve(finalizer_capacity);
+                alive_thread_ids.borrow_mut().reserve(thread_capacity);
+                live_interned_ids.borrow_mut().reserve(interned_capacity);
                 trace_reachable_threads(&*global, global.current_thread_id, marker);
                 close_open_upvalues_for_unreachable_threads(&*global, marker);
                 loop {
@@ -4308,7 +4347,7 @@ impl<'a> GcHandle<'a> {
             let alive_thread_ids = alive_thread_ids.into_inner();
             let live_interned_ids = live_interned_ids.into_inner();
             let mut g = state_ref.global.borrow_mut();
-            retain_live_interned_strings(&mut *g, &live_interned_ids);
+            retain_live_interned_strings(&mut *g, live_interned_ids);
             g.weak_tables_registry.retain_identities(&alive_set);
             let main_thread_id = g.main_thread_id;
             g.threads.retain(|id, _| alive_thread_ids.contains(id));
@@ -4347,15 +4386,20 @@ impl<'a> GcHandle<'a> {
             let mut g = state_ref.global.borrow_mut();
             g.weak_tables_registry.live_snapshot_by_kind()
         };
+        let interned_capacity = {
+            let g = state_ref.global.borrow();
+            g.interned_lt.len()
+        };
 
-        let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
-            std::cell::RefCell::new(std::collections::HashSet::new());
+        let live_interned_ids: std::cell::RefCell<Vec<usize>> =
+            std::cell::RefCell::new(Vec::new());
 
         {
             let global = state_ref.global.borrow();
             global.heap.unpause();
             let roots = CollectRoots { global: &*global, thread: state_ref };
             let hook = |marker: &mut lua_gc::Marker| {
+                live_interned_ids.borrow_mut().reserve(interned_capacity);
                 trace_reachable_threads(&*global, global.current_thread_id, marker);
                 loop {
                     let visited_before = marker.visited_count();
@@ -4392,7 +4436,7 @@ impl<'a> GcHandle<'a> {
 
         let live_interned_ids = live_interned_ids.into_inner();
         let mut g = state_ref.global.borrow_mut();
-        retain_live_interned_strings(&mut *g, &live_interned_ids);
+        retain_live_interned_strings(&mut *g, live_interned_ids);
     }
 
     /// Set the GC kind (incremental/generational).
@@ -4436,6 +4480,12 @@ impl<'a> GcHandle<'a> {
     pub fn barrier_back(&self, p: &dyn std::any::Any, v: &LuaValue) {
         let g = self._state.global();
         barrier_any(&g.heap, p, v, g.is_gen_mode(), BarrierKind::Backward);
+    }
+
+    /// Typed table backward barrier for table mutation hot paths.
+    pub fn table_barrier_back(&self, p: &GcRef<LuaTable>, v: &LuaValue) {
+        let g = self._state.global();
+        barrier_lua_value(&g.heap, *p, v, g.is_gen_mode(), BarrierKind::Backward);
     }
 
     /// Object write barrier.

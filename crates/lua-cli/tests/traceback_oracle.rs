@@ -31,11 +31,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn temp_script() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut p = std::env::temp_dir();
-    p.push(format!(
-        "lua_rs_tb_oracle_{}_{}.lua",
-        std::process::id(),
-        n
-    ));
+    p.push(format!("lua_rs_tb_oracle_{}_{}.lua", std::process::id(), n));
     std::fs::write(&p, SCRIPT).expect("write temp script");
     p
 }
@@ -47,6 +43,18 @@ fn normalize(stderr: &[u8], script_path: &str) -> String {
     let mut s = String::from_utf8_lossy(stderr).into_owned();
     if !script_path.is_empty() {
         s = s.replace(script_path, "<script>");
+        if let Some(file_name) = PathBuf::from(script_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+        {
+            while let Some(end) = s.find(file_name).map(|idx| idx + file_name.len()) {
+                let start = s[..end - file_name.len()]
+                    .rfind(|c: char| c == '\n' || c == '\t' || c == ' ')
+                    .map(|idx| idx + 1)
+                    .unwrap_or(0);
+                s.replace_range(start..end, "<script>");
+            }
+        }
     }
     // Scrub hex addresses (e.g. `function: 0x55…`) to a stable token.
     let mut out = String::with_capacity(s.len());
@@ -80,6 +88,10 @@ fn last_two_nonempty_lines(s: &str) -> (Option<&str>, Option<&str>) {
     (above, last)
 }
 
+fn traceback_body(s: &str) -> Option<&str> {
+    s.split_once("stack traceback:").map(|x| x.1)
+}
+
 fn lua_rs() -> Command {
     Command::new(env!("CARGO_BIN_EXE_lua-rs"))
 }
@@ -96,6 +108,7 @@ fn reference_binary(version: &str) -> Option<PathBuf> {
 /// Map a short version (`5.4`) to the patch-level binary name (`5.4.7`).
 fn full_version(version: &str) -> &'static str {
     match version {
+        "5.1" => "5.1.5",
         "5.3" => "5.3.6",
         "5.4" => "5.4.7",
         "5.5" => "5.5.0",
@@ -120,6 +133,152 @@ fn assert_traceback_tail(normalized: &str, ctx: &str) {
         above.is_some_and(|l| l.ends_with("in main chunk")),
         "[{ctx}] frame above `[C]: in ?` must be the main chunk, got {above:?}\n{normalized}"
     );
+}
+
+/// Lua 5.1 uses `debug.traceback` from `ldblib.c::db_errorfb`, not
+/// `luaL_traceback`. Unknown C/tail frames end as `\t[C]: ?`.
+fn assert_v51_traceback_tail(normalized: &str, ctx: &str) {
+    assert!(
+        normalized.contains("stack traceback:"),
+        "[{ctx}] missing 'stack traceback:' in stderr:\n{normalized}"
+    );
+    let (above, last) = last_two_nonempty_lines(normalized);
+    assert_eq!(
+        last,
+        Some("\t[C]: ?"),
+        "[{ctx}] 5.1 deepest traceback frame must be `\\t[C]: ?`, got {last:?}\n{normalized}"
+    );
+    assert!(
+        above.is_some_and(|l| l.ends_with("in main chunk")),
+        "[{ctx}] 5.1 frame above `[C]: ?` must be the main chunk, got {above:?}\n{normalized}"
+    );
+}
+
+#[test]
+fn v51_dash_e_traceback_uses_debug_traceback_format() {
+    const PROG: &str = "local function f() error(\"x\") end f()";
+    let out = lua_rs()
+        .env("LUA_RS_VERSION", "5.1")
+        .arg("-e")
+        .arg(PROG)
+        .output()
+        .expect("spawn lua-rs -e");
+    let norm = normalize(&out.stderr, "");
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "[5.1 -e] uncaught -e error must exit 1"
+    );
+    assert_v51_traceback_tail(&norm, "5.1/-e");
+    assert!(
+        norm.contains("\t[C]: in function 'error'"),
+        "[5.1 -e] named C frame must render as `in function 'error'`:\n{norm}"
+    );
+    assert!(
+        norm.contains("\t(command line):1: in function 'f'"),
+        "[5.1 -e] named local Lua frame must render as `in function 'f'`:\n{norm}"
+    );
+    assert!(
+        !norm.contains("in local 'f'"),
+        "[5.1 -e] traceback must not expose 5.2+ namewhat wording:\n{norm}"
+    );
+
+    if let Some(refbin) = reference_binary("5.1") {
+        let rout = Command::new(&refbin)
+            .arg("-e")
+            .arg(PROG)
+            .output()
+            .expect("spawn reference 5.1");
+        let refnorm = normalize(&rout.stderr, "");
+        assert_eq!(
+            traceback_body(&norm),
+            traceback_body(&refnorm),
+            "[5.1 -e] traceback body must match lua5.1.5 reference"
+        );
+    }
+}
+
+#[test]
+fn v51_file_entry_point_has_51_tail_frame() {
+    let script = temp_script();
+    let script_str = script.to_string_lossy().into_owned();
+    let out = lua_rs()
+        .env("LUA_RS_VERSION", "5.1")
+        .arg(&script)
+        .output()
+        .expect("spawn lua-rs file");
+    let norm = normalize(&out.stderr, &script_str);
+    assert_v51_traceback_tail(&norm, "5.1/file");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "[5.1 file] uncaught file error must exit 1"
+    );
+
+    if let Some(refbin) = reference_binary("5.1") {
+        let rout = Command::new(&refbin)
+            .arg(&script)
+            .output()
+            .expect("spawn reference 5.1");
+        let refnorm = normalize(&rout.stderr, &script_str);
+        assert_eq!(
+            traceback_body(&norm),
+            traceback_body(&refnorm),
+            "[5.1 file] traceback body must match lua5.1.5 reference"
+        );
+    }
+
+    let _ = std::fs::remove_file(&script);
+}
+
+#[test]
+fn v51_stdin_entry_point_has_51_tail_frame() {
+    let mut child = lua_rs()
+        .env("LUA_RS_VERSION", "5.1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn lua-rs 5.1 stdin");
+    child
+        .stdin
+        .take()
+        .expect("stdin handle")
+        .write_all(b"error(\"boom\")\n")
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait lua-rs 5.1 stdin");
+    let norm = normalize(&out.stderr, "");
+    assert_v51_traceback_tail(&norm, "5.1/stdin");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "[5.1 stdin] piped-stdin error must exit 0 (matches reference)"
+    );
+
+    if let Some(refbin) = reference_binary("5.1") {
+        let mut ref_child = Command::new(&refbin)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn reference 5.1 stdin");
+        ref_child
+            .stdin
+            .take()
+            .expect("reference stdin handle")
+            .write_all(b"error(\"boom\")\n")
+            .expect("write reference stdin");
+        let refout = ref_child
+            .wait_with_output()
+            .expect("wait reference 5.1 stdin");
+        let refnorm = normalize(&refout.stderr, "");
+        assert_eq!(
+            traceback_body(&norm),
+            traceback_body(&refnorm),
+            "[5.1 stdin] traceback body must match lua5.1.5 reference"
+        );
+    }
 }
 
 #[test]
@@ -151,8 +310,8 @@ fn file_entry_point_has_base_c_frame() {
                 // body (from `stack traceback:` onward), which is what #79d is
                 // about.
                 ;
-            let our_tb = norm.split_once("stack traceback:").map(|x| x.1);
-            let ref_tb = refnorm.split_once("stack traceback:").map(|x| x.1);
+            let our_tb = traceback_body(&norm);
+            let ref_tb = traceback_body(&refnorm);
             // The 5.5 namewhat divergence (`in global 'error'` vs
             // `in function 'error'`) is now fixed in `push_func_name`, so the
             // traceback body matches the reference for every version.
@@ -438,10 +597,22 @@ fn utf8_escape_bound_matches_reference_per_version() {
         rejected_on: &'static [&'static str],
     }
     const CASES: &[Case] = &[
-        Case { prog: r#"print(#"\u{10FFFF}")"#, rejected_on: &[] },
-        Case { prog: r#"print(#"\u{110000}")"#, rejected_on: &["5.3"] },
-        Case { prog: r#"print(#"\u{7FFFFFFF}")"#, rejected_on: &["5.3"] },
-        Case { prog: r#"print(#"\u{80000000}")"#, rejected_on: &["5.3", "5.4", "5.5"] },
+        Case {
+            prog: r#"print(#"\u{10FFFF}")"#,
+            rejected_on: &[],
+        },
+        Case {
+            prog: r#"print(#"\u{110000}")"#,
+            rejected_on: &["5.3"],
+        },
+        Case {
+            prog: r#"print(#"\u{7FFFFFFF}")"#,
+            rejected_on: &["5.3"],
+        },
+        Case {
+            prog: r#"print(#"\u{80000000}")"#,
+            rejected_on: &["5.3", "5.4", "5.5"],
+        },
     ];
 
     for case in CASES {

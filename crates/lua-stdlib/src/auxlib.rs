@@ -18,16 +18,11 @@
 //! `GlobalState::file_loader_hook`; concrete filesystem access belongs in
 //! `lua-cli` or another host backend.
 
+use crate::state_stub::{LuaDebug, LuaState, LuaStateStubExt as _};
 use lua_types::{
-    error::LuaError,
-    value::LuaValue,
-    gc::GcRef,
-    string::LuaString,
-    userdata::LuaUserData,
-    LuaType,
-    LuaStatus,
+    error::LuaError, gc::GcRef, string::LuaString, userdata::LuaUserData, value::LuaValue,
+    LuaStatus, LuaType,
 };
-use crate::state_stub::{LuaState, LuaStateStubExt as _, LuaDebug};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -66,7 +61,10 @@ pub const LUA_FILE_HANDLE: &[u8] = b"FILE*";
 const LUA_REGISTRYINDEX: i32 = -1_001_000;
 
 /// Minimum number of extra stack slots `lua_checkstack` guarantees per call.
-#[expect(dead_code, reason = "ported stdlib helper; not yet wired into the runtime")]
+#[expect(
+    dead_code,
+    reason = "ported stdlib helper; not yet wired into the runtime"
+)]
 const LUA_MINSTACK: i32 = 20;
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -112,11 +110,7 @@ pub struct LuaStream {
 /// `objidx` must be an absolute API stack index.
 /// Returns `true` (and leaves name string on top) when found.
 ///
-fn find_field(
-    state: &mut LuaState,
-    objidx: i32,
-    level: i32,
-) -> Result<bool, LuaError> {
+fn find_field(state: &mut LuaState, objidx: i32, level: i32) -> Result<bool, LuaError> {
     if level == 0 || state.type_at(-1) != LuaType::Table {
         return Ok(false);
     }
@@ -142,17 +136,18 @@ fn find_field(
 /// Search all loaded modules for a global name for the function at `top+1`.
 /// Returns `true` and leaves name string on top (at `top+1`) if found.
 ///
-fn push_global_func_name(
-    state: &mut LuaState,
-    ar: &mut LuaDebug,
-) -> Result<bool, LuaError> {
+fn push_global_func_name(state: &mut LuaState, ar: &mut LuaDebug) -> Result<bool, LuaError> {
     let top = state.top_count();
     state.get_info(b"f", ar)?;
     state.get_field(LUA_REGISTRYINDEX, LUA_LOADED_TABLE)?;
     check_stack(state, 6, Some(b"not enough stack"))?;
     if find_field(state, top + 1, 2)? {
-        if state.peek_bytes(-1).map_or(false, |n| n.starts_with(b"_G.")) {
-            let suffix = state.peek_bytes(-1)
+        if state
+            .peek_bytes(-1)
+            .map_or(false, |n| n.starts_with(b"_G."))
+        {
+            let suffix = state
+                .peek_bytes(-1)
                 .map(|n| n[3..].to_vec())
                 .unwrap_or_default();
             state.push_bytes(&suffix)?;
@@ -180,8 +175,12 @@ fn push_global_func_name_from_target(
     state.get_field(LUA_REGISTRYINDEX, LUA_LOADED_TABLE)?;
     check_stack(state, 6, Some(b"not enough stack"))?;
     if find_field(state, top + 1, 2)? {
-        if state.peek_bytes(-1).map_or(false, |n| n.starts_with(b"_G.")) {
-            let suffix = state.peek_bytes(-1)
+        if state
+            .peek_bytes(-1)
+            .map_or(false, |n| n.starts_with(b"_G."))
+        {
+            let suffix = state
+                .peek_bytes(-1)
                 .map(|n| n[3..].to_vec())
                 .unwrap_or_default();
             state.push_bytes(&suffix)?;
@@ -275,13 +274,21 @@ pub fn traceback(
     msg: Option<&[u8]>,
     level: i32,
 ) -> Result<(), LuaError> {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return traceback_51(state, other, msg, level);
+    }
+
     let mut b = LuaBuffer::new();
     let mut ar = LuaDebug::default();
     let last = match &mut other {
         Some(o) => last_level(o),
         None => last_level(state),
     };
-    let mut limit2show: i32 = if last - level > LEVELS1 + LEVELS2 { LEVELS1 } else { -1 };
+    let mut limit2show: i32 = if last - level > LEVELS1 + LEVELS2 {
+        LEVELS1
+    } else {
+        -1
+    };
     buf_init(state, &mut b);
     if let Some(m) = msg {
         add_lstring(&mut b, m);
@@ -333,17 +340,93 @@ pub fn traceback(
     Ok(())
 }
 
+fn traceback_51(
+    state: &mut LuaState,
+    mut other: Option<&mut LuaState>,
+    msg: Option<&[u8]>,
+    level: i32,
+) -> Result<(), LuaError> {
+    const LEVELS1_51: i32 = 12;
+    const LEVELS2_51: i32 = 10;
+
+    let mut b = LuaBuffer::new();
+    let mut ar = LuaDebug::default();
+    let mut firstpart = true;
+    buf_init(state, &mut b);
+    if let Some(m) = msg {
+        add_lstring(&mut b, m);
+        add_char(&mut b, b'\n');
+    }
+    add_lstring(&mut b, b"stack traceback:");
+
+    let mut level = level;
+    loop {
+        let got = match &mut other {
+            Some(o) => o.get_stack(level, &mut ar),
+            None => state.get_stack(level, &mut ar),
+        };
+        if !got {
+            break;
+        }
+        level += 1;
+        if level > LEVELS1_51 && firstpart {
+            let has_tail = match &mut other {
+                Some(o) => o.get_stack(level + LEVELS2_51, &mut ar),
+                None => state.get_stack(level + LEVELS2_51, &mut ar),
+            };
+            if !has_tail {
+                level -= 1;
+            } else {
+                add_lstring(&mut b, b"\n\t...");
+                while match &mut other {
+                    Some(o) => o.get_stack(level + LEVELS2_51, &mut ar),
+                    None => state.get_stack(level + LEVELS2_51, &mut ar),
+                } {
+                    level += 1;
+                }
+            }
+            firstpart = false;
+            continue;
+        }
+
+        match &mut other {
+            Some(o) => o.get_info(b"Snl", &mut ar)?,
+            None => state.get_info(b"Snl", &mut ar)?,
+        }
+        add_lstring(&mut b, b"\n\t");
+        add_lstring(&mut b, &ar.short_src);
+        add_char(&mut b, b':');
+        if ar.currentline > 0 {
+            state.push_fstring(format_args!("{}:", ar.currentline))?;
+            add_value(state, &mut b)?;
+        }
+        if !ar.namewhat.is_empty() {
+            let name = ar.name.clone().unwrap_or_else(|| b"?".to_vec());
+            state.push_fstring(format_args!(" in function '{}'", BStr(&name)))?;
+            add_value(state, &mut b)?;
+        } else if ar.what == b'm' {
+            add_lstring(&mut b, b" in main chunk");
+        } else if ar.what == b'C' || ar.what == b't' {
+            add_lstring(&mut b, b" ?");
+        } else {
+            let src = ar.short_src.clone();
+            let line = ar.linedefined;
+            state.push_fstring(format_args!(" in function <{}:{}>", BStr(&src), line))?;
+            add_value(state, &mut b)?;
+        }
+    }
+
+    push_result(state, &mut b)?;
+    Ok(())
+}
+
 // ── Error-report functions ─────────────────────────────────────────────────────
 
 /// Push an error for argument `arg` with extra message `extramsg`.
 /// Attempts to enrich the message with the calling function's name.
 /// Always returns `Err`.
 ///
-pub fn arg_error(
-    state: &mut LuaState,
-    mut arg: i32,
-    extramsg: &[u8],
-) -> Result<usize, LuaError> {
+pub fn arg_error(state: &mut LuaState, mut arg: i32, extramsg: &[u8]) -> Result<usize, LuaError> {
     let mut ar = LuaDebug::default();
     if !state.get_stack(0, &mut ar) {
         return Err(LuaError::runtime(format_args!(
@@ -384,11 +467,7 @@ pub fn arg_error(
 /// Push a type-mismatch error for argument `arg`, stating `tname` was expected.
 /// Always returns `Err`.
 ///
-pub fn type_error_arg(
-    state: &mut LuaState,
-    arg: i32,
-    tname: &[u8],
-) -> Result<usize, LuaError> {
+pub fn type_error_arg(state: &mut LuaState, arg: i32, tname: &[u8]) -> Result<usize, LuaError> {
     //      typearg = lua_tostring(L, -1);
     //    else if (lua_type(L, arg) == LUA_TLIGHTUSERDATA)
     //      typearg = "light userdata";
@@ -405,11 +484,7 @@ pub fn type_error_arg(
     } else {
         state.type_name_at(arg).to_vec()
     };
-    let msg_owned = format!(
-        "{} expected, got {}",
-        BStr(tname),
-        BStr(&typearg)
-    );
+    let msg_owned = format!("{} expected, got {}", BStr(tname), BStr(&typearg));
     arg_error(state, arg, msg_owned.as_bytes())
 }
 
@@ -588,11 +663,7 @@ pub fn check_option(
 
 /// Ensure the stack has at least `space` extra slots; raise on failure.
 ///
-pub fn check_stack(
-    state: &mut LuaState,
-    space: i32,
-    msg: Option<&[u8]>,
-) -> Result<(), LuaError> {
+pub fn check_stack(state: &mut LuaState, space: i32, msg: Option<&[u8]>) -> Result<(), LuaError> {
     if !state.check_stack_space(space) {
         match msg {
             Some(m) => {
@@ -752,11 +823,7 @@ pub fn buf_init(state: &mut LuaState, buf: &mut LuaBuffer) {
 
 /// Initialize `buf`, reserve `sz` bytes, and return the writable region.
 ///
-pub fn buf_init_size(
-    state: &mut LuaState,
-    buf: &mut LuaBuffer,
-    sz: usize,
-) -> Result<(), LuaError> {
+pub fn buf_init_size(state: &mut LuaState, buf: &mut LuaBuffer, sz: usize) -> Result<(), LuaError> {
     buf_init(state, buf);
     buf.data.reserve(sz);
     Ok(())
@@ -950,9 +1017,17 @@ fn make_string_reader(data: Vec<u8>) -> impl FnMut() -> Option<Vec<u8>> {
 /// chunk" branch in `luaL_loadfilex` exists in C because text mode does newline
 /// translation; the host loader is expected to provide raw bytes.
 fn skip_bom_and_shebang(buf: &[u8]) -> Vec<u8> {
-    let s = if buf.starts_with(b"\xEF\xBB\xBF") { &buf[3..] } else { buf };
+    let s = if buf.starts_with(b"\xEF\xBB\xBF") {
+        &buf[3..]
+    } else {
+        buf
+    };
     if s.first() == Some(&b'#') {
-        let nl = s.iter().position(|&b| b == b'\n').map(|p| p + 1).unwrap_or(s.len());
+        let nl = s
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| p + 1)
+            .unwrap_or(s.len());
         let rest = &s[nl..];
         if rest.first() == Some(&0x1B) {
             rest.to_vec()
@@ -1006,22 +1081,21 @@ pub fn load_filex(
                 }
                 other => format!("{:?}", other),
             };
-            state.push_fstring(format_args!(
-                "cannot open {}: {}",
-                BStr(fname),
-                detail
-            ))?;
+            state.push_fstring(format_args!("cannot open {}: {}", BStr(fname), detail))?;
             return Ok(LUA_ERRFILE);
         }
     };
     let payload = skip_bom_and_shebang(&raw);
     let mut once = Some(payload);
-    let boxed: Box<dyn FnMut() -> Option<Vec<u8>>> =
-        Box::new(move || once.take());
+    let boxed: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || once.take());
     let mut chunkname = b"@".to_vec();
     chunkname.extend_from_slice(fname);
     let status = lua_vm::api::load(state, boxed, Some(&chunkname), mode)?;
-    Ok(if status == LuaStatus::Ok { 0 } else { status as i32 })
+    Ok(if status == LuaStatus::Ok {
+        0
+    } else {
+        status as i32
+    })
 }
 
 /// Load a buffer as a Lua chunk.
@@ -1040,11 +1114,7 @@ pub fn load_bufferx(
 
 /// Load a buffer as a Lua chunk (no mode argument).
 ///
-pub fn load_buffer(
-    state: &mut LuaState,
-    buff: &[u8],
-    name: &[u8],
-) -> Result<i32, LuaError> {
+pub fn load_buffer(state: &mut LuaState, buff: &[u8], name: &[u8]) -> Result<i32, LuaError> {
     load_bufferx(state, buff, name, None)
 }
 
@@ -1059,11 +1129,7 @@ pub fn load_string(state: &mut LuaState, s: &[u8]) -> Result<i32, LuaError> {
 /// Push the metafield `event` of `obj` onto the stack and return its type.
 /// If there is no metafield, nothing is pushed and `LuaType::Nil` is returned.
 ///
-pub fn get_metafield(
-    state: &mut LuaState,
-    obj: i32,
-    event: &[u8],
-) -> Result<LuaType, LuaError> {
+pub fn get_metafield(state: &mut LuaState, obj: i32, event: &[u8]) -> Result<LuaType, LuaError> {
     if !state.get_metatable(obj)? {
         return Ok(LuaType::Nil);
     }
@@ -1161,11 +1227,7 @@ pub fn to_lua_string(state: &mut LuaState, idx: i32) -> Result<Vec<u8>, LuaError
 /// Register the functions in `l` into the table at `-(nup + 1)`, giving each
 /// closure the `nup` upvalues currently at the top of the stack.
 ///
-pub fn set_funcs(
-    state: &mut LuaState,
-    l: &[LuaReg],
-    nup: i32,
-) -> Result<(), LuaError> {
+pub fn set_funcs(state: &mut LuaState, l: &[LuaReg], nup: i32) -> Result<(), LuaError> {
     check_stack(state, nup, Some(b"too many upvalues"))?;
     for reg in l {
         match reg.func {
@@ -1188,11 +1250,7 @@ pub fn set_funcs(
 /// Ensure `state[idx][fname]` is a table; push it.
 /// Returns `true` if the table already existed, `false` if newly created.
 ///
-pub fn get_subtable(
-    state: &mut LuaState,
-    idx: i32,
-    fname: &[u8],
-) -> Result<bool, LuaError> {
+pub fn get_subtable(state: &mut LuaState, idx: i32, fname: &[u8]) -> Result<bool, LuaError> {
     if state.get_field(idx, fname)? == LuaType::Table {
         return Ok(true);
     }
@@ -1262,7 +1320,10 @@ fn default_panic_handler(state: &mut LuaState) -> Result<usize, LuaError> {
     } else {
         b"error object is not a string".to_vec()
     };
-    eprintln!("PANIC: unprotected error in call to Lua API ({})", BStr(&msg));
+    eprintln!(
+        "PANIC: unprotected error in call to Lua API ({})",
+        BStr(&msg)
+    );
     Ok(0) // return to Lua to abort
 }
 
@@ -1300,11 +1361,7 @@ fn warn_cont(_state: &mut LuaState, message: &[u8], tocont: bool) -> Result<(), 
 /// Handle a warning control message (e.g. `"@on"`, `"@off"`).
 /// Returns `true` if the message was a recognised control message.
 ///
-fn check_control(
-    state: &mut LuaState,
-    message: &[u8],
-    tocont: bool,
-) -> Result<bool, LuaError> {
+fn check_control(state: &mut LuaState, message: &[u8], tocont: bool) -> Result<bool, LuaError> {
     if tocont || message.first() != Some(&b'@') {
         return Ok(false);
     }
@@ -1364,7 +1421,6 @@ impl<'a> std::fmt::Display for BStr<'a> {
 use std::fmt::Write as _;
 
 // ── LuaDebug Default ─────────────────────────────────────────────────────────
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

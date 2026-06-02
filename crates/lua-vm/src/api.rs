@@ -1418,7 +1418,7 @@ fn aux_raw_set(state: &mut LuaState, idx: i32, key: LuaValue, n: u32) -> Result<
     t.raw_set(state, key, val)?;
     t.invalidate_tm_cache();
     let top_val = state.get_at(top - 1);
-    state.gc().barrier_back(&t, &top_val);
+    state.gc().table_barrier_back(&t, &top_val);
     state.set_top_idx(top - n as i32);
     Ok(())
 }
@@ -1441,7 +1441,7 @@ pub fn raw_set_i(state: &mut LuaState, idx: i32, n: i64) -> Result<(), LuaError>
     let val = state.get_at(top - 1);
     t.raw_set_int(state, n, val)?;
     let top_val = state.get_at(top - 1);
-    state.gc().barrier_back(&t, &top_val);
+    state.gc().table_barrier_back(&t, &top_val);
     state.pop();
     Ok(())
 }

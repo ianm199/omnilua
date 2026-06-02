@@ -997,7 +997,7 @@ pub(crate) fn finish_set(
             tm = state.fast_tm_table(mt.as_ref(), TagMethod::NewIndex);
             if matches!(tm, LuaValue::Nil) {
                 state.table_raw_set(&t, key, val.clone())?;
-                state.gc_barrier_back(&t, &val);
+                state.gc_value_barrier_back(&t, &val);
                 return Ok(());
             }
         } else {
@@ -1020,7 +1020,7 @@ pub(crate) fn finish_set(
         t_idx = None;
         if state.fast_get(&t, &key)?.is_some() {
             state.table_raw_set(&t, key.clone(), val.clone())?;
-            state.gc_barrier_back(&t, &val);
+            state.gc_value_barrier_back(&t, &val);
             return Ok(());
         }
     }
@@ -1891,7 +1891,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         match state.fast_get_short_str(&upval, &key)? {
                             Some(_slot) => {
                                 state.table_raw_set(&upval, key, rc_v.clone())?;
-                                state.gc_barrier_back(&upval, &rc_v);
+                                state.gc_value_barrier_back(&upval, &rc_v);
                             }
                             None => {
                                 state.set_ci_savedpc(ci, pc);
@@ -1927,7 +1927,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         };
                         if fast.is_some() {
                             state.table_raw_set(&ra_v, rb_v, rc_v.clone())?;
-                            state.gc_barrier_back(&ra_v, &rc_v);
+                            state.gc_value_barrier_back(&ra_v, &rc_v);
                         } else {
                             state.set_ci_savedpc(ci, pc);
                             state.set_top(state.ci_top(ci));
@@ -1948,7 +1948,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let fast = state.fast_get_int(&ra_v, c)?;
                         if fast.is_some() {
                             state.table_raw_set(&ra_v, LuaValue::Int(c), rc_v.clone())?;
-                            state.gc_barrier_back(&ra_v, &rc_v);
+                            state.gc_value_barrier_back(&ra_v, &rc_v);
                         } else {
                             state.set_ci_savedpc(ci, pc);
                             state.set_top(state.ci_top(ci));
@@ -1970,7 +1970,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         match state.fast_get_short_str(&ra_v, &key)? {
                             Some(_) => {
                                 state.table_raw_set(&ra_v, key, rc_v.clone())?;
-                                state.gc_barrier_back(&ra_v, &rc_v);
+                                state.gc_value_barrier_back(&ra_v, &rc_v);
                             }
                             None => {
                                 state.set_ci_savedpc(ci, pc);
@@ -2874,7 +2874,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             let val = state.get_at(ra + k as i32);
                             state.table_array_set(&t_val, (last - 1) as usize, val.clone())?;
                             last -= 1;
-                            state.gc_barrier_back(&t_val, &val);
+                            state.gc_value_barrier_back(&t_val, &val);
                         }
                     }
                     // ── OP_CLOSURE ─────────────────────────────────────────────

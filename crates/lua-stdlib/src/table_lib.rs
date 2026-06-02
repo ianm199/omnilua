@@ -114,8 +114,7 @@ fn raw_set_int(
     key: i64,
     value: LuaValue,
 ) -> Result<(), LuaError> {
-    let parent = LuaValue::Table(tbl);
-    state.gc_barrier_back(&parent, &value);
+    state.gc_table_barrier_back(&tbl, &value);
     tbl.raw_set_int(state, key, value)
 }
 

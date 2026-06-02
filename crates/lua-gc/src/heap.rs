@@ -327,8 +327,15 @@ impl<T: WeakEntry> WeakRegistry<T> {
 
     pub fn live_snapshot_by_kind(&mut self) -> WeakRegistrySnapshot<T::Strong> {
         let tracked_before = self.len();
-        let mut seen = std::collections::HashSet::<usize>::new();
-        let mut live = WeakRegistrySnapshot::default();
+        let weak_values_capacity = self.weak_values.len();
+        let ephemeron_capacity = self.ephemeron.len();
+        let all_weak_capacity = self.all_weak.len();
+        let mut seen = std::collections::HashSet::<usize>::with_capacity(tracked_before);
+        let mut live = WeakRegistrySnapshot {
+            weak_values: Vec::with_capacity(weak_values_capacity),
+            ephemeron: Vec::with_capacity(ephemeron_capacity),
+            all_weak: Vec::with_capacity(all_weak_capacity),
+        };
         let mut dead = 0usize;
 
         let entries = std::mem::take(&mut self.weak_values)
@@ -558,8 +565,9 @@ impl<T: FinalizerEntry> FinalizerRegistry<T> {
         if objects.is_empty() {
             return Vec::new();
         }
-        let ids: std::collections::HashSet<usize> =
-            objects.iter().map(|object| object.identity()).collect();
+        let mut ids: std::collections::HashSet<usize> =
+            std::collections::HashSet::with_capacity(objects.len());
+        ids.extend(objects.iter().map(|object| object.identity()));
         self.retain_pending_not_in(&ids);
         self.extend_to_be_finalized(objects)
     }

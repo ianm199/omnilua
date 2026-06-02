@@ -1028,9 +1028,12 @@ impl Marker {
 /// Transitions:
 /// - `Pause` → `Propagate` (on first step: reset colors, trace roots).
 /// - `Propagate` → `Atomic` (when the gray queue empties).
-/// - `Atomic` → `Sweep` (post-mark hook has run; sweep cursor is initialized).
-/// - `Sweep` → `Finalize` (sweep cursor reached the end of allgc).
-/// - `Finalize` → `Pause` (any pending finalize work has been drained).
+/// - `Atomic` → `SweepAllGc` (post-mark hook has run; sweep cursor is initialized).
+/// - `SweepAllGc` → `SweepFinObj` (allgc sweep cursor reached the end).
+/// - `SweepFinObj` → `SweepToBeFnz` (current overlay has no separate finobj sweep).
+/// - `SweepToBeFnz` → `SweepEnd` (current overlay has no separate tobefnz sweep).
+/// - `SweepEnd` → `CallFin` (finish sweep bookkeeping).
+/// - `CallFin` → `Pause` (cycle is complete).
 ///
 /// `Collecting` is kept as a compatibility alias for the old API (used by
 /// `barrier`) — it means "anything but Pause."
@@ -1039,8 +1042,11 @@ pub enum GcState {
     Pause,
     Propagate,
     Atomic,
-    Sweep,
-    Finalize,
+    SweepAllGc,
+    SweepFinObj,
+    SweepToBeFnz,
+    SweepEnd,
+    CallFin,
 }
 
 impl GcState {
@@ -1051,7 +1057,13 @@ impl GcState {
         matches!(self, GcState::Propagate)
     }
     pub fn is_sweep(self) -> bool {
-        matches!(self, GcState::Sweep)
+        matches!(
+            self,
+            GcState::SweepAllGc
+                | GcState::SweepFinObj
+                | GcState::SweepToBeFnz
+                | GcState::SweepEnd
+        )
     }
 }
 
@@ -1632,7 +1644,7 @@ impl Heap {
         marker.drain_gray_queue();
         self.last_mark_stats.set(marker.stats());
 
-        self.state.set(GcState::Sweep);
+        self.state.set(GcState::SweepAllGc);
         self.sweep_young();
         *self.marker.borrow_mut() = None;
         self.sweep_prev_next.set(None);
@@ -1668,9 +1680,10 @@ impl Heap {
 
     /// Run one budgeted step of the incremental collector.
     ///
-    /// The state machine advances `Pause → Propagate → Atomic → Sweep →
-    /// Finalize → Pause`. Each phase consumes budget; the call returns when
-    /// the budget runs out or the cycle reaches `Pause`. The `post_mark`
+    /// The state machine advances `Pause → Propagate → Atomic → SweepAllGc →
+    /// SweepFinObj → SweepToBeFnz → SweepEnd → CallFin → Pause`. Each phase
+    /// consumes budget; the call returns when the budget runs out or the cycle
+    /// reaches `Pause`. The `post_mark`
     /// hook is invoked exactly once per cycle, during the `Atomic`
     /// transition (after the initial gray-queue drain, before sweep starts).
     ///
@@ -1749,27 +1762,51 @@ impl Heap {
                 }
                 GcState::Atomic => {
                     self.run_atomic(post_mark);
-                    self.state.set(GcState::Sweep);
+                    self.state.set(GcState::SweepAllGc);
                     budget.remaining_work -= 1;
                     did_work = true;
-                    if stop_at == Some(GcState::Sweep) {
+                    if stop_at == Some(GcState::SweepAllGc) {
                         return did_work;
                     }
                 }
-                GcState::Sweep => {
+                GcState::SweepAllGc => {
                     let work = self.sweep_budgeted(budget.remaining_work.max(1));
                     budget.remaining_work -= work as isize;
                     did_work = did_work || work > 0;
                     if self.sweep_prev_next.get().is_none() {
-                        self.state.set(GcState::Finalize);
-                        if stop_at == Some(GcState::Finalize) {
+                        self.state.set(GcState::SweepFinObj);
+                        if stop_at == Some(GcState::SweepFinObj) {
                             return did_work;
                         }
                     } else if budget.remaining_work <= 0 {
                         return did_work;
                     }
                 }
-                GcState::Finalize => {
+                GcState::SweepFinObj => {
+                    self.state.set(GcState::SweepToBeFnz);
+                    budget.remaining_work -= 1;
+                    did_work = true;
+                    if stop_at == Some(GcState::SweepToBeFnz) || budget.remaining_work <= 0 {
+                        return did_work;
+                    }
+                }
+                GcState::SweepToBeFnz => {
+                    self.state.set(GcState::SweepEnd);
+                    budget.remaining_work -= 1;
+                    did_work = true;
+                    if stop_at == Some(GcState::SweepEnd) || budget.remaining_work <= 0 {
+                        return did_work;
+                    }
+                }
+                GcState::SweepEnd => {
+                    self.state.set(GcState::CallFin);
+                    budget.remaining_work -= 1;
+                    did_work = true;
+                    if stop_at == Some(GcState::CallFin) || budget.remaining_work <= 0 {
+                        return did_work;
+                    }
+                }
+                GcState::CallFin => {
                     self.finish_cycle();
                     self.state.set(GcState::Pause);
                     if stop_at == Some(GcState::Pause) {
@@ -2547,7 +2584,7 @@ mod tests {
             |_| {},
         );
         assert_eq!(outcome, StepOutcome::InProgress);
-        assert_eq!(heap.gc_state(), GcState::Sweep);
+        assert_eq!(heap.gc_state(), GcState::SweepAllGc);
 
         let new_during_sweep = heap.allocate(Cell0 {
             next: Cell::new(None),
@@ -3010,12 +3047,12 @@ mod tests {
 
         let outcome = heap.incremental_run_until_state_with_post_mark(
             &roots,
-            GcState::Sweep,
+            GcState::SweepAllGc,
             1024,
             |_| atomic_calls.set(atomic_calls.get() + 1),
         );
         assert_eq!(outcome, StepOutcome::InProgress);
-        assert_eq!(heap.gc_state(), GcState::Sweep);
+        assert_eq!(heap.gc_state(), GcState::SweepAllGc);
         assert_eq!(atomic_calls.get(), 1, "entering sweep must run the atomic hook once");
     }
 
@@ -3087,7 +3124,7 @@ mod tests {
                 StepBudget::from_work(2),
                 |_| {},
             );
-            if heap.gc_state() == GcState::Sweep && outcome == StepOutcome::InProgress {
+            if heap.gc_state().is_sweep() && outcome == StepOutcome::InProgress {
                 saw_in_progress_during_sweep = true;
             }
             if outcome == StepOutcome::Paused {

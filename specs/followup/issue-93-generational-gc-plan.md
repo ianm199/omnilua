@@ -26,6 +26,11 @@ The current tree is no longer only startup/default scaffolding:
 - `GlobalState::is_gen_mode()` now matches the upstream declared-mode rule:
   `gckind == Generational || lastatomic != 0`.
 - `keep_invariant()` and `is_sweep_phase()` read real heap state.
+- The heap state machine exposes C-Lua-style sweep states
+  (`sweepallgc`, `sweepfinobj`, `sweeptobefnz`, `sweepend`, `callfin`) through
+  the testC-equivalent `T.gcstate()`/`T.gcstats()` surface. The finalizer sweep
+  states are currently explicit phase transitions over the registry overlay;
+  true intrusive `finobj`/`tobefnz` sweep ownership remains separate work.
 - VM stores route through active forward/backward barriers, including table
   writes, userdata uservalues, closure upvalues, and cross-thread upvalues.
 - `lua-gc` has dual-white colors and generational age metadata; the canary and
@@ -181,6 +186,10 @@ Deliverables:
 - Replace the coarse `gcstate` byte mirror with named states equivalent to
   `GCSpropagate`, `GCSenteratomic`, `GCSatomic`, `GCSswpallgc`,
   `GCSswpfinobj`, `GCSswptobefnz`, `GCSswpend`, `GCScallfin`, `GCSpause`.
+- Done for sweep/finalization phase visibility: `GcState` now has distinct
+  `SweepAllGc`, `SweepFinObj`, `SweepToBeFnz`, `SweepEnd`, and `CallFin`
+  states, and `canary_g_testc_gcstate.lua` pins all of them through `T.gcstate`.
+  `GCSenteratomic` remains collapsed into the current atomic transition.
 - Implement `keep_invariant()` as `gcstate <= GCSatomic`.
 - Implement `is_sweep_phase()` as `GCSswpallgc <= gcstate <= GCSswpend`.
 - Implement declared generational mode as upstream does:

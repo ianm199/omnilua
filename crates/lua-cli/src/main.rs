@@ -887,8 +887,11 @@ fn testc_gc_state_name(gc_state: lua_gc::GcState) -> &'static [u8] {
         lua_gc::GcState::Pause => b"pause",
         lua_gc::GcState::Propagate => b"propagate",
         lua_gc::GcState::Atomic => b"atomic",
-        lua_gc::GcState::Sweep => b"sweepallgc",
-        lua_gc::GcState::Finalize => b"callfin",
+        lua_gc::GcState::SweepAllGc => b"sweepallgc",
+        lua_gc::GcState::SweepFinObj => b"sweepfinobj",
+        lua_gc::GcState::SweepToBeFnz => b"sweeptobefnz",
+        lua_gc::GcState::SweepEnd => b"sweepend",
+        lua_gc::GcState::CallFin => b"callfin",
     }
 }
 
@@ -896,8 +899,11 @@ fn testc_gc_state_name(gc_state: lua_gc::GcState) -> &'static [u8] {
 enum TestcGcState {
     Propagate,
     Atomic,
-    Sweep,
-    Finalize,
+    SweepAllGc,
+    SweepFinObj,
+    SweepToBeFnz,
+    SweepEnd,
+    CallFin,
     Pause,
 }
 
@@ -906,8 +912,11 @@ impl TestcGcState {
         match self {
             TestcGcState::Propagate => lua_gc::GcState::Propagate,
             TestcGcState::Atomic => lua_gc::GcState::Atomic,
-            TestcGcState::Sweep => lua_gc::GcState::Sweep,
-            TestcGcState::Finalize => lua_gc::GcState::Finalize,
+            TestcGcState::SweepAllGc => lua_gc::GcState::SweepAllGc,
+            TestcGcState::SweepFinObj => lua_gc::GcState::SweepFinObj,
+            TestcGcState::SweepToBeFnz => lua_gc::GcState::SweepToBeFnz,
+            TestcGcState::SweepEnd => lua_gc::GcState::SweepEnd,
+            TestcGcState::CallFin => lua_gc::GcState::CallFin,
             TestcGcState::Pause => lua_gc::GcState::Pause,
         }
     }
@@ -917,10 +926,11 @@ fn testc_gc_state_target(bytes: &[u8]) -> Option<TestcGcState> {
     match bytes {
         b"propagate" => Some(TestcGcState::Propagate),
         b"atomic" | b"enteratomic" => Some(TestcGcState::Atomic),
-        b"sweepallgc" | b"sweepfinobj" | b"sweeptobefnz" | b"sweepend" => {
-            Some(TestcGcState::Sweep)
-        }
-        b"callfin" => Some(TestcGcState::Finalize),
+        b"sweepallgc" => Some(TestcGcState::SweepAllGc),
+        b"sweepfinobj" => Some(TestcGcState::SweepFinObj),
+        b"sweeptobefnz" => Some(TestcGcState::SweepToBeFnz),
+        b"sweepend" => Some(TestcGcState::SweepEnd),
+        b"callfin" => Some(TestcGcState::CallFin),
         b"pause" => Some(TestcGcState::Pause),
         b"" => None,
         _ => None,

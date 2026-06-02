@@ -15,6 +15,14 @@ assert(type(stats) == "string" and stats:match("state=atomic"),
 
 T.gcstate("sweepallgc")
 assert(T.gcstate() == "sweepallgc", "FAIL: could not stop at sweep state")
+T.gcstate("sweepfinobj")
+assert(T.gcstate() == "sweepfinobj", "FAIL: could not stop at finobj sweep state")
+T.gcstate("sweeptobefnz")
+assert(T.gcstate() == "sweeptobefnz", "FAIL: could not stop at tobefnz sweep state")
+T.gcstate("sweepend")
+assert(T.gcstate() == "sweepend", "FAIL: could not stop at sweepend state")
+T.gcstate("callfin")
+assert(T.gcstate() == "callfin", "FAIL: could not stop at callfin state")
 T.gcstate("pause")
 assert(T.gcstate() == "pause", "FAIL: could not return to pause state")
 

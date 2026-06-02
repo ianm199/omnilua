@@ -39,13 +39,19 @@ cost of profiling sessions and bench commits. Use them. Don't re-derive.
 original C is not a safety tax. It's a Rust-idiom tax.**
 
 When we first benchmarked lua-rs against reference Lua 5.4.7, the overall
-wall-clock ratio was something like 5× slower on a microbench mix (and worse
-on individual workloads — a 10,473× table-ops outlier that turned out to be a
-missed fast path, not a quadratic algorithm). After two surgical fixes
-(`#t` boundary search + GC snapshot fast-path) the overall ratio dropped to
-2.61× without changing the algorithms or touching `unsafe_code = "forbid"`.
+wall-clock ratio was something like 5× slower on a microbench mix, with some
+individual workloads much worse due to missed fast paths. After two surgical
+fixes (`#t` boundary search + GC snapshot fast-path) the overall ratio dropped
+to 2.61× without changing the algorithms or touching `unsafe_code = "forbid"`.
+Later table/string/dispatch/GC work pushed individual workloads much closer:
+the PR #120 selected matrix (`20260602T122050Z-26c831f`, merged as `2d5cffe`)
+has `table_ops` at 1.25× and `table_ops_long` at 1.00× on Apple M3 Max.
+The follow-up focused pass on `binarytrees,gc_pressure,string_ops_long`
+(`20260602T132632Z-2d5cffe`) moved that focused subset from 2.67× to 2.24×.
+That is not "all workloads are done"; it is evidence that the remaining
+gap is made of concrete hot paths, not a blanket safe-Rust ceiling.
 
-Splitting that remaining 2.61× into honest components:
+Splitting the remaining non-parity gap into honest components:
 
 | Source of gap | Estimated contribution | Recoverable without `unsafe`? |
 |---|---|---|
@@ -56,6 +62,9 @@ Splitting that remaining 2.61× into honest components:
 | **`RefCell` on the hot path** — `state.global.borrow()` per opcode, `RefCell<UpValState>` per upvalue read | **~1.10–1.20×** | **yes, restructure access patterns** |
 | **Allocations in cold-but-frequent code** — e.g. the GC snapshot loop we just fixed | **~1.10–1.30×** | **yes** |
 | **Accessor methods that should be inlined field reads** — `state.get_at`, `state.ci_base`, `Instruction::opcode` | **~1.05×** | **yes** |
+| **Type erasure in known-type hot paths** — `dyn Any` barrier dispatch when the caller already has `GcRef<LuaTable>` | workload-local 1.1–2.0× | **yes, preserve semantics with typed helpers** |
+| **Compatibility data structures** — table-backed closure state where C uses userdata/upvalues | workload-local 1.05–1.20× | **yes, if GC roots stay traced** |
+| **Collector scratch churn** — HashSet growth, over-broad processed sets, intern-retention scans | workload-local 1.05–1.25× | **yes, if reachability semantics stay intact** |
 
 The bolded rows are the bulk of the remaining gap, and **none of them are
 safety taxes**. They are choices we made to satisfy the borrow checker or to
@@ -67,9 +76,8 @@ The sibling project `redis-rs-port` reached full performance parity with
 upstream Valkey through exactly the kind of disciplined hot-path work
 described in this doc. There is no fundamental reason — no law of physics,
 no inherent Rust limitation — why a faithful safe-Rust port of an
-interpreter cannot reach the same place. Every unit of the remaining
-2.5× gap has a recoverable cause; the work is to find and fix them one
-at a time.
+interpreter cannot reach the same place. Every unit of the remaining gap
+has a recoverable cause; the work is to find and fix them one at a time.
 
 What's different for an interpreter vs. a server like Valkey:
 
@@ -79,8 +87,8 @@ What's different for an interpreter vs. a server like Valkey:
   making the small CPU portion fast enough that I/O dominates again, at
   which point parity is the natural state.
 - **Lua** is pure CPU. Every nanosecond of interpreter overhead is
-  naked CPU time — there's no I/O layer to hide behind. So our
-  remaining 2.5× *is* the bottleneck, by definition.
+  naked CPU time — there's no I/O layer to hide behind. So the
+  remaining gap *is* the bottleneck, by definition.
 
 That makes the work harder per unit of improvement, but it doesn't move
 the floor. The same disciplined "find a hot-path missed fast path, fix
@@ -108,9 +116,9 @@ the dashboard:
 `state.table_length` was hand-rolling an O(n) probe loop that called
 `tbl.get_int(i)` until nil. But `LuaTable` (in `lua-types`) already had a
 proper C-Lua-style `getn()` using `alimit` + binary search, O(log n). The
-slow caller bypassed it. 4-line fix; `table_ops` dropped from 10,473× to
-5.4×, and three other workloads (`closure_ops`, `string_ops`) also moved
-because they exercised the same path indirectly.
+slow caller bypassed it. A 4-line fix moved the table workload back into a
+normal interpreter-ratio range, and three other workloads (`closure_ops`,
+`string_ops`) also moved because they exercised the same path indirectly.
 
 The forensics that found it: a `/tmp/probe_table.lua` micro-isolation
 (table.remove only, no math.random) showed pure-table-remove was 6,348×
@@ -211,6 +219,102 @@ inline, do a "macro boundary audit" before inventing a new algorithm. The
 right Rust fix is often to restore the same code-generation boundary C had:
 inline the helper, split cold paths away, or move the tiny operation back into
 the dispatch arm.
+
+### 5. `20260602T132632Z-2d5cffe` — focused safe-Rust pass on string/GC poles
+
+**Pattern:** *Keep semantics, restore the C shape, and remove scratch work that
+proved unnecessary.*
+
+Starting point after PR #120 on the current HEAD (`2d5cffe`):
+
+| workload | before |
+|---|---:|
+| binarytrees | 2.54x |
+| gc_pressure | 3.50x |
+| string_ops_long | 2.72x |
+| focused overall | 2.67x |
+
+Final focused matrix (`harness/bench/results/20260602T132632Z-2d5cffe-compare.json`):
+
+| workload | after |
+|---|---:|
+| binarytrees | 2.23x |
+| gc_pressure | 3.00x |
+| string_ops_long | 2.23x |
+| focused overall | 2.24x |
+
+What changed:
+
+- Tiny VM/table/string helpers that profile showed as leaf cost were made
+  inline-only. The helper frames disappeared on re-sample.
+- `string.gmatch` stopped using a four-slot Lua table as iterator state and
+  now mirrors C-Lua's closure shape: source string, pattern string, userdata
+  state. The userdata host payload stores only byte positions; strings remain
+  traced closure upvalues.
+- Young sweep now records only swept objects that are in the old-revisit list,
+  instead of hashing every swept object into a processed set.
+- `Heap` maintains a heap-owned object count and uses it to reserve
+  `Marker.visited` at cycle start. The scaled `gc_pressure_x100` profile no
+  longer shows `reserve_rehash` in the top 25.
+- `profile-hotspots.sh` now accepts `PROFILE_LUA_EVAL` so short workloads can
+  be sampled as scaled probes without creating throwaway workload files.
+
+What did *not* change:
+
+- No skipped GC barriers, weak-table rules, finalizer behavior, or metamethod
+  semantics.
+- No benchmark-only fast paths.
+- No new unsafe.
+- The remaining `gc_pressure` gap is real marker/table allocation work:
+  marker visited insertion/lookup, table construction, sweep/free, and
+  interned-string retention. That is not a conclusion that safe Rust is
+  exhausted; it is the next evidence-backed packet boundary.
+
+### 5. `2d5cffe` — typed table write barriers instead of `dyn Any`
+
+**Pattern:** *Don't erase a type the hot path already knows.*
+
+PR #120 started as traceback/GC scratch work, but the profiling pass exposed a
+separate table hot path: `table_ops_long` was spending most of its sampled time
+inside dynamic GC-barrier dispatch. The pre-fix sample
+(`harness/bench/profiles/20260602T121328Z-26c831f-table_ops_long/summary.txt`)
+showed:
+
+- `barrier_any`: 31.0%;
+- `barrier_child_any`: 22.9%;
+- `Any::type_id`: 7.2% across two monomorphized frames.
+
+That shape is not a Lua algorithm. It is a Rust abstraction leak: table
+mutation already has a `GcRef<LuaTable>`, but the barrier path erased the type
+to `dyn Any` and recovered it at runtime. C-Lua's barrier macros never pay a
+runtime type-id lookup for this case; the object type is known by the call
+site.
+
+Fix: add typed table-barrier paths for table mutation and raw-set call sites
+that already hold `GcRef<LuaTable>`. The barrier still runs. The child value is
+still traced. The only removed work is dynamic type recovery.
+
+After the fix, the profile
+(`harness/bench/profiles/20260602T122145Z-26c831f-table_ops_long/summary.txt`)
+had no `barrier_any`, `barrier_child_any`, or `Any::type_id` leaf frames. The
+remaining samples were real table work:
+
+- `LuaTableRefExt::raw_set_int`: 44.0%;
+- `barrier_lua_value`: 28.2%;
+- `table_lib::insert`: 21.0%;
+- `table_lib::remove`: 6.8%.
+
+Bench impact on the same Apple M3 Max runner:
+
+| workload | before | after | evidence |
+|---|---:|---:|---|
+| table_ops | 2.50× | 1.25× | `20260602T120610Z` -> `20260602T122050Z` |
+| table_ops_long | previous Linux ledger 1.78×; no same-host pre-row | 1.00× | `20260602T122050Z` |
+
+Guardrail: a tempting follow-up was to skip barriers for primitive child
+values. That was not kept; the experiment broke the warning/finalizer CLI path.
+The lesson is narrow: **avoid type erasure when the type is already statically
+known**. Do not weaken GC-barrier semantics to get the same shape.
 
 ## The patterns by name
 
@@ -324,7 +428,30 @@ after dev and release official suites stayed 44/44, moving overall 1.31x ->
 1.25x and `fibonacci` 2.07x -> 1.93x. Treat "make stale slots tidy now" as a
 performance-sensitive semantic claim, not a free safety improvement.
 
-### Pattern 6: Wall-clock sampling beats hypothesizing
+### Pattern 6: Don't erase types the hot path already knows
+
+Generic helpers are fine at API boundaries. They are expensive inside a loop
+when the caller already knows the concrete object type.
+
+The GC write barrier is the concrete example. A broad
+`barrier_any(parent: &dyn Any, child: &dyn Any)` shape let many object kinds
+share one path, but table mutation already holds `GcRef<LuaTable>`. Passing
+that through `dyn Any` forced runtime type-id checks at exactly the spot C-Lua
+spells as a tiny barrier macro. PR #120 replaced that path with typed table
+barriers and removed `barrier_any`, `barrier_child_any`, and `Any::type_id`
+from the `table_ops_long` profile.
+
+Rule: if a profiler shows `Any`, trait-object dispatch, vtable calls, erased
+enum wrappers, or dynamic downcasts in a hot path, ask whether the caller
+already has a concrete type. If it does, add a typed sibling helper and leave
+the generic helper for cold/dynamic call sites.
+
+This is not permission to skip correctness work. In the table-barrier case the
+barrier still ran; only dynamic type recovery disappeared. An attempted
+"primitive child values do not need barriers" shortcut failed a finalizer /
+warning path and was dropped.
+
+### Pattern 7: Wall-clock sampling beats hypothesizing
 
 Every meaningful win in this session came from a `/usr/bin/sample` profile
 artifact. The hypothesis "table_ops is slow because it's quadratic" was
@@ -528,10 +655,11 @@ performance parity (or close), the lessons from this one in priority order:
    allocations in cold-frequent code, accessor methods that should be
    inlined. The taxonomy table at the top of this doc applies.
 
-5. **Profile. Don't guess.** The two big wins this session both came
+5. **Profile. Don't guess.** The big wins in this port came
    from profile evidence pointing at things we wouldn't have suspected
-   (a missed fast path on `getn`, GC bookkeeping allocations). Hand
-   inspection of the code suggested different targets.
+   (a missed fast path on `getn`, GC bookkeeping allocations, dynamic
+   table-barrier dispatch). Hand inspection of the code suggested
+   different targets.
 
 6. **"Use the fast path that already exists" is the highest-leverage
    pattern.** C codebases have two impls of everything: generic for the
@@ -552,17 +680,22 @@ performance parity (or close), the lessons from this one in priority order:
    on inactive cases need the short-circuit at the outer layer, not
    inside.
 
-10. **Every commit cites its evidence.** Profile artifact path in the
+10. **Do not type-erase known hot-path objects.** Generic `dyn Any` or
+   downcast-based helpers belong at dynamic boundaries. If the caller
+   already has `GcRef<LuaTable>` or another concrete type, add a typed
+   sibling helper and preserve the same semantics.
+
+11. **Every commit cites its evidence.** Profile artifact path in the
    commit body. Dashboard row showing before/after. 44/44 oracle test
    gate. No exceptions, even on "obvious" fixes — the GC fix looked
    obvious AFTER the profile said so.
 
-10. **The interpreter is the substrate, not the endpoint.** Plan for a
+12. **The interpreter is the substrate, not the endpoint.** Plan for a
    future JIT — keep safepoints explicit, type tests cheap, semantics
    clean. None of this costs anything if the C source you're porting
    already does it.
 
-11. **`unsafe_code = "forbid"` is not the bottleneck. Sloppy idioms are.**
+13. **`unsafe_code = "forbid"` is not the bottleneck. Sloppy idioms are.**
     The gap you should worry about is the one between "Rust that
     type-checks" and "Rust that compiles to the same machine code C
     does." That gap is most of the work. Safety is rarely where the
@@ -575,8 +708,10 @@ that generalize should make their way back into "The patterns by name" or
 "Distilled rules" above. Things to add as we encounter them:
 
 - The string-library hot path investigation (next session's likely target).
-- The arith-clone refactor (when we actually do it).
+- Follow-ups enabled by primitive accessors on ORDER/BITWISE opcodes.
 - The `RefCell`-on-hot-path audit (deeper refactor when ready).
+- Remaining GC pressure allocation/accounting work after the PR #120 scratch
+  pre-sizing pass.
 - The first time we add a Cranelift dependency and emit one native opcode
   handler. (No timeline. Tier 3 baseline JIT as a thought experiment.)
 - Whatever pattern emerges from running the same playbook on

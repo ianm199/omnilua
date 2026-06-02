@@ -11,27 +11,30 @@ Every commit that claims to improve performance has to cite an artifact
 that proves it. The dashboard at `harness/bench/history/index.html` is the
 audit trail.
 
-## The reference is the floor
+## The reference is the target
 
 Upstream Lua 5.4.7 is a 30-year-old, heavily micro-optimized C
-interpreter. We will not beat it on raw throughput without a JIT or new
-unsafe. **The goal is to close the gap to a normal interpreter ratio**
-(2–8× slower), and to detect regressions early when we drift.
+interpreter. **The goal is parity-quality evidence**: ratios around 1.0× where
+the faithful safe-Rust port has no structural reason to be slower, and clear
+profile-backed explanations where it still is. Some workloads may beat C in a
+microbench shape; that is not the goal. Regressions and unexplained >2× gaps
+are backlog until measured otherwise.
 
-Today's per-workload ratios (best-of-N, Apple M3 Max, post 7682720):
+Current selected matrix (best-of-5, Apple M3 Max, latest local evidence
+`harness/bench/results/20260602T132632Z-2d5cffe-compare.json`):
 
-| workload    | wall ratio | category |
-|-------------|-----------:|----------|
-| mandelbrot  | 2.25× | float math + nested loops, near floor |
-| binarytrees | 3.23× | GC pressure under steady allocation |
-| closure_ops | 4.06× | closure allocation + upvalue access |
-| fibonacci   | 5.25× | pure call dispatch + small-integer math |
-| table_ops   | 5.40× | table insert/remove/iterate, array+hash mix |
-| string_ops  | 10×   | string concat / find / gsub / byte access |
+| workload | wall ratio | category |
+|---|---:|---|
+| table_ops_long | 1.00× | table insert/remove long run, now at parity |
+| table_ops | 1.25× | short table insert/remove/iterate, passes 1.5× gate |
+| binarytrees | 2.23× | allocation + tree traversal / GC pressure |
+| string_ops_long | 2.23× | byte-string library hot paths |
+| gc_pressure | 3.00× | allocation/collection throughput under churn |
 
-The shape of `mandelbrot ≈ 2×` tells us a tight numeric loop with no
-allocation runs within striking distance of C. The other ratios are
-mostly opportunities, not laws.
+The latest focused pass moved `binarytrees,gc_pressure,string_ops_long` from
+2.67× overall (`20260602T125546Z-2d5cffe`) to 2.24× overall. The table
+workloads are no longer the first target. The next tall poles are collector
+visited-set cost, table allocation/free throughput, and core VM dispatch.
 
 ## The gate
 
@@ -86,7 +89,10 @@ These apply to *every* perf-shaped commit:
 - **No skipped semantic correctness.** No skipped metamethod dispatch,
   no skipped GC barriers, no skipped error checks. The fix is always
   "do less work when the work is provably unnecessary," never "do the
-  same work less correctly."
+  same work less correctly." Typed fast paths are fine when they preserve the
+  same semantics; PR #120's table-barrier fast path kept the barrier and
+  removed only `dyn Any` recovery. A primitive-barrier skip experiment failed a
+  warning/finalizer path and was not kept.
 - **No new `unsafe` in core runtime crates.** The current budgeted unsafe
   surface is `lua-gc`, the existing `lua-cli` FFI backend, and the dedicated
   WASM pointer ABI crates. `lua-coro` currently has a zero budget; a stackful
@@ -214,6 +220,53 @@ too large or crosses crate boundaries, `#[inline]` may help; if the
 match is too wide, splitting the cold cases into a separate function
 (`#[cold]` + `#[inline(never)]`) often does.
 
+The 2026-06-02 focused pass applied this conservatively:
+
+- VM table/metamethod helpers (`fast_get*`, `fast_tm_table`) and string pattern
+  predicates (`classend`, `handle_class_with_suffix`, `singlematch`,
+  `match_class`) were promoted to inline-only hot helpers.
+- Profiles confirmed the helper frames disappeared, and the focused matrix
+  moved from 2.67× to 2.45× before deeper GC/string changes.
+
+### 5. Replace compatibility state with upstream-shaped state
+
+Some earlier port phases used "works for now" data structures that are
+semantically valid but structurally unlike C-Lua. Those are fair perf targets
+when a profile names them.
+
+Example: `string.gmatch` previously stored iterator state in a four-slot Lua
+table held as one closure upvalue. That kept the mutable state visible to GC,
+but every iteration paid table reads/writes and barriers. C-Lua uses three
+C-closure upvalues: source string, pattern string, and a userdata carrying
+mutable byte positions. The Rust port now mirrors that shape safely:
+
+- upvalues 1 and 2 are ordinary traced Lua strings;
+- upvalue 3 is userdata;
+- userdata `host_value` stores only `pos` and `last_match`, not GC references.
+
+This reduced `gmatch_aux` in `string_ops_long` from ~6.9% to ~2.9% and moved
+the workload from 2.51× to 2.42× before the GC bookkeeping pass.
+
+### 6. Shrink collector bookkeeping; don't weaken collector semantics
+
+GC profiles must be read with extra skepticism. A hot `HashMap` frame might be
+allocation tokens, marker visited state, weak-table retention, interned-string
+retention, or sweep bookkeeping. Use call stacks, not just leaf summaries.
+
+Two safe-Rust collector fixes survived the 2026-06-02 pass:
+
+- Young sweep no longer inserts every swept object into a `processed` set just
+  because the grayagain old-revisit list is non-empty. It tracks only swept
+  objects that are actually in the old-revisit list.
+- `Heap` now maintains a GC-box count and reserves `Marker.visited` at cycle
+  start. That removed `reserve_rehash` from the scaled `gc_pressure_x100`
+  top-25 profile.
+
+The boundary after those fixes is clearer: `gc_pressure` is still dominated by
+marker visited insertion/lookup, table allocation/free, and table construction.
+That is real collector/data-structure work, not a generic "safe Rust is
+cooked" result.
+
 C-Lua's `vmcase`/`vmbreak` macros plus its `OP_GETI` / `OP_SETI`
 opcodes are the bytecode-level expression of this discipline.
 
@@ -303,6 +356,24 @@ that ref is cheap (one refcount bump) but not free. In tight loops,
 prefer borrowing through `&LuaValue` or `&GcRef<T>` if the lifetime
 allows. Profile to see whether `Drop`/`Clone` for `LuaValue` is
 showing up.
+
+### 6. Avoid type erasure on hot paths
+
+Generic helpers are useful at public or dynamic boundaries, but they are
+usually the wrong shape inside a benchmark's inner loop. If the profile shows
+`dyn Any`, `Any::type_id`, trait-object dispatch, or downcast helpers, first
+ask whether the caller already knows the concrete type.
+
+Example (lua, applied PR #120 / `2d5cffe`): table mutation already holds
+`GcRef<LuaTable>`, but the GC write-barrier path erased that to `dyn Any` and
+recovered it at runtime. `table_ops_long` sampled at 31.0% in `barrier_any`,
+22.9% in `barrier_child_any`, plus visible `Any::type_id` frames. Adding typed
+table-barrier helpers removed those frames, moved `table_ops` from 2.50× to
+1.25× on the same Apple M3 Max runner, and left the barrier semantics intact.
+
+Packet rule: add typed sibling helpers for known-type hot paths; keep the
+generic helper for cold/dynamic sites. Do not turn this into skipped GC
+barriers, skipped metamethod checks, or benchmark-only dispatch.
 
 ## Profile discipline
 

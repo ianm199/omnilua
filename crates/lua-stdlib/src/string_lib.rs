@@ -10,11 +10,14 @@
 //!   4. Pack / unpack (`string.pack`, `string.packsize`, `string.unpack`)
 //!   5. Module registration (`luaopen_string`)
 
+use std::any::Any;
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use lua_types::error::LuaError;
 use lua_types::value::LuaValue;
 use lua_types::arith::ArithOp;
 use lua_types::{LuaType};
-use lua_vm::state::LuaTableRefExt as _;
 use crate::state_stub::{LuaState, LuaStateStubExt as _, lua_CFunction, upvalue_index};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -125,24 +128,11 @@ impl<'a> MatchState<'a> {
     }
 }
 
-/// Iterator state for `string.gmatch`.
-///
-/// Stored as userdata on the Lua stack in the C implementation; in Phase A we
-/// represent it as a plain Rust struct.
-///
-/// TODO(port): In the real port, this needs to live in a Lua userdata object
-/// so that Lua GC can see it. For now it's a plain struct passed by
-/// `state.to_userdata()`.
-#[expect(dead_code, reason = "ported stdlib helper; not yet wired into the runtime")]
-struct GMatchState {
-    /// Current position in `src` (index into the source slice).
-    src_pos: usize,
-    /// The pattern string (owned copy so it survives the closure).
-    pat: Vec<u8>,
-    /// End of the last match (to avoid zero-length infinite loops).
+struct GMatchIterState {
+    /// Current source position as a zero-based byte index.
+    pos: usize,
+    /// End of the last match, used to avoid zero-length infinite loops.
     last_match: Option<usize>,
-    /// Source string (owned copy).
-    src: Vec<u8>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -580,7 +570,7 @@ pub fn arith_unm(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// Return `true` if `c` belongs to the character class `cl` (a `%x` letter).
 ///
-#[inline]
+#[inline(always)]
 fn match_class(c: u8, cl: u8) -> bool {
     let res = match cl.to_ascii_lowercase() {
         b'a' => c.is_ascii_alphabetic(),
@@ -635,7 +625,7 @@ fn matchbracketclass(pat: &[u8], c: u8, mut p: usize, ec: usize) -> bool {
 /// Return `true` if the single character at `src[s]` matches the pattern
 /// element starting at `pat[p]` with class end at `ep`.
 ///
-#[inline]
+#[inline(always)]
 fn singlematch(ms: &MatchState, s: usize, p: usize, ep: usize) -> bool {
     if s >= ms.src.len() {
         return false;
@@ -652,6 +642,7 @@ fn singlematch(ms: &MatchState, s: usize, p: usize, ep: usize) -> bool {
 /// Find the end of the pattern element starting at `pat[p]`.
 /// Returns the index one past the element, or an error for malformed patterns.
 ///
+#[inline(always)]
 fn classend(ms: &MatchState, p: usize) -> Result<usize, LuaError> {
     let pat = ms.pat;
     match pat.get(p).copied() {
@@ -952,6 +943,7 @@ fn match_pat(ms: &mut MatchState, mut s: usize, mut p: usize) -> Result<Option<u
 ///
 /// PORT NOTE: Factored out from `match_pat`'s `default/dflt` label to share
 /// code between the ESC-default and plain-default paths.
+#[inline(always)]
 fn handle_class_with_suffix(
     ms: &mut MatchState,
     s: usize,
@@ -1205,57 +1197,35 @@ pub fn str_match(state: &mut LuaState) -> Result<usize, LuaError> {
 /// Continuation function for `string.gmatch` iterator closure.
 ///
 ///
-/// PORT NOTE: The C version stores `GMatchState` inside a heap-allocated
-/// userdata referenced by upvalue 3, then mutates fields via the raw pointer
-/// each iteration. Our Phase-A `LuaCClosure.upvalues` is immutable, so the
-/// iterator state lives in a Lua table referenced by upvalue 1 with
-/// integer-keyed slots:
-///   t[1] = source bytes (string), t[2] = pattern bytes (string),
-///   t[3] = current source position (1-based; equals `lastmatch` after a
-///   successful match), t[4] = end of last match (`0` ≡ NULL in C, meaning
-///   "no match yet").
-///
-/// PERF NOTE: The previous version pushed the upvalue table onto the stack
-/// and then issued six `raw_geti` / `raw_seti` calls plus four `to_lua_string`
-/// / `to_integer_x` reads — each of which re-resolves the stack index via
-/// `index_to_value`. That made `index_to_value` the #1 non-algorithm frame in
-/// `string_ops_long` at 9.4% of wall. The current version resolves the
-/// upvalue once via `value_at`, extracts the `GcRef<LuaTable>`, and reads /
-/// writes its integer-keyed slots directly through `LuaTableRefExt`. This is
-/// the same shape as C-Lua's `luaH_getint` / `luaH_setint` direct table ops
-/// against the embedded `GMatchState` struct fields — no stack roundtrip
-/// per probe.
+/// PORT NOTE: C stores source, pattern, and `GMatchState` as three C-closure
+/// upvalues. The Rust port mirrors that shape: upvalues 1 and 2 are traced Lua
+/// strings, and upvalue 3 is a full userdata whose host payload stores only the
+/// mutable byte positions.
 pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
-    let upval = state.value_at(upvalue_index(1));
-    let tbl = match upval {
-        LuaValue::Table(t) => t,
-        _ => return Ok(0),
-    };
-
-    let s_val = tbl.get_int(1);
-    let p_val = tbl.get_int(2);
+    let s_val = state.value_at(upvalue_index(1));
+    let p_val = state.value_at(upvalue_index(2));
     let (LuaValue::Str(s_str), LuaValue::Str(p_str)) = (&s_val, &p_val) else {
         return Ok(0);
     };
+    let iter_val = state.value_at(upvalue_index(3));
+    let LuaValue::UserData(iter_ud) = iter_val else {
+        return Ok(0);
+    };
+    let Some(host) = iter_ud.host_value() else {
+        return Ok(0);
+    };
+    let Ok(iter_state) = host.downcast::<RefCell<GMatchIterState>>() else {
+        return Ok(0);
+    };
+
     let s: &[u8] = s_str.as_bytes();
     let p: &[u8] = p_str.as_bytes();
-
-    let pos = match tbl.get_int(3) {
-        LuaValue::Int(n) => n,
-        _ => 1,
-    };
-    let lastmatch_raw = match tbl.get_int(4) {
-        LuaValue::Int(n) => n,
-        _ => 0,
-    };
-    let last_match: Option<usize> = if lastmatch_raw <= 0 {
-        None
-    } else {
-        Some((lastmatch_raw - 1) as usize)
+    let (start_pos, last_match) = {
+        let iter = iter_state.borrow();
+        (iter.pos, iter.last_match)
     };
 
     let ls = s.len();
-    let start_pos = if pos < 1 { 0usize } else { (pos - 1) as usize };
 
     let step_limit = state.sandbox_match_step_limit();
     let mut ms = MatchState::new(s, p, step_limit);
@@ -1281,9 +1251,11 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
     }
 
     if let Some((src, e)) = hit {
-        let e_val = LuaValue::Int((e + 1) as i64);
-        tbl.raw_set_int(state, 3, e_val.clone())?;
-        tbl.raw_set_int(state, 4, e_val)?;
+        {
+            let mut iter = iter_state.borrow_mut();
+            iter.pos = e;
+            iter.last_match = Some(e);
+        }
         return push_captures(state, &ms, Some((src, e)));
     }
 
@@ -1294,9 +1266,8 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 ///
 /// PORT NOTE: C uses `lua_newuserdatauv` for the GMatchState plus a 3-upvalue
-/// C closure. The port keeps the iterator state in a 4-element Lua table held
-/// in a single upvalue (see `gmatch_aux`) so the matcher can update all fields
-/// through the existing table mutation path.
+/// C closure. The port stores the two strings as traced closure upvalues and
+/// the mutable byte positions in the userdata host payload.
 pub fn gmatch(state: &mut LuaState) -> Result<usize, LuaError> {
     let s_ref = match state.to_lua_string(1) {
         Some(r) => r,
@@ -1321,18 +1292,16 @@ pub fn gmatch(state: &mut LuaState) -> Result<usize, LuaError> {
 
     lua_vm::api::set_top(state, 2)?;
 
-    state.create_table(4, 0)?;
-    let tbl_idx = state.top();
     state.push_value_at(1)?;
-    state.raw_seti(tbl_idx, 1)?;
     state.push_value_at(2)?;
-    state.raw_seti(tbl_idx, 2)?;
-    state.push(LuaValue::Int((init + 1) as i64));
-    state.raw_seti(tbl_idx, 3)?;
-    state.push(LuaValue::Int(0));
-    state.raw_seti(tbl_idx, 4)?;
+    let iter_ud = state.new_userdata_typed(b"string.gmatch.state", 0, 0)?;
+    let iter_state: Rc<dyn Any> = Rc::new(RefCell::new(GMatchIterState {
+        pos: init,
+        last_match: None,
+    }));
+    iter_ud.set_host_value(Some(iter_state));
 
-    state.push_c_closure(gmatch_aux, 1)?;
+    state.push_c_closure(gmatch_aux, 3)?;
     Ok(1)
 }
 
@@ -2790,9 +2759,10 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //   notes:         Pattern engine uses index-based MatchState (not raw ptrs).
 //                  string.format delegates numeric widths/precision/flags to
 //                  Phase B (a sprintf-compatible crate or manual impl).
-//                  gmatch iterator state holds a 4-element Lua table in the
-//                  closure's single upvalue (src, pat, pos, lastmatch) instead
-//                  of the C-Lua GMatchState userdata. See gmatch_aux.
+//                  gmatch iterator state mirrors C-Lua's closure shape:
+//                  source string, pattern string, and userdata state. The
+//                  userdata host payload stores only byte positions; strings
+//                  stay as traced closure upvalues. See gmatch_aux.
 //                  copywithendian uses safe byte-level swapping (no transmute).
 //                  unpackint sign-extension uses two's-complement bit tricks;
 //                  logic review needed in Phase B.
@@ -2806,12 +2776,8 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //                  check_arg_string, mirroring the gmatch_aux fix (685482d).
 //                  string_ops 3.00x→2.00x, string_ops_long 2.25x→1.48x on
 //                  best-of-5 (Apple M3 Max).
-//                  gmatch_aux reads / writes its 4-slot state table directly
-//                  through LuaTableRefExt::{get_int, raw_set_int} after a
-//                  single value_at(upvalue_index(1)) resolution, replacing
-//                  six raw_geti / raw_seti + four to_lua_string / to_integer_x
-//                  calls that each re-resolved the stack index via
-//                  index_to_value. Drops string_ops_long 1.58x→1.38x
-//                  (below the 1.5x parity threshold) and index_to_value share
-//                  9.4%→2.0% on Apple M3 Max best-of-5.
+//                  gmatch_aux originally moved from stack raw_geti/raw_seti to
+//                  direct table slots, then later from table state to C-shaped
+//                  userdata/upvalues. The latter pass dropped gmatch_aux's
+//                  string_ops_long profile share from ~6.9% to ~2.9%.
 // ────────────────────────────────────────────────────────────────────────────

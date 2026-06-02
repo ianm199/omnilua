@@ -18,6 +18,8 @@
 #   bash harness/bench/profile-hotspots.sh fibonacci
 #   bash harness/bench/profile-hotspots.sh fibonacci 8   # sample 8s
 #   SAMPLE_SECONDS=12 bash harness/bench/profile-hotspots.sh string_ops
+#   PROFILE_LUA_EVAL='for i=1,100 do dofile("...") end' \
+#     bash harness/bench/profile-hotspots.sh gc_pressure_x100 6
 
 set -euo pipefail
 
@@ -28,9 +30,12 @@ WORKLOAD="${1:?usage: $0 <workload-name> [seconds]}"
 SAMPLE_SECONDS="${2:-${SAMPLE_SECONDS:-6}}"
 RS_BIN="$ROOT/target/release/lua-rs"
 WORKLOAD_FILE="$ROOT/harness/bench/workloads/${WORKLOAD}.lua"
+PROFILE_LUA_EVAL="${PROFILE_LUA_EVAL:-}"
 
 [ -x "$RS_BIN" ] || { echo "[err] release binary missing: $RS_BIN — run cargo build --release -p lua-cli with frame pointers" >&2; exit 2; }
-[ -f "$WORKLOAD_FILE" ] || { echo "[err] workload not found: $WORKLOAD_FILE" >&2; exit 2; }
+if [ -z "$PROFILE_LUA_EVAL" ]; then
+    [ -f "$WORKLOAD_FILE" ] || { echo "[err] workload not found: $WORKLOAD_FILE" >&2; exit 2; }
+fi
 SAMPLE_BIN="/usr/bin/sample"
 [ -x "$SAMPLE_BIN" ] || { echo "[err] $SAMPLE_BIN not found (macOS-only)" >&2; exit 2; }
 
@@ -41,8 +46,13 @@ mkdir -p "$OUT_DIR"
 SAMPLE_OUT="$OUT_DIR/sample.txt"
 SUMMARY="$OUT_DIR/summary.txt"
 
-echo "==> spawning $RS_BIN $WORKLOAD_FILE" >&2
-"$RS_BIN" "$WORKLOAD_FILE" >/dev/null 2>&1 &
+if [ -n "$PROFILE_LUA_EVAL" ]; then
+    echo "==> spawning $RS_BIN -e <PROFILE_LUA_EVAL>" >&2
+    "$RS_BIN" -e "$PROFILE_LUA_EVAL" >/dev/null 2>&1 &
+else
+    echo "==> spawning $RS_BIN $WORKLOAD_FILE" >&2
+    "$RS_BIN" "$WORKLOAD_FILE" >/dev/null 2>&1 &
+fi
 PID=$!
 trap 'kill "$PID" 2>/dev/null || true' EXIT
 

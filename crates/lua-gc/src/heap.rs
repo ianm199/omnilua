@@ -955,6 +955,46 @@ impl SweepStats {
     }
 }
 
+struct OldRevisitTracker {
+    old_revisit_ids: Vec<usize>,
+    processed_ids: Vec<usize>,
+}
+
+impl OldRevisitTracker {
+    fn new(old_revisit: &[NonNull<GcBox<dyn Trace>>]) -> Option<Self> {
+        if old_revisit.is_empty() {
+            return None;
+        }
+        let mut old_revisit_ids: Vec<usize> = old_revisit
+            .iter()
+            .map(|ptr| ptr.as_ptr() as *const () as usize)
+            .collect();
+        old_revisit_ids.sort_unstable();
+        old_revisit_ids.dedup();
+        Some(Self {
+            old_revisit_ids,
+            processed_ids: Vec::new(),
+        })
+    }
+
+    #[inline(always)]
+    fn record_processed(&mut self, id: usize) {
+        if self.old_revisit_ids.binary_search(&id).is_ok() {
+            self.processed_ids.push(id);
+        }
+    }
+
+    fn finish(&mut self) {
+        self.processed_ids.sort_unstable();
+        self.processed_ids.dedup();
+    }
+
+    #[inline(always)]
+    fn was_processed(&self, id: usize) -> bool {
+        self.processed_ids.binary_search(&id).is_ok()
+    }
+}
+
 /// Diagnostic counts for the allgc list split by generational cursors.
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub struct AllGcCohortStats {
@@ -979,21 +1019,21 @@ pub struct Marker {
 }
 
 impl Marker {
-    fn new() -> Self {
-        Self::new_with_mode(MarkerMode::Full)
-    }
-
-    fn new_minor() -> Self {
-        Self::new_with_mode(MarkerMode::Minor)
-    }
-
-    fn new_with_mode(mode: MarkerMode) -> Self {
+    fn new_with_capacity(mode: MarkerMode, capacity: usize) -> Self {
         Self {
             gray_queue: Vec::with_capacity(256),
-            visited: std::collections::HashSet::new(),
+            visited: std::collections::HashSet::with_capacity(capacity),
             stats: MarkerStats::default(),
             mode,
         }
+    }
+
+    fn new_reserving(capacity: usize) -> Self {
+        Self::new_with_capacity(MarkerMode::Full, capacity)
+    }
+
+    fn new_minor_reserving(capacity: usize) -> Self {
+        Self::new_with_capacity(MarkerMode::Minor, capacity)
     }
 
     fn should_trace_age(&self, age: GcAge) -> bool {
@@ -1225,6 +1265,8 @@ pub struct Heap {
     finobjrold: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
     /// Total bytes allocated (sum of header sizes; rough).
     bytes: Cell<usize>,
+    /// Number of currently heap-owned GC boxes across all owner lists.
+    objects: Cell<usize>,
     /// White bit used for new allocations and for survivors after a sweep.
     current_white: Cell<Color>,
     /// Heap-owned allocation tokens keyed by box address. Weak handles store
@@ -1286,6 +1328,7 @@ impl Heap {
             finobjold1: Cell::new(None),
             finobjrold: Cell::new(None),
             bytes: Cell::new(0),
+            objects: Cell::new(0),
             current_white: Cell::new(Color::White0),
             allocation_tokens: RefCell::new(HashMap::new()),
             next_allocation_token: Cell::new(1),
@@ -1338,6 +1381,7 @@ impl Heap {
             .insert(identity, token);
         self.head.set(Some(dyn_ptr));
         self.bytes.set(self.bytes.get() + size);
+        self.objects.set(self.objects.get() + 1);
         Gc {
             ptr,
             _marker: PhantomData,
@@ -1845,7 +1889,7 @@ impl Heap {
         if self.paused.get() {
             return;
         }
-        let mut marker = Marker::new();
+        let mut marker = Marker::new_reserving(self.objects.get());
         roots.trace(&mut marker);
         marker.drain_gray_queue();
         post_mark(&mut marker);
@@ -1893,7 +1937,7 @@ impl Heap {
         }
 
         self.state.set(GcState::Propagate);
-        let mut marker = Marker::new_minor();
+        let mut marker = Marker::new_minor_reserving(self.objects.get());
         self.last_sweep_stats.set(SweepStats::default());
         self.mark_minor_revisit_objects(&mut marker);
         roots.trace(&mut marker);
@@ -2134,7 +2178,7 @@ impl Heap {
         self.for_each_header(|header| {
             header.color.set(dead_white);
         });
-        let mut marker = Marker::new();
+        let mut marker = Marker::new_reserving(self.objects.get());
         roots.trace(&mut marker);
         *self.marker.borrow_mut() = Some(marker);
         self.sweep_prev_next.set(None);
@@ -2216,6 +2260,7 @@ impl Heap {
                 self.allocation_tokens
                     .borrow_mut()
                     .remove(&(ptr.as_ptr() as *const () as usize));
+                self.objects.set(self.objects.get().saturating_sub(1));
                 unsafe {
                     let _ = Box::from_raw(ptr.as_ptr());
                 }
@@ -2263,7 +2308,7 @@ impl Heap {
         limit: Option<NonNull<GcBox<dyn Trace>>>,
         next_revisit: &mut Vec<NonNull<GcBox<dyn Trace>>>,
         next_revisit_seen: &mut HashSet<usize>,
-        processed: &mut Option<HashSet<usize>>,
+        processed: &mut Option<OldRevisitTracker>,
         firstold1: &mut Option<NonNull<GcBox<dyn Trace>>>,
         freed_bytes: &mut usize,
         stats: &mut SweepStats,
@@ -2285,7 +2330,7 @@ impl Heap {
             let age = header.age.get();
             stats.record_visit(age);
             if let Some(processed) = processed.as_mut() {
-                processed.insert(ptr.as_ptr() as *const () as usize);
+                processed.record_processed(ptr.as_ptr() as *const () as usize);
             }
             if header.color.get().is_white() && !age.is_old() {
                 prev_cell.set(next);
@@ -2296,6 +2341,7 @@ impl Heap {
                 self.allocation_tokens
                     .borrow_mut()
                     .remove(&(ptr.as_ptr() as *const () as usize));
+                self.objects.set(self.objects.get().saturating_sub(1));
                 unsafe {
                     let _ = Box::from_raw(ptr.as_ptr());
                 }
@@ -2326,11 +2372,7 @@ impl Heap {
         let mut firstold1 = None;
         let mut stats = SweepStats::default();
         let old_revisit = self.take_grayagain();
-        let mut processed = if old_revisit.is_empty() {
-            None
-        } else {
-            Some(HashSet::new())
-        };
+        let mut processed = OldRevisitTracker::new(&old_revisit);
         let survival = self.survival.get();
         let old1 = self.old1.get();
 
@@ -2389,11 +2431,13 @@ impl Heap {
             &mut stats,
         );
 
+        if let Some(processed) = processed.as_mut() {
+            processed.finish();
+        }
+
         for ptr in old_revisit {
-            if processed
-                .as_ref()
-                .is_some_and(|processed| processed.contains(&(ptr.as_ptr() as *const () as usize)))
-            {
+            let id = ptr.as_ptr() as *const () as usize;
+            if processed.as_ref().is_some_and(|processed| processed.was_processed(id)) {
                 continue;
             }
             stats.revisit += 1;
@@ -2474,14 +2518,9 @@ impl Heap {
         self.state.get()
     }
 
-    /// Approximate number of live GC boxes, computed by walking all heap owner
-    /// lists. Linear in heap size; used for cycle-cost estimation and tests.
+    /// Approximate number of live GC boxes across all heap owner lists.
     pub fn allgc_count(&self) -> usize {
-        let mut count = 0usize;
-        self.for_each_header(|_| {
-            count += 1;
-        });
-        count
+        self.objects.get()
     }
 
     /// Count live allgc objects whose concrete Rust type name matches
@@ -2510,6 +2549,7 @@ impl Heap {
         self.drop_list(&self.finobj);
         self.drop_list(&self.tobefnz);
         self.bytes.set(0);
+        self.objects.set(0);
     }
 
     fn drop_list(&self, list: &Cell<Option<NonNull<GcBox<dyn Trace>>>>) {

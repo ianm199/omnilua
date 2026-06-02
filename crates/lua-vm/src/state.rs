@@ -3103,22 +3103,26 @@ impl LuaState {
         if sz == 0 { None } else { Some((out, sz)) }
     }
 
+    #[inline(always)]
     pub fn fast_get(&mut self, t: &LuaValue, k: &LuaValue) -> Result<Option<LuaValue>, LuaError> {
         let LuaValue::Table(tbl) = t else { return Ok(None); };
         let v = tbl.get(k);
         if matches!(v, LuaValue::Nil) { Ok(None) } else { Ok(Some(v)) }
     }
+    #[inline(always)]
     pub fn fast_get_int(&mut self, t: &LuaValue, k: i64) -> Result<Option<LuaValue>, LuaError> {
         let LuaValue::Table(tbl) = t else { return Ok(None); };
         let v = tbl.get_int(k);
         if matches!(v, LuaValue::Nil) { Ok(None) } else { Ok(Some(v)) }
     }
+    #[inline(always)]
     pub fn fast_get_short_str(&mut self, t: &LuaValue, k: &LuaValue) -> Result<Option<LuaValue>, LuaError> {
         let LuaValue::Table(tbl) = t else { return Ok(None); };
         let LuaValue::Str(s) = k else { return Ok(None); };
         let v = tbl.get_short_str(s);
         if matches!(v, LuaValue::Nil) { Ok(None) } else { Ok(Some(v)) }
     }
+    #[inline(always)]
     pub fn fast_tm_table(&mut self, t: Option<&GcRef<LuaTable>>, tm: TagMethod) -> LuaValue {
         let Some(mt) = t else { return LuaValue::Nil; };
         debug_assert!((tm as u8) <= TagMethod::Eq as u8);

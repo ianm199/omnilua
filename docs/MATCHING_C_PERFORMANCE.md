@@ -601,6 +601,10 @@ Tool gaps:
 
 - `sample` plus `vm-execute.txt` still leaves `UNKNOWN_INLINED` samples and
   cannot provide exact per-op timing.
+- `vm-execute-attribution.py` now records `execute_source_nodes` and warns
+  when `sample` has no source-line data for `lua_vm::vm::execute`. Without
+  `CARGO_PROFILE_RELEASE_DEBUG=true` and frame pointers, the profiler may show
+  a top `execute` symbol but still be unable to bucket VM time.
 - `opcode-profile.sh` gives execution counts but not time per opcode.
 - `gc-profile.sh` gives end-of-run counters but not allocation stack
   attribution or cumulative per-phase timing.

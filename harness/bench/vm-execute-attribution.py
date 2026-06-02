@@ -187,10 +187,13 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
     total_thread_samples = sum(root.count for root in roots) or 1
 
     execute_nodes = 0
+    execute_nodes_with_source = 0
     for node in walk(roots):
         if not node.frame.startswith("lua_vm::vm::execute"):
             continue
         execute_nodes += 1
+        if node.file is not None and node.line is not None:
+            execute_nodes_with_source += 1
         region = region_for_line(regions, node.file, node.line)
         region_self[region] += node.self_count
         region_inclusive[region] += node.count
@@ -204,7 +207,14 @@ def render(sample: pathlib.Path, source: pathlib.Path) -> str:
     lines.append(f"source:                {source}")
     lines.append(f"thread_samples:        {total_thread_samples}")
     lines.append(f"execute_nodes:         {execute_nodes}")
+    lines.append(f"execute_source_nodes:  {execute_nodes_with_source}")
     lines.append(f"execute_self_samples:  {sum(region_self.values())}")
+    if execute_nodes > 0 and execute_nodes_with_source == 0:
+        lines.append(
+            "warning: no source-line data found for lua_vm::vm::execute; "
+            "rebuild with CARGO_PROFILE_RELEASE_DEBUG=true and "
+            'RUSTFLAGS="-C force-frame-pointers=yes" before profiling'
+        )
     lines.append("")
     lines.append("VM execute self samples by source/opcode region:")
     lines.append(f"  {'count':>8}  {'vm_pct':>6}  {'thread_pct':>10}  region")

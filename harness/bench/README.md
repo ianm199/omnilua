@@ -154,6 +154,16 @@ such as dispatch, `OP_CALL`, `OP_GETUPVAL`, and `OP_SETUPVAL`. Use
 `opcode-profile.sh` when you need execution counts; use `vm-execute.txt` when
 you need approximate time attribution inside the interpreter loop.
 
+If `vm-execute.txt` warns that no `lua_vm::vm::execute` source-line data was
+found, the profile can still show top symbols but cannot attribute VM buckets.
+Rebuild before profiling:
+
+```bash
+CARGO_PROFILE_RELEASE_DEBUG=true \
+RUSTFLAGS="-C force-frame-pointers=yes" \
+  cargo build --release -p lua-cli
+```
+
 `opcode-profile.sh` is a feature-gated VM opcode counter for cases where stack
 sampling collapses into `vm::execute`:
 

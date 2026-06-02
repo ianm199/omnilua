@@ -143,5 +143,8 @@ if grep -q "lua_vm::vm::execute" "$SAMPLE_OUT"; then
         "$SAMPLE_OUT" \
         --source "$ROOT/crates/lua-vm/src/vm.rs" \
         --output "$VM_EXECUTE"
+    if grep -q '^warning:' "$VM_EXECUTE"; then
+        sed -n 's/^warning: /[warn] /p' "$VM_EXECUTE" >&2
+    fi
     echo "==> vm execute attribution: $VM_EXECUTE" >&2
 fi

@@ -3468,6 +3468,8 @@ where
 {
     if generational && matches!(kind, BarrierKind::Forward) {
         heap.generational_forward_barrier(parent.0, child.0);
+    } else if matches!(kind, BarrierKind::Backward) {
+        heap.barrier_back(parent.0, child.0);
     } else {
         heap.barrier(parent.0, child.0);
     }
@@ -3828,6 +3830,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(std::collections::HashSet::new());
         let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
+        let finalizing_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
         let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
@@ -3864,6 +3868,7 @@ impl<'a> GcHandle<'a> {
                 for pf in &pending_snapshot {
                     if !marker.is_visited(pf.identity()) {
                         pf.mark(marker);
+                        finalizing_ids.borrow_mut().insert(pf.identity());
                         newly_unreachable.borrow_mut().push(pf.clone());
                     }
                 }
@@ -3890,7 +3895,13 @@ impl<'a> GcHandle<'a> {
                 for t in &weak_tables_snapshot {
                     let id = t.identity();
                     if marker.is_visited(id) {
-                        let to_mark = t.prune_weak_dead(&|id| marker.is_visited(id));
+                        let to_mark = {
+                            let finalizing = finalizing_ids.borrow();
+                            t.prune_weak_dead_with(
+                                &|id| marker.is_visited(id),
+                                &|id| marker.is_visited(id) && !finalizing.contains(&id),
+                            )
+                        };
                         for v in &to_mark {
                             v.trace(marker);
                         }
@@ -4043,6 +4054,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(std::collections::HashSet::new());
         let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
+        let finalizing_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
         let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
@@ -4079,6 +4092,7 @@ impl<'a> GcHandle<'a> {
                 for pf in &pending_snapshot {
                     if !marker.is_visited(pf.identity()) {
                         pf.mark(marker);
+                        finalizing_ids.borrow_mut().insert(pf.identity());
                         newly_unreachable.borrow_mut().push(pf.clone());
                     }
                 }
@@ -4105,7 +4119,13 @@ impl<'a> GcHandle<'a> {
                 for t in &weak_tables_snapshot {
                     let id = t.identity();
                     if marker.is_visited(id) {
-                        let to_mark = t.prune_weak_dead(&|id| marker.is_visited(id));
+                        let to_mark = {
+                            let finalizing = finalizing_ids.borrow();
+                            t.prune_weak_dead_with(
+                                &|id| marker.is_visited(id),
+                                &|id| marker.is_visited(id) && !finalizing.contains(&id),
+                            )
+                        };
                         for v in &to_mark {
                             v.trace(marker);
                         }

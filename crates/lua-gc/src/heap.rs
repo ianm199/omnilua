@@ -856,6 +856,32 @@ impl Heap {
         }
     }
 
+    /// Backward barrier: if a black object receives a reference to a white
+    /// child, gray the parent so the in-progress cycle will rescan it.
+    pub fn barrier_back<P, C>(&self, parent: Gc<P>, child: Gc<C>)
+    where
+        P: Trace + 'static,
+        C: Trace + 'static,
+    {
+        if self.paused.get() || self.state.get().is_pause() {
+            return;
+        }
+        if parent.header().color.get() != Color::Black {
+            return;
+        }
+        if !child.header().color.get().is_white() {
+            return;
+        }
+        parent.header().color.set(Color::Gray);
+        if let Ok(mut m_opt) = self.marker.try_borrow_mut() {
+            if let Some(m) = m_opt.as_mut() {
+                let ptr: NonNull<GcBox<dyn Trace>> = parent.ptr;
+                m.gray_queue.push(ptr);
+                m.visited.insert(parent.identity());
+            }
+        }
+    }
+
     /// Generational forward barrier: if an old object receives a reference to a
     /// young object, the child cannot jump directly to OLD because it may still
     /// point at younger objects. Lua marks it OLD0 so later young collections

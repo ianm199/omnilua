@@ -1431,6 +1431,18 @@ impl LuaTable {
     /// and return the list of values whose strings must still be
     /// marked by the caller.
     pub fn prune_weak_dead(&self, is_reachable: &dyn Fn(usize) -> bool) -> Vec<LuaValue> {
+        self.prune_weak_dead_with(is_reachable, is_reachable)
+    }
+
+    /// Variant of [`Self::prune_weak_dead`] that allows key and value sides to
+    /// use different liveness predicates. Lua keeps objects pending finalization
+    /// visible as weak keys until their `__gc` runs, but clears them from weak
+    /// values before the finalizer.
+    pub fn prune_weak_dead_with(
+        &self,
+        is_key_reachable: &dyn Fn(usize) -> bool,
+        is_value_reachable: &dyn Fn(usize) -> bool,
+    ) -> Vec<LuaValue> {
         let mode = self.weak_mode.get();
         if mode == 0 { return Vec::new(); }
         let weak_k = (mode & WEAK_KEYS) != 0;
@@ -1440,7 +1452,7 @@ impl LuaTable {
         for i in 0..inner.array.len() {
             let v = inner.array[i].clone();
             if matches!(v, LuaValue::Nil) { continue; }
-            if weak_v && value_is_dead_collectable(&v, is_reachable) {
+            if weak_v && value_is_dead_collectable(&v, is_value_reachable) {
                 inner.array[i] = LuaValue::Nil;
                 continue;
             }
@@ -1456,11 +1468,11 @@ impl LuaTable {
                 continue;
             }
             let k = inner.node[i].key.clone();
-            if weak_v && value_is_dead_collectable(&v, is_reachable) {
+            if weak_v && value_is_dead_collectable(&v, is_value_reachable) {
                 inner.clear_dead_hash_node(i);
                 continue;
             }
-            if weak_k && value_is_dead_collectable(&k, is_reachable) {
+            if weak_k && value_is_dead_collectable(&k, is_key_reachable) {
                 inner.clear_dead_hash_node(i);
                 continue;
             }

@@ -14,3 +14,7 @@ canary_g_testc_gcstate	incremental	PASS	-
 canary_g_testc_gcstate	generational	PASS	-
 canary_h_testc_warn_store	incremental	PASS	-
 canary_h_testc_warn_store	generational	PASS	-
+canary_i_testc_weak_finalizer_values	incremental	PASS	-
+canary_i_testc_weak_finalizer_values	generational	PASS	-
+canary_j_testc_sweep_uservalue_barrier	incremental	PASS	-
+canary_j_testc_sweep_uservalue_barrier	generational	PASS	-

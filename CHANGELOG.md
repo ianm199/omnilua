@@ -4,6 +4,28 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.25] - 2026-06-01
+
+### Fixed
+
+- **debug** (#92): version-gated line-hook (`debug.sethook(f,"l")`) fidelity.
+  Lua 5.5 folds the conditional `TEST`/`JMP` of an `if`/`elseif` onto the
+  condition-expression line, so a multi-line `if/<cond>/then` no longer fires a
+  separate `then`-line event (5.1–5.4 keep it). On 5.1/5.2/5.3 a numeric `for`
+  now fires a line event on every iteration's back-edge — the legacy
+  FORPREP-jumps-to-the-bottom-test loop shape — where 5.4/5.5 fire once per
+  iteration. Verified byte-for-byte against the Lua 5.3.6 and 5.4.7 references.
+- **lexer** (#105): Lua 5.1 quotes the special multi-char tokens (`<eof>`,
+  `<name>`, `<number>`, `<string>`) in syntax-error messages
+  (`'<name>' expected near '<eof>'`), matching 5.1's unconditional `LUA_QS`
+  wrapping; 5.2+ leave them bare.
+
+### Added
+
+- **reference**: pinned upstream Lua 5.3.6 (with the 5.3.4 test bundle) as a
+  secondary behavioral oracle for version-gated 5.1/5.2/5.3 work
+  (`reference/lua-5.3.6/`, source committed, binaries built locally).
+
 ## [0.0.24] - 2026-06-01
 
 ### Fixed

@@ -36,6 +36,9 @@ The current tree is no longer only startup/default scaffolding:
   `callfin` as a real work phase: atomic promotion can stop there with
   to-be-finalized objects, the step path dispatches up to the 5.4 `GCFINMAX`
   finalizers, and an empty `callfin` step finishes the cycle back to pause.
+- The Lua-facing generational `collectgarbage("step", 0)` path now mirrors
+  `finishgencycle`: a minor collection drains pending finalizers before the
+  call returns, and the finalizer cohort canary records `tobefin=0` afterward.
 - VM stores route through active forward/backward barriers, including table
   writes, userdata uservalues, closure upvalues, and cross-thread upvalues.
 - `lua-gc` has dual-white colors and generational age metadata; the canary and
@@ -244,6 +247,10 @@ Deliverables:
   dispatch bounded to-be-finalized work from that phase, and only finish the
   cycle after the queue is empty. `canary_o_testc_callfin_finalizers.lua` pins
   that behavior.
+- Done for the current overlay: explicit generational minor steps drain
+  pending finalizers before returning, matching `finishgencycle`. The finalizer
+  cohort canary now pins that an unreachable young finalizer runs and does not
+  remain queued in `tobefnz`.
 - Separate, mark, run, and sweep finalizers from collector phases.
 - Preserve per-version finalizer error behavior.
 

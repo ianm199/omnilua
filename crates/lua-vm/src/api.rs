@@ -2043,6 +2043,11 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             let gen_mode = state.global().is_gen_mode();
             let cycle_complete = if gen_mode {
                 state.gc().generational_step();
+                if state.global().finalizers.has_to_be_finalized() {
+                    if let Err(e) = run_pending_finalizers_inner(state, true) {
+                        state.global_mut().gc_finalizer_error = Some(e.into_value());
+                    }
+                }
                 debt_for_result > 0 && state.global().gc_at_pause()
             } else if state.global().heap.gc_state() == lua_gc::GcState::CallFin
                 && state.global().finalizers.has_to_be_finalized()

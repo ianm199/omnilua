@@ -45,14 +45,15 @@ assert(statnum(after_young, "finobjscan") > statnum(after_old, "finobjscan"),
 
 young = nil
 collectgarbage("step", 0)
+assert(ran == 1, "FAIL: minor step did not run unreachable young finalizer")
 
 local after_minor = T.gcstats()
 assert(statnum(after_minor, "pendingfinold") >= statnum(after_old, "pendingfinold"),
        "FAIL: minor step moved rooted old finalizer out of pending cohort")
 assert(statnum(after_minor, "finobjscan") == statnum(after_old, "finobjscan"),
        "FAIL: minor step did not remove unreachable young finalizer from scan cohort")
-assert(statnum(after_minor, "tobefinyoung") > statnum(after_young, "tobefinyoung"),
-       "FAIL: unreachable young finalizer did not move to to-be-finalized cohort")
+assert(statnum(after_minor, "tobefinyoung") == statnum(after_young, "tobefinyoung"),
+       "FAIL: minor step left young finalizer queued after finishgencycle")
 
 old.keepalive = true
 T.checkmemory()

@@ -657,6 +657,14 @@ Follow-up rejected call/frame spikes:
   `closure_ops` to 1.88x and `fibonacci` to 1.83x, but regressed
   `binarytrees` to 2.02x. It was dropped. The signal is that cached frame data
   has to avoid per-call write cost.
+- Returning `(CallInfoIdx, GcRef<LuaLClosure>)` from `precall` and carrying the
+  already-matched closure into the immediate next `execute` frame avoided the
+  per-frame cached-closure write, but failed correctness before benchmarking.
+  `cargo check -p lua-vm`, `cargo test -p lua-vm --lib`, `calls.lua`, and
+  `coroutine.lua` passed; the debug-hook-heavy `db.lua` official runner
+  segfaulted before execution completed. It was dropped. The signal is that a
+  lower-write active-frame design must account for hook/resume/debug state, not
+  only the direct no-hook recursive call path.
 - Co-loading `CallInfo.func` and `savedpc` at frame entry was behavior-neutral
   and performance-neutral. The best-of-5 focused matrix
   (`harness/bench/results/20260602T190952Z-89161f2-compare.tsv`) matched the

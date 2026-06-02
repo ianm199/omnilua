@@ -151,6 +151,20 @@ impl FinalizerObject {
             FinalizerObject::UserData(u) => u.0.age(),
         }
     }
+
+    pub fn is_finalized(&self) -> bool {
+        match self {
+            FinalizerObject::Table(t) => t.0.is_finalized(),
+            FinalizerObject::UserData(u) => u.0.is_finalized(),
+        }
+    }
+
+    pub fn set_finalized(&self, finalized: bool) {
+        match self {
+            FinalizerObject::Table(t) => t.0.set_finalized(finalized),
+            FinalizerObject::UserData(u) => u.0.set_finalized(finalized),
+        }
+    }
 }
 
 impl lua_gc::FinalizerEntry for FinalizerObject {
@@ -160,6 +174,14 @@ impl lua_gc::FinalizerEntry for FinalizerObject {
 
     fn age(&self) -> lua_gc::GcAge {
         FinalizerObject::age(self)
+    }
+
+    fn is_finalized(&self) -> bool {
+        FinalizerObject::is_finalized(self)
+    }
+
+    fn set_finalized(&self, finalized: bool) {
+        FinalizerObject::set_finalized(self, finalized);
     }
 }
 

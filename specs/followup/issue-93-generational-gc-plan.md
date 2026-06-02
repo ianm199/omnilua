@@ -87,9 +87,11 @@ The real generational collector is still not complete:
 - Finalizers now live behind a generic `lua-gc::FinalizerRegistry<T>` with
   pending/to-be-finalized list mechanics, `finobjsur`/`finobjold1`/`finobjrold`
   cohort boundaries, and minor-scan selection owned by the collector crate.
-  `lua-vm::FinalizerObject` implements the small `FinalizerEntry` trait.
-  Remaining parity gap: finalizable objects are still an overlay on the heap's
-  `allgc` chain, not a true intrusive `finobj`/`tobefnz` ownership split.
+  `lua-vm::FinalizerObject` implements the small `FinalizerEntry` trait, and
+  the heap header's finalized bit now mirrors C-Lua's `FINALIZEDBIT` while an
+  object is registered in pending/to-be-finalized lists. Remaining parity gap:
+  finalizable objects are still an overlay on the heap's `allgc` chain, not a
+  true intrusive `finobj`/`tobefnz` ownership split.
 - Weak/ephemeron handling is correct enough for the current gates. Weak-table
   registry mechanics are now collector-owned, but weak/ephemeron table
   classification and mark/prune processing still run through VM post-mark hooks
@@ -216,7 +218,9 @@ Deliverables:
 - Done for the registry overlay: track finalizable cohorts equivalent to
   `finobjsur`, `finobjold1`, and `finobjrold`, and use them to bound minor
   pending-finalizer scans.
-- Use the reserved finalized state consistently.
+- Done for the registry overlay: use the heap header finalized bit as
+  C-Lua's `FINALIZEDBIT`, setting it on pending/to-be-finalized registration
+  and clearing it when an object is popped for its `__gc` call.
 - Separate, mark, run, and sweep finalizers from collector phases.
 - Preserve per-version finalizer error behavior.
 

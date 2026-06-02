@@ -194,6 +194,8 @@ impl GcAge {
 pub trait FinalizerEntry: Clone {
     fn identity(&self) -> usize;
     fn age(&self) -> GcAge;
+    fn is_finalized(&self) -> bool;
+    fn set_finalized(&self, finalized: bool);
 }
 
 /// Minimal operations needed for collector-owned weak-registry bookkeeping.
@@ -390,8 +392,12 @@ impl<T: FinalizerEntry> FinalizerRegistry<T> {
     }
 
     pub fn push_pending_unique(&mut self, object: T) {
+        if object.is_finalized() {
+            return;
+        }
         let id = object.identity();
         if !self.pending.iter().any(|o| o.identity() == id) {
+            object.set_finalized(true);
             self.pending.push(object);
             self.debug_assert_pending_cohorts();
         }
@@ -436,11 +442,14 @@ impl<T: FinalizerEntry> FinalizerRegistry<T> {
     }
 
     pub fn push_to_be_finalized(&mut self, object: T) {
+        object.set_finalized(true);
         self.to_be_finalized.push(object);
     }
 
     fn extend_to_be_finalized(&mut self, objects: Vec<T>) {
-        self.to_be_finalized.extend(objects);
+        for object in objects {
+            self.push_to_be_finalized(object);
+        }
     }
 
     pub fn promote_pending_to_finalized(&mut self, objects: Vec<T>) {
@@ -474,7 +483,11 @@ impl<T: FinalizerEntry> FinalizerRegistry<T> {
     }
 
     pub fn pop_to_be_finalized(&mut self) -> Option<T> {
-        self.to_be_finalized.pop()
+        let object = self.to_be_finalized.pop();
+        if let Some(ref object) = object {
+            object.set_finalized(false);
+        }
+        object
     }
 }
 
@@ -483,8 +496,9 @@ impl<T: FinalizerEntry> FinalizerRegistry<T> {
 pub struct GcHeader {
     color: Cell<Color>,
     age: Cell<GcAge>,
-    /// Set true after this object's finalizer (`__gc` metamethod) has run.
-    /// Phase D defers finalizers; this is reserved.
+    /// Mirrors C-Lua's FINALIZEDBIT: true while the object is registered in a
+    /// pending/to-be-finalized list. Cleared when the object is popped for its
+    /// `__gc` call.
     finalized: Cell<bool>,
     /// True iff this box is linked into a heap's allgc chain, so it will be
     /// swept and its `size` refunded. `new_uncollected` boxes leave this
@@ -635,6 +649,14 @@ impl<T: ?Sized> Gc<T> {
 
     pub fn set_age(self, age: GcAge) {
         self.header().age.set(age);
+    }
+
+    pub fn is_finalized(self) -> bool {
+        self.header().finalized.get()
+    }
+
+    pub fn set_finalized(self, finalized: bool) {
+        self.header().finalized.set(finalized);
     }
 
     /// Charge (`delta > 0`) or refund (`delta < 0`) `delta` bytes of this
@@ -2066,11 +2088,16 @@ mod tests {
     struct FinalizerCell {
         id: usize,
         age: GcAge,
+        finalized: std::rc::Rc<Cell<bool>>,
     }
 
     impl FinalizerCell {
         fn new(id: usize) -> Self {
-            Self { id, age: GcAge::New }
+            Self {
+                id,
+                age: GcAge::New,
+                finalized: std::rc::Rc::new(Cell::new(false)),
+            }
         }
     }
 
@@ -2081,6 +2108,14 @@ mod tests {
 
         fn age(&self) -> GcAge {
             self.age
+        }
+
+        fn is_finalized(&self) -> bool {
+            self.finalized.get()
+        }
+
+        fn set_finalized(&self, finalized: bool) {
+            self.finalized.set(finalized);
         }
     }
 
@@ -2204,6 +2239,32 @@ mod tests {
             vec![1, 2, 4],
             "promotion order must be preserved for LIFO finalizer draining"
         );
+    }
+
+    #[test]
+    fn finalizer_registry_marks_and_clears_finalized_bit() {
+        let mut registry = FinalizerRegistry::default();
+        let object = FinalizerCell::new(1);
+
+        assert!(!object.is_finalized());
+        registry.push_pending_unique(object.clone());
+        assert!(object.is_finalized());
+
+        registry.push_pending_unique(object.clone());
+        assert_eq!(registry.pending_len(), 1);
+
+        registry.promote_pending_to_finalized(vec![object.clone()]);
+        assert!(object.is_finalized());
+        assert_eq!(registry.pending_len(), 0);
+        assert_eq!(registry.to_be_finalized_len(), 1);
+
+        let popped = registry.pop_to_be_finalized().unwrap();
+        assert_eq!(popped.id, 1);
+        assert!(!object.is_finalized());
+
+        registry.push_pending_unique(object.clone());
+        assert!(object.is_finalized());
+        assert_eq!(registry.pending_len(), 1);
     }
 
     #[test]

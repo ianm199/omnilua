@@ -693,6 +693,15 @@ impl Heap {
         self.threshold.get()
     }
 
+    /// Override the next automatic collection threshold.
+    ///
+    /// The VM uses this when Lua-level GC pacing (`GCdebt`, minor-debt, and
+    /// pause-debt calculations) has already computed a byte threshold from the
+    /// collector-owned live-byte counter.
+    pub fn set_threshold_bytes(&self, threshold: usize) {
+        self.threshold.set(threshold.max(1));
+    }
+
     /// Cheap predicate: would a `step()` actually do work? Equivalent to
     /// `!paused && bytes_used() >= threshold_bytes()`. Callers that build
     /// snapshot state before invoking the heap should gate on this.

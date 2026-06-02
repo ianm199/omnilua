@@ -1998,8 +1998,8 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             };
             // C-Lua converts `data` KiB of added debt into work units via
             // `stepmul`. We use a simpler mapping: the work-unit count is
-            // `data * stepmul / 4` (stepmul is the user-tunable speed,
-            // /4-encoded in `gcstepmul`), with a floor of 1 unit. When
+            // `data * stepmul` after decoding the packed GC parameter, with a
+            // floor of 1 unit. When
             // `data == 0` the call still performs one basic step (matching
             // C-Lua's `luaC_step(L)` after `setdebt(g, 0)`).
             let stepmul = (state.global().gc_stepmul_param() as isize | 1).max(1);
@@ -2009,16 +2009,20 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
                 let raw = (data as isize).saturating_mul(stepmul);
                 raw.max(1)
             };
-            if data == 0 {
+            let debt_for_result = if data == 0 {
                 let mut g = state.global_mut();
                 crate::state::set_debt(&mut *g, 0);
+                0
             } else {
                 let debt = data as isize * 1024 + state.global().gc_debt();
                 let mut g = state.global_mut();
                 crate::state::set_debt(&mut *g, debt);
-            }
-            let cycle_complete = if state.global().is_gen_mode() {
-                state.gc().generational_step()
+                debt
+            };
+            let gen_mode = state.global().is_gen_mode();
+            let cycle_complete = if gen_mode {
+                state.gc().generational_step();
+                debt_for_result > 0 && state.global().gc_at_pause()
             } else {
                 state.gc().incremental_step(work_units)
             };
@@ -2032,13 +2036,13 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             return if cycle_complete { 1 } else { 0 };
         }
         GcArgs::SetPause { value } => {
-            let old = state.global().gc_pause_param() as i32;
-            state.global_mut().set_gc_pause_param(value as u8);
+            let old = state.global().gc_pause_param();
+            state.global_mut().set_gc_pause_param(value);
             return old;
         }
         GcArgs::SetStepMul { value } => {
-            let old = state.global().gc_stepmul_param() as i32;
-            state.global_mut().set_gc_stepmul_param(value as u8);
+            let old = state.global().gc_stepmul_param();
+            state.global_mut().set_gc_stepmul_param(value);
             return old;
         }
         GcArgs::IsRunning => {
@@ -2050,7 +2054,7 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
                 state.global_mut().genminormul = minormul as u8;
             }
             if majormul != 0 {
-                state.global_mut().set_gc_genmajormul(majormul as u8);
+                state.global_mut().set_gc_genmajormul(majormul);
             }
             state.gc().change_mode(crate::state::GcKind::Generational);
             return old_mode;
@@ -2058,10 +2062,10 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
         GcArgs::Inc { pause, stepmul, stepsize } => {
             let old_mode = if state.global().is_gen_mode() { 10i32 } else { 11i32 };
             if pause != 0 {
-                state.global_mut().set_gc_pause_param(pause as u8);
+                state.global_mut().set_gc_pause_param(pause);
             }
             if stepmul != 0 {
-                state.global_mut().set_gc_stepmul_param(stepmul as u8);
+                state.global_mut().set_gc_stepmul_param(stepmul);
             }
             if stepsize != 0 {
                 state.global_mut().gcstepsize = stepsize as u8;

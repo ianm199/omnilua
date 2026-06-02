@@ -1567,11 +1567,14 @@ impl GlobalState {
     pub fn gc_debt(&self) -> isize { self.gc_debt }
     pub fn set_gc_debt(&mut self, d: isize) { self.gc_debt = d; }
     pub fn gc_at_pause(&self) -> bool { self.heap.gc_state().is_pause() }
-    pub fn gc_pause_param(&self) -> u8 { self.gcpause }
-    pub fn set_gc_pause_param(&mut self, p: u8) { self.gcpause = p; }
-    pub fn gc_stepmul_param(&self) -> u8 { self.gcstepmul }
-    pub fn set_gc_stepmul_param(&mut self, p: u8) { self.gcstepmul = p; }
-    pub fn set_gc_genmajormul(&mut self, p: u8) { self.genmajormul = p; }
+    fn get_gc_param(p: u8) -> i32 { (p as i32) * 4 }
+    fn set_gc_param_slot(slot: &mut u8, p: i32) { *slot = (p / 4) as u8; }
+    pub fn gc_pause_param(&self) -> i32 { Self::get_gc_param(self.gcpause) }
+    pub fn set_gc_pause_param(&mut self, p: i32) { Self::set_gc_param_slot(&mut self.gcpause, p); }
+    pub fn gc_stepmul_param(&self) -> i32 { Self::get_gc_param(self.gcstepmul) }
+    pub fn set_gc_stepmul_param(&mut self, p: i32) { Self::set_gc_param_slot(&mut self.gcstepmul, p); }
+    pub fn gc_genmajormul_param(&self) -> i32 { Self::get_gc_param(self.genmajormul) }
+    pub fn set_gc_genmajormul(&mut self, p: i32) { Self::set_gc_param_slot(&mut self.genmajormul, p); }
     /// Lua 5.5 `collectgarbage("param", name [, value])`. `idx` is the 0-based
     /// param index (`minormul=0 .. stepsize=5`). When `value >= 0` the param is
     /// set; the previous value is always returned.
@@ -3587,12 +3590,122 @@ impl<'a> GcHandle<'a> {
         if !self._state.global().is_gc_running() {
             return;
         }
-        self.collect_via_heap(/* force = */ false);
+        if self._state.global().is_gen_mode() {
+            let should_collect = {
+                let g = self._state.global();
+                g.heap.would_collect() || g.gc_debt() > 0
+            };
+            if should_collect {
+                self.generational_step();
+            }
+        } else {
+            self.collect_via_heap(/* force = */ false);
+        }
     }
 
     /// macros.tsv: `luaC_fullgc → state.gc().full_collect()`
     pub fn full_collect(&self) {
         self.collect_via_heap(/* force = */ true);
+    }
+
+    fn negative_debt(bytes: usize) -> isize {
+        -(bytes.min(isize::MAX as usize) as isize)
+    }
+
+    fn set_minor_debt(&self) {
+        let mut g = self._state.global_mut();
+        let total = g.total_bytes();
+        let growth = (total / 100).saturating_mul(g.genminormul as usize);
+        g.heap
+            .set_threshold_bytes(total.saturating_add(growth.max(1)));
+        set_debt(&mut *g, Self::negative_debt(growth));
+    }
+
+    fn set_pause_debt(&self) {
+        let mut g = self._state.global_mut();
+        let total = g.total_bytes();
+        let pause = g.gc_pause_param().max(0) as usize;
+        let threshold = g.gc_estimate.max(1).saturating_mul(pause) / 100;
+        let debt = if threshold > total {
+            Self::negative_debt(threshold - total)
+        } else {
+            0
+        };
+        let heap_threshold = if threshold > total {
+            threshold
+        } else {
+            total.saturating_add(1)
+        };
+        g.heap.set_threshold_bytes(heap_threshold);
+        set_debt(&mut *g, debt);
+    }
+
+    fn enter_incremental_mode(&self) {
+        {
+            let g = self._state.global();
+            g.heap.reset_all_ages();
+        }
+        let mut g = self._state.global_mut();
+        g.gckind = GcKind::Incremental as u8;
+        g.lastatomic = 0;
+    }
+
+    fn enter_generational_mode(&self) -> usize {
+        self.collect_via_heap_mode(HeapCollectMode::Full);
+        let numobjs = {
+            let g = self._state.global();
+            g.heap.promote_all_to_old();
+            g.heap.allgc_count()
+        };
+        let total = self._state.global().total_bytes();
+        {
+            let mut g = self._state.global_mut();
+            g.gckind = GcKind::Generational as u8;
+            g.lastatomic = 0;
+            g.gc_estimate = total;
+        }
+        self.set_minor_debt();
+        numobjs
+    }
+
+    fn fullgen(&self) -> usize {
+        self.enter_incremental_mode();
+        self.enter_generational_mode()
+    }
+
+    fn stepgenfull(&self, lastatomic: usize) {
+        if self._state.global().gckind == GcKind::Generational as u8 {
+            self.enter_incremental_mode();
+        }
+        self.collect_via_heap_mode(HeapCollectMode::Full);
+        let newatomic = self._state.global().heap.allgc_count().max(1);
+        if newatomic < lastatomic.saturating_add(lastatomic >> 3) {
+            {
+                let g = self._state.global();
+                g.heap.promote_all_to_old();
+            }
+            let total = self._state.global().total_bytes();
+            {
+                let mut g = self._state.global_mut();
+                g.gckind = GcKind::Generational as u8;
+                g.lastatomic = 0;
+                g.gc_estimate = total;
+            }
+            self.set_minor_debt();
+        } else {
+            {
+                let g = self._state.global();
+                g.heap.reset_all_ages();
+            }
+            let total = self._state.global().total_bytes();
+            {
+                let mut g = self._state.global_mut();
+                g.gckind = GcKind::Incremental as u8;
+                g.lastatomic = newatomic;
+                g.gc_estimate = total;
+            }
+            self.set_pause_debt();
+        }
     }
 
     /// Shared driver behind both `full_collect` (force-collect) and
@@ -3766,9 +3879,47 @@ impl<'a> GcHandle<'a> {
         g.to_be_finalized.extend(promote);
     }
 
-    /// Run one explicit generational minor collection.
+    /// Run one generational collection step.
     pub fn generational_step(&self) -> bool {
-        self.collect_via_heap_mode(HeapCollectMode::Minor);
+        let (lastatomic, majorbase, majorinc, should_major) = {
+            let g = self._state.global();
+            let majorbase = if g.gc_estimate == 0 {
+                g.total_bytes()
+            } else {
+                g.gc_estimate
+            };
+            let majormul = g.gc_genmajormul_param().max(0) as usize;
+            let majorinc = (majorbase / 100).saturating_mul(majormul);
+            let should_major = g.gc_debt() > 0
+                && g.total_bytes() > majorbase.saturating_add(majorinc);
+            (g.lastatomic, majorbase, majorinc, should_major)
+        };
+
+        if lastatomic != 0 {
+            self.stepgenfull(lastatomic);
+            debug_assert!(self._state.global().is_gen_mode());
+            return true;
+        }
+
+        if should_major {
+            let numobjs = self.fullgen();
+            let after = self._state.global().total_bytes();
+            if after < majorbase.saturating_add(majorinc / 2) {
+                self.set_minor_debt();
+            } else {
+                {
+                    let mut g = self._state.global_mut();
+                    g.lastatomic = numobjs.max(1);
+                }
+                self.set_pause_debt();
+            }
+        } else {
+            self.collect_via_heap_mode(HeapCollectMode::Minor);
+            self.set_minor_debt();
+            self._state.global_mut().gc_estimate = majorbase;
+        }
+
+        debug_assert!(self._state.global().is_gen_mode());
         true
     }
 
@@ -3977,25 +4128,10 @@ impl<'a> GcHandle<'a> {
         }
         match mode {
             GcKind::Generational => {
-                self.collect_via_heap(true);
-                {
-                    let g = self._state.global();
-                    g.heap.promote_all_to_old();
-                }
-                let total = self._state.global().total_bytes();
-                let mut g = self._state.global_mut();
-                g.gc_estimate = total;
-                g.gckind = mode as u8;
-                g.lastatomic = 0;
+                self.enter_generational_mode();
             }
             GcKind::Incremental => {
-                {
-                    let g = self._state.global();
-                    g.heap.reset_all_ages();
-                }
-                let mut g = self._state.global_mut();
-                g.gckind = mode as u8;
-                g.lastatomic = 0;
+                self.enter_incremental_mode();
             }
         }
     }
@@ -5174,6 +5310,9 @@ mod tests {
         state.gc().change_mode(GcKind::Generational);
         assert_eq!(parent.0.age(), lua_gc::GcAge::Old);
         assert_eq!(parent.0.color(), lua_gc::Color::Black);
+        let majorbase = state.global().gc_estimate;
+        assert!(majorbase > 0);
+        assert!(state.global().gc_debt() <= 0);
 
         let child = state.new_table();
         let parent_value = LuaValue::Table(parent);
@@ -5195,6 +5334,8 @@ mod tests {
         assert_eq!(parent.0.age(), lua_gc::GcAge::Touched2);
         assert_eq!(child.0.age(), lua_gc::GcAge::Survival);
         assert_eq!(metatable.0.age(), lua_gc::GcAge::Old1);
+        assert_eq!(state.global().gc_estimate, majorbase);
+        assert!(state.global().gc_debt() <= 0);
 
         state.gc().change_mode(GcKind::Incremental);
         assert_eq!(parent.0.age(), lua_gc::GcAge::New);
@@ -5203,6 +5344,119 @@ mod tests {
 
         assert!(state.external_unroot_value(parent_key).is_some());
         state.gc().full_collect();
+    }
+
+    #[test]
+    fn gc_packed_params_return_user_visible_values() {
+        let mut state = new_state().expect("state should initialize");
+        assert_eq!(
+            crate::api::gc(&mut state, crate::api::GcArgs::SetPause { value: 200 }),
+            200
+        );
+        assert_eq!(state.global().gc_pause_param(), 200);
+        assert_eq!(
+            crate::api::gc(&mut state, crate::api::GcArgs::SetStepMul { value: 200 }),
+            100
+        );
+        assert_eq!(state.global().gc_stepmul_param(), 200);
+
+        crate::api::gc(
+            &mut state,
+            crate::api::GcArgs::Gen {
+                minormul: 0,
+                majormul: 200,
+            },
+        );
+        assert_eq!(state.global().gc_genmajormul_param(), 200);
+    }
+
+    #[test]
+    fn generational_step_runs_bad_major_when_growth_exceeds_genmajormul() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let root = state.new_table();
+        let root_key = state.external_root_value(LuaValue::Table(root));
+        state.gc().change_mode(GcKind::Generational);
+
+        let root_value = LuaValue::Table(root);
+        for i in 1..=64 {
+            let child = state.new_table();
+            let child_value = LuaValue::Table(child);
+            root
+                .raw_set_int(&mut state, i, child_value.clone())
+                .expect("table store should succeed");
+            state.gc_barrier_back(&root_value, &child_value);
+        }
+
+        {
+            let mut g = state.global_mut();
+            g.gc_estimate = 1;
+            set_debt(&mut *g, 1);
+        }
+
+        assert!(state.gc().generational_step());
+        let g = state.global();
+        assert!(g.is_gen_mode());
+        assert!(g.lastatomic > 0, "bad major collection should arm stepgenfull");
+        assert!(g.gc_estimate > 1);
+        assert!(g.gc_debt() <= 0);
+        assert_eq!(root.0.age(), lua_gc::GcAge::Old);
+        drop(g);
+
+        assert!(state.external_unroot_value(root_key).is_some());
+        state.gc().full_collect();
+    }
+
+    #[test]
+    fn generational_stepgenfull_returns_to_gen_after_good_collection() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let root = state.new_table();
+        let root_key = state.external_root_value(LuaValue::Table(root));
+        state.gc().change_mode(GcKind::Generational);
+        {
+            let mut g = state.global_mut();
+            g.lastatomic = 1024;
+        }
+
+        assert!(state.gc().generational_step());
+        let g = state.global();
+        assert_eq!(g.gckind, GcKind::Generational as u8);
+        assert_eq!(g.lastatomic, 0);
+        assert!(g.gc_debt() <= 0);
+        assert_eq!(root.0.age(), lua_gc::GcAge::Old);
+        assert_eq!(root.0.color(), lua_gc::Color::Black);
+        drop(g);
+
+        assert!(state.external_unroot_value(root_key).is_some());
+        state.gc().full_collect();
+    }
+
+    #[test]
+    fn generational_step_zero_reports_false_without_positive_debt() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        state.gc().change_mode(GcKind::Generational);
+        assert_eq!(
+            crate::api::gc(&mut state, crate::api::GcArgs::Step { data: 0 }),
+            0
+        );
+        assert_eq!(
+            crate::api::gc(&mut state, crate::api::GcArgs::Step { data: 1 }),
+            1
+        );
     }
 }
 

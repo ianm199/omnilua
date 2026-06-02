@@ -17,6 +17,10 @@ reference/lua-5.4.7/src/lua
 reference/lua-5.4.7/src/luac
 reference/lua-5.4.7/src/liblua.a
 reference/lua-c/
+reference/lua-5.3.6/src/*.o
+reference/lua-5.3.6/src/lua
+reference/lua-5.3.6/src/luac
+reference/lua-5.3.6/src/liblua.a
 
 # macOS
 .DS_Store

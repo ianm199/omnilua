@@ -165,16 +165,9 @@ impl Trace for GlobalState {
             th.trace(m);
         }
 
-        // The short-string intern cache holds `GcRef<LuaString>` values that
-        // callers (parser, stdlib) reuse by pointer-equality across
-        // `intern_str` calls. C-Lua treats this as a weak table cleared during
-        // the atomic weak-table pass (`clearbykeys`); we have no incremental
-        // weak-sweep yet, so leaving these untraced would leave the HashMap
-        // with dangling `Gc<LuaString>` entries after the very next collect.
-        // Trace them as strong roots until the weak-sweep machinery lands.
-        for s in self.interned_lt.values() {
-            s.trace(m);
-        }
+        // `interned_lt` is a weak short-string cache. The collector prunes
+        // unmarked entries from the post-mark hook instead of tracing them as
+        // roots here.
         for row in self.strcache.iter() {
             for s in row.iter() {
                 s.trace(m);

@@ -29,8 +29,6 @@ Pattern regex values use ERE (grep -E) syntax, escaped for shell use.
 |---|---|---|
 | 2 | `gc-barrier-noops` | $30 — wire `luaC_barrier`/`luaC_barrierback` under incremental GC |
 | 3 | `gc-phase-predicates-always-constant` | $20 — wire `keep_invariant`/`is_sweep_phase` against real `gcstate` |
-| 4 | `gcweak-always-some` | $40 — real weak-ref semantics; defer until a test exercises it |
-| 4 | `interned-string-strong-root-override` | $40 — treat intern table as weak; long-running script memory leak |
 | 4 | `dual-instruction-type` | $15 — unify `Instruction` between lua-types and lua-code |
 | 4 | `dual-lex-types` | $80 — same pattern as the LuaTable refactor: canonicalize `LexBuffer`/`LexState`/`ZIO` |
 | 4 | `dual-luadebug-type` | $30 — unify `LuaDebug` |
@@ -327,29 +325,28 @@ Reference C source: `ldo.c::lua_resetthread`, `ldo.c::luaD_closeprotected`.
 ```yaml
 name: interned-string-strong-root-override
 files:
-  - crates/lua-vm/src/trace_impls.rs:128
-  - crates/lua-vm/src/trace_impls.rs:134
+  - crates/lua-vm/src/trace_impls.rs
+  - crates/lua-vm/src/state.rs
 patterns:
-  - "Trace them as strong roots until the weak-sweep machinery"
-  - "leaving these untraced would leave the HashMap"
-  - "weak-sweep yet, so leaving"
-canonical_owner: crates/lua-vm/src/trace_impls.rs:134
-why: The interned_lt short-string cache is a weak table in C-Lua but is traced as strong roots because no incremental weak-sweep pass exists yet.
-retirement_trigger: Weak-sweep machinery lands; interned_lt entries are cleared during the atomic weak-table pass instead of being pinned as roots.
-test_gate: A test that interns a short string, drops all references, and asserts collectgarbage() reduces gc_count (no pinned string leak).
+  - "record_live_interned_strings"
+  - "retain_live_interned_strings"
+canonical_owner: crates/lua-vm/src/state.rs
+why: Retired. The interned_lt short-string cache is now weak: root tracing skips it, post-mark records marked interned strings, and unreachable cache entries are removed.
+retirement_trigger: Met by post-mark interned-string pruning in full, minor, incremental atomic, and mark-only weak cleanup paths.
+test_gate: VM tests that keep a rooted short string cached and collect an unreferenced short string/cache entry.
 priority: 4
-status: active
+status: retired
 ```
 
 `GlobalState::interned_lt` holds the per-process short-string identity cache.
 In C-Lua, `strt` (the hash table of interned strings) is treated as a weak
 table during GC: entries are cleared by `clearbykeys` during the atomic
-phase, not marked as roots. In the current port (line 134 of
-`crates/lua-vm/src/trace_impls.rs`), all `interned_lt` values are traced as
-strong GC roots because there is no incremental weak-sweep pass yet. The
-comment acknowledges this is temporary. The practical effect is that every
-short string that has ever been interned is kept alive forever, inflating
-memory usage for long-running programs.
+phase, not marked as roots. The port now follows that shape for
+`interned_lt`: `GlobalState::trace` skips the cache, the collector's
+post-mark hooks record cache entries whose strings were marked by real roots,
+and the post-collection cleanup removes unmarked entries by pointer identity.
+This avoids pinning every short string ever interned while preventing stale
+cache entries from being reused after sweep.
 
 Reference C source: `lgc.c::clearbykeys`, `lstring.c` intern table (`strt`).
 

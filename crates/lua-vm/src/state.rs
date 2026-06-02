@@ -3582,6 +3582,29 @@ fn close_open_upvalues_for_unreachable_threads(
     marker.drain_gray_queue();
 }
 
+fn record_live_interned_strings(
+    global: &GlobalState,
+    marker: &lua_gc::Marker,
+    live_ids: &std::cell::RefCell<std::collections::HashSet<usize>>,
+) {
+    let mut live = live_ids.borrow_mut();
+    for s in global.interned_lt.values() {
+        let id = s.identity();
+        if marker.is_visited(id) {
+            live.insert(id);
+        }
+    }
+}
+
+fn retain_live_interned_strings(
+    global: &mut GlobalState,
+    live_ids: &std::collections::HashSet<usize>,
+) {
+    global
+        .interned_lt
+        .retain(|_, s| live_ids.contains(&s.identity()));
+}
+
 impl<'a> GcHandle<'a> {
     /// macros.tsv: `luaC_checkGC → state.gc().check_step()`
     ///
@@ -3775,6 +3798,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(Vec::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
+        let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
         let collect_ran = std::cell::Cell::new(false);
 
         {
@@ -3849,6 +3874,7 @@ impl<'a> GcHandle<'a> {
                         }
                     }
                 }
+                record_live_interned_strings(&*global, marker, &live_interned_ids);
             };
             match mode {
                 HeapCollectMode::Full => global.heap.full_collect_with_post_mark(&roots, hook),
@@ -3869,7 +3895,9 @@ impl<'a> GcHandle<'a> {
         let promote_ids: std::collections::HashSet<usize> =
             promote.iter().map(|t| t.identity()).collect();
         let alive_thread_ids = alive_thread_ids.into_inner();
+        let live_interned_ids = live_interned_ids.into_inner();
         let mut g = state_ref.global.borrow_mut();
+        retain_live_interned_strings(&mut *g, &live_interned_ids);
         g.weak_tables_registry
             .retain(|w| alive_set.contains(&w.identity()));
         let main_thread_id = g.main_thread_id;
@@ -3968,6 +3996,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(Vec::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
+        let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
         let atomic_ran = std::cell::Cell::new(false);
 
         let outcome = {
@@ -4042,6 +4072,7 @@ impl<'a> GcHandle<'a> {
                         }
                     }
                 }
+                record_live_interned_strings(&*global, marker, &live_interned_ids);
             };
             let budget = StepBudget::from_work(work_units);
             global.heap.incremental_step_with_post_mark(&roots, budget, hook)
@@ -4053,7 +4084,9 @@ impl<'a> GcHandle<'a> {
             let promote_ids: std::collections::HashSet<usize> =
                 promote.iter().map(|t| t.identity()).collect();
             let alive_thread_ids = alive_thread_ids.into_inner();
+            let live_interned_ids = live_interned_ids.into_inner();
             let mut g = state_ref.global.borrow_mut();
+            retain_live_interned_strings(&mut *g, &live_interned_ids);
             g.weak_tables_registry
                 .retain(|w| alive_set.contains(&w.identity()));
             let main_thread_id = g.main_thread_id;
@@ -4088,40 +4121,51 @@ impl<'a> GcHandle<'a> {
                 .collect()
         };
 
-        let global = state_ref.global.borrow();
-        global.heap.unpause();
-        let roots = CollectRoots { global: &*global, thread: state_ref };
-        let hook = |marker: &mut lua_gc::Marker| {
-            trace_reachable_threads(&*global, global.current_thread_id, marker);
-            loop {
-                let visited_before = marker.visited_count();
-                for t in &weak_tables_snapshot {
-                    let t_id = t.identity();
-                    if !marker.is_visited(t_id) {
-                        continue;
+        let live_interned_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
+
+        {
+            let global = state_ref.global.borrow();
+            global.heap.unpause();
+            let roots = CollectRoots { global: &*global, thread: state_ref };
+            let hook = |marker: &mut lua_gc::Marker| {
+                trace_reachable_threads(&*global, global.current_thread_id, marker);
+                loop {
+                    let visited_before = marker.visited_count();
+                    for t in &weak_tables_snapshot {
+                        let t_id = t.identity();
+                        if !marker.is_visited(t_id) {
+                            continue;
+                        }
+                        let to_mark = t.ephemeron_values_to_mark(
+                            &|id| marker.is_visited(id),
+                        );
+                        for v in &to_mark {
+                            v.trace(marker);
+                        }
                     }
-                    let to_mark = t.ephemeron_values_to_mark(
-                        &|id| marker.is_visited(id),
-                    );
-                    for v in &to_mark {
-                        v.trace(marker);
+                    marker.drain_gray_queue();
+                    if marker.visited_count() == visited_before {
+                        break;
+                    }
+                }
+                for t in &weak_tables_snapshot {
+                    if marker.is_visited(t.identity()) {
+                        let to_mark = t.prune_weak_dead(&|id| marker.is_visited(id));
+                        for v in &to_mark {
+                            v.trace(marker);
+                        }
                     }
                 }
                 marker.drain_gray_queue();
-                if marker.visited_count() == visited_before {
-                    break;
-                }
-            }
-            for t in &weak_tables_snapshot {
-                if marker.is_visited(t.identity()) {
-                    let to_mark = t.prune_weak_dead(&|id| marker.is_visited(id));
-                    for v in &to_mark {
-                        v.trace(marker);
-                    }
-                }
-            }
-        };
-        global.heap.mark_only_with_post_mark(&roots, hook);
+                record_live_interned_strings(&*global, marker, &live_interned_ids);
+            };
+            global.heap.mark_only_with_post_mark(&roots, hook);
+        }
+
+        let live_interned_ids = live_interned_ids.into_inner();
+        let mut g = state_ref.global.borrow_mut();
+        retain_live_interned_strings(&mut *g, &live_interned_ids);
     }
 
     /// Set the GC kind (incremental/generational).
@@ -5207,6 +5251,52 @@ mod tests {
         state.gc().full_collect();
         assert_eq!(state.global().heap.bytes_used(), 0);
         assert_eq!(state.global().heap.allgc_count(), 0);
+    }
+
+    #[test]
+    fn interned_short_string_cache_does_not_root_unreferenced_string() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let payload = b"weak-cache-probe-a";
+        let string = state
+            .intern_str(payload)
+            .expect("short string should intern");
+        let id = string.identity();
+        assert!(state.global().interned_lt.contains_key(&payload[..]));
+        assert!(state.global().heap.allocation_token(id).is_some());
+
+        state.gc().full_collect();
+        assert!(!state.global().interned_lt.contains_key(&payload[..]));
+        assert_eq!(state.global().heap.allocation_token(id), None);
+    }
+
+    #[test]
+    fn interned_short_string_cache_keeps_reachable_string_until_unrooted() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let payload = b"weak-cache-probe-b";
+        let string = state
+            .intern_str(payload)
+            .expect("short string should intern");
+        let id = string.identity();
+        let key = state.external_root_value(LuaValue::Str(string));
+
+        state.gc().full_collect();
+        assert!(state.global().interned_lt.contains_key(&payload[..]));
+        assert!(state.global().heap.allocation_token(id).is_some());
+
+        assert!(state.external_unroot_value(key).is_some());
+        state.gc().full_collect();
+        assert!(!state.global().interned_lt.contains_key(&payload[..]));
+        assert_eq!(state.global().heap.allocation_token(id), None);
     }
 
     #[test]

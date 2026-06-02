@@ -29,6 +29,7 @@ throwaway process scaffolding and are not retained.
 - **5.1**: `5.1-fenv.md`, `5.1-roster-syntax.md`, `5.1-numbers-prng.md`
 - **shared core**: `sharedcore-triage-1.md`, `-2.md`, `-3.md`
 - **traceback**: `79d-design.md`
+- **GC**: `issue-93-generational-gc-plan.md`
 - **confirmations** (the #76–79 adversarial confirms): `confirm-76.md` … `confirm-79.md`
 
 ## The remaining architectural backlog

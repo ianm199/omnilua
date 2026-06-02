@@ -27,11 +27,8 @@ assert(ran == 0, "FAIL: finalizer ran before callfin step")
 collectgarbage("restart")
 collectgarbage("step", 0)
 assert(ran == 1, "FAIL: callfin step did not run finalizer")
-assert(T.gcstate() == "callfin",
-       "FAIL: collector should remain in callfin until the next step")
-
-collectgarbage("step", 0)
-assert(T.gcstate() == "pause", "FAIL: empty callfin did not finish cycle")
+assert(T.gcstate() == "pause",
+       "FAIL: empty callfin should finish after draining finalizers")
 
 T.checkmemory()
 print("PASS canary_o")

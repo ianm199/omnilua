@@ -2075,7 +2075,11 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
                 if let Err(e) = run_some_pending_finalizers_inner(state, true) {
                     state.global_mut().gc_finalizer_error = Some(e.into_value());
                 }
-                false
+                if state.global().finalizers.has_to_be_finalized() {
+                    false
+                } else {
+                    state.global().heap.finish_callfin_phase()
+                }
             } else {
                 let completed = state.gc().incremental_step(work_units);
                 if state.global().heap.gc_state() == lua_gc::GcState::CallFin
@@ -2084,7 +2088,11 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
                     if let Err(e) = run_some_pending_finalizers_inner(state, true) {
                         state.global_mut().gc_finalizer_error = Some(e.into_value());
                     }
-                    false
+                    if state.global().finalizers.has_to_be_finalized() {
+                        false
+                    } else {
+                        state.global().heap.finish_callfin_phase()
+                    }
                 } else {
                     completed
                 }

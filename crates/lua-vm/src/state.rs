@@ -6297,7 +6297,7 @@ mod tests {
 //                      historical reject_invalid_table_key precheck moved into
 //                      LuaTable::try_raw_set (lua-types) and was dropped at this
 //                      layer; raw_set now takes the key by value, eliminating a
-//                      24-byte LuaValue clone per set. gc_barrier_back is invoked
+//                      LuaValue clone per set. gc_barrier_back is invoked
 //                      before the store in table_set_with_tm (semantically
 //                      equivalent: the barrier only inspects the value's color,
 //                      not its location), letting v be moved directly into

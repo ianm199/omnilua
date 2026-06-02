@@ -349,7 +349,7 @@ was a real cost — every `OP_ADD` cloned two operands to satisfy the
 borrow checker. We refactored to use primitive-tag accessors
 (`get_int_at` returns `Option<i64>`, no enum clone). **Result:
 mandelbrot improved (2.12× → 2.00×) but fibonacci was essentially
-unchanged** — the LLVM-inlined 24-byte enum copy was not material.
+unchanged** — the LLVM-inlined value copy was not material.
 The real fibonacci bottleneck is the dispatch machinery (precall,
 upvalue_get, instruction decode). Profile evidence beats hypothesis;
 sometimes the hypothesis was wrong about magnitude even when the

@@ -56,7 +56,7 @@ Splitting the remaining non-parity gap into honest components:
 | Source of gap | Estimated contribution | Recoverable without `unsafe`? |
 |---|---|---|
 | Genuine safety cost (bounds checks Rust can't elide, `RefCell` borrow checks on hot fields, `GcRef` indirection) | ~1.10–1.20× | mostly no |
-| `LuaValue` is 24 bytes (tagged enum) vs C's 16-byte NaN-boxed `TValue` | ~1.05–1.10× | only with `unsafe` |
+| Stack/frame/object representation gaps (`StackValue` 24B vs C 16B, `CallInfo` 72B vs C 64B, larger table/upvalue objects) | unknown until isolated | partial; stack-slot parity likely needs a design packet |
 | Match-dispatch loop vs computed-goto threaded dispatch | ~1.05–1.10× | partial (cold-arm split, `#[inline(never)]` on rare opcodes) |
 | **Clones where C uses pointers** — `state.get_at(i).clone()` to drop a borrow before passing `&mut state` to a helper | **~1.20–1.40×** | **yes, with careful refactoring** |
 | **`RefCell` on the hot path** — `state.global.borrow()` per opcode, `RefCell<UpValState>` per upvalue read | **~1.10–1.20×** | **yes, restructure access patterns** |
@@ -97,12 +97,13 @@ too. Earlier versions of this doc claimed "1.3–1.5× is the realistic
 floor" — that was a guess, not a measured limit. Discard it.
 
 **The last 1.0–1.2× of the gap** may require carefully-scoped `unsafe`
-(NaN-boxed value representation, `get_unchecked` on the stack, possibly
-`become` for tail-call dispatch when stabilized). Each of those would be
-a deliberate, well-contained `unsafe` block with its own correctness
-argument, not a wholesale departure from the `unsafe_code = "forbid"`
-default. `redis-rs-port` accepts the same trade-off in its network
-buffer and FFI code without compromising the overall safety story.
+or a deliberately C-shaped safe layout redesign: raw/unchecked stack slot
+access under frame invariants, a C-like stack-slot representation, cached
+frame pointers, and possibly `become` for tail-call dispatch when stabilized.
+Each of those would be a deliberate, well-contained boundary with its own
+correctness argument, not a wholesale departure from the `unsafe_code =
+"forbid"` default. `redis-rs-port` accepts scoped unsafe trade-offs in its
+network buffer and FFI code without compromising the overall safety story.
 
 ## What we've actually shipped (evidence)
 
@@ -481,6 +482,113 @@ Negative results from the same spike:
   The lesson is that opcode arm shape needs benchmark confirmation; fewer
   source-level probes are not automatically better machine code.
 
+### 10. `perf/vm-value-telemetry` — post-v0.0.27 VM opacity and layout spike
+
+**Pattern:** *When the remaining gap looks architectural, measure the
+architecture before rewriting it.*
+
+After the concat packet, the broad best-of-5 matrix
+(`harness/bench/results/20260602T183215Z-98bd6bd-compare.tsv`) had the current
+shape:
+
+| workload | ratio | read |
+|---|---:|---|
+| table_ops | 1.00x | at parity |
+| table_ops_long | 1.05x | near parity |
+| table_hash_pressure | 1.14x | concat scratch-intern pole removed |
+| string_ops_long | 1.59x | still around the gate |
+| mandelbrot_long | 1.82x | arithmetic + dispatch |
+| fibonacci | 1.87x | call/return recursion |
+| binarytrees | 1.93x | allocation + traversal + GC |
+| closure_ops | 1.94x | closure calls + upvalues |
+| gc_pressure | 2.50x | allocation/collection throughput |
+
+The new VM attribution samples make the next call/frame problem concrete:
+
+- `closure_ops_x40`
+  (`harness/bench/profiles/20260602T184054Z-18c5f24-closure_ops_x40/vm-execute.txt`)
+  has `lua_vm::vm::execute` at 90.3% of sampled wall time. Inside execute:
+  dispatch fetch is 26.8% of VM self-samples, `OP_CALL` 13.3%,
+  frame setup 9.7%, `OP_SETUPVAL` 7.6%, `OP_GETUPVAL` 7.0%, and
+  return re-entry 2.4%.
+- `fibonacci_x2`
+  (`harness/bench/profiles/20260602T184108Z-18c5f24-fibonacci_x2/vm-execute.txt`)
+  has `execute` at 100% of samples. Inside execute: dispatch fetch is 22.6%,
+  unknown/inlined samples 15.5%, `OP_CALL` 14.1%, `OP_ADD` 11.9%, `OP_SUB`
+  7.7%, frame setup 7.5%, `OP_GETUPVAL` 6.4%, and `OP_RETURN1` 5.5%.
+
+The measured layout probe is the important correction to earlier guesses. Run:
+
+```bash
+bash harness/bench/value-layout.sh
+```
+
+Current Apple M3 Max output:
+
+| type | Rust size/align | C Lua 5.4.7 size/align | note |
+|---|---:|---:|---|
+| `LuaValue` / `TValue` | 16 / 8 | 16 / 8 | value size is not the current gap |
+| `StackValue` | 24 / 8 | 16 / 8 | Rust stores `tbc_delta` beside the value; C overlays it in a union |
+| `CallInfo` | 72 / 8 | 64 / 8 | Rust uses indices/options and enum payloads |
+| `LuaState` / `lua_State` | 176 / 8 | 200 / 8 | Rust thread state is not larger overall |
+| `LuaTable` / `Table` | 104 / 8 | 56 / 8 | table object layout is a real representation target |
+| `UpVal` / `UpVal` | 64 / 8 | 40 / 8 | upvalue representation remains costly |
+| `LuaProto` | 208 / 8 | - | no direct C row in this probe yet |
+
+Tooling inventory is now explicit:
+
+```bash
+bash harness/bench/profile-inventory.sh
+```
+
+Available on the current host: macOS `sample`, `xctrace`, `leaks`, DTrace,
+Cargo/rustc, and `inferno-flamegraph`. Missing on this host: `samply` and
+Linux `perf`. Existing repo probes are `compare.sh`, `profile-hotspots.sh`,
+`vm-execute-attribution.py`, `opcode-profile.sh`, `gc-profile.sh`,
+`value-layout.sh`, and `history.py`.
+
+Architecture comparison:
+
+- C Lua keeps active frame state in local/raw-pointer form: instruction
+  pointer, base, constants, function closure, and `CallInfo *`.
+- CppCXY/lua-rs takes the same direction more aggressively: `LuaValue` is a
+  C-shaped 16-byte union/tag pair, `CallInfo` caches raw `chunk_ptr` and
+  `upvalue_ptrs`, the VM loop carries `FrameCtx`/`ActiveFrame` local state,
+  and the exact Lua-call path tries to avoid a flush -> `precall` -> reload
+  round trip.
+- That implementation is not a safe-Rust counterexample. A local clone showed
+  hundreds of `unsafe` hits across raw GC pointers, stack access, value unions,
+  and compiler/runtime pointer plumbing. Treat it as evidence for what a
+  future reviewed boundary might look like, not as a drop-in pattern.
+
+What this says about the roadmap:
+
+- Safe Rust is not cooked. The next safe packet should target call/frame
+  shape: fewer active-frame reloads, a cleaner hot Lua-call entry path, and
+  possibly a narrower `CallInfo`/active-frame cache. The previous naive exact
+  call fast path regressed, so this should be designed around frame state, not
+  duplicated `precall` logic.
+- Dispatch cold-path splitting remains plausible but subtle. A no-hook
+  `ci_trap` guard regressed `binarytrees`, so the next split needs source
+  attribution and matrix confirmation, not a branch-count argument.
+- The unsafe/design ceiling is now narrower and more concrete: not
+  "`LuaValue` is too large", but stack-slot shape, unchecked stack access under
+  frame invariants, cached frame/upvalue pointers, and larger table/upvalue
+  heap objects.
+
+Tool gaps:
+
+- `sample` plus `vm-execute.txt` still leaves `UNKNOWN_INLINED` samples and
+  cannot provide exact per-op timing.
+- `opcode-profile.sh` gives execution counts but not time per opcode.
+- `gc-profile.sh` gives end-of-run counters but not allocation stack
+  attribution or cumulative per-phase timing.
+- `harness/runners.toml` still has correctness runners only. Benchmark,
+  profile, GC, opcode, layout, and inventory probes are reusable scripts but
+  not typed runner entries with resource locks.
+- `xctrace`, DTrace, and `leaks` are available on this host, but the repo does
+  not yet have wrappers that turn them into stable artifacts.
+
 ### 6. `20260602T140413Z-858cc5e` — broad safe-Rust pass after PR #121
 
 **Pattern:** *Use specialized internal data structures for internal identities,
@@ -795,25 +903,32 @@ profile data, both fixes would have aimed at the wrong target.
 The redis-rs-port discipline: every perf-shaped commit links the profile
 artifact that motivated it. We follow the same rule.
 
-## What requires `unsafe` (the last increment to parity)
+## What may require representation work (the last increment to parity)
 
-The list below is what we can NOT recover purely in safe Rust. Each is a
-candidate for carefully-scoped `unsafe` once the safe-Rust work plateaus.
-None of these are blockers — the bulk of the gap is recoverable without
-them, as the redis-rs-port precedent shows. They become relevant for the
-final 1.0–1.2× push toward parity.
+The list below is what we may not recover with local safe-Rust hot-path
+patches alone. Some items could still be addressed with safe layout redesign;
+others are candidates for carefully-scoped `unsafe` once safe-Rust work
+plateaus. None of these are blockers. They become relevant for the final
+1.0–1.2× push toward parity.
 
-- **NaN-boxing the value representation.** C-Lua's `TValue` is 16 bytes;
-  pointers and small ints are encoded in NaN bit patterns of a 64-bit
-  float. Our `LuaValue` is a Rust tagged enum at ~24 bytes. Cloning is
-  ~50% more expensive. Recovering this would require `union` + transmutes —
-  it's possible in `unsafe`, but you'd be implementing a custom tagged
-  pointer type and validating it via miri/loom.
+- **C-shaped stack slots.** The current measured layout is `LuaValue` 16 bytes,
+  matching C Lua 5.4.7's `TValue`, but Rust `StackValue` is 24 bytes while C
+  `StackValue` is 16 bytes because C overlays the to-be-closed delta in a
+  union. Recovering stack-slot parity may require a side structure for
+  to-be-closed metadata or an unsafe C-shaped union. Do not claim value-size
+  pressure until `harness/bench/value-layout.sh` says so.
 
 - **Raw pointer stack access.** C-Lua reads `s2v(L->top.p - 1)` as a single
   pointer load. Our `state.get_at(idx)` indexes a `Vec<StackValue>` with
   whatever bounds-check LLVM can or can't elide. Profile evidence so far
   suggests this is ~5% overhead, not the dominant cost.
+
+- **Cached frame and upvalue pointers.** C-Lua's `luaV_execute` keeps the
+  active closure/prototype/constants/pc/base in local pointer state. CppCXY's
+  Rust implementation copies that shape with raw `chunk_ptr` and
+  `upvalue_ptrs` in `CallInfo` and unchecked stack helpers. Our safe port has
+  moved partway there with cached code/constants, but the current profiles
+  still show frame setup, `OP_CALL`, and return re-entry as real buckets.
 
 - **Computed gotos / true threaded dispatch.** C-Lua's `vmdispatch` macro
   emits `goto *jump_table[opcode]` after each opcode. There is no Rust
@@ -931,10 +1046,11 @@ started as. A good warm-up before Tier 1.
 
 ### What might cause friction later (worth designing for now)
 
-- **`LuaValue` as a 24-byte tagged enum.** A JIT wants to specialize
-  register representation — keep values in CPU registers as raw `i64` /
-  `f64`, only "boxing" back into `LuaValue` at safepoints. Not blocking,
-  but worth knowing.
+- **Stack and frame layout.** `LuaValue` itself currently measures 16 bytes,
+  but `StackValue`, `CallInfo`, table objects, and upvalues are larger than
+  their C counterparts. A JIT wants to specialize register representation —
+  keep values in CPU registers as raw `i64` / `f64`, only "boxing" back into
+  `LuaValue` at safepoints. Not blocking, but worth knowing.
 - **`RefCell`-wrapped state fields.** A JIT can't `borrow_mut` a RefCell
   from native code easily; it needs raw pointer access. Refactoring some
   state for JIT-friendliness is a real cost.

@@ -18,8 +18,11 @@ harness/bench/
 ├── compare.sh           <- main ledgered bench: run all workloads vs reference
 ├── gc-profile.sh        <- end-of-run collector counters
 ├── opcode-profile.sh    <- feature-gated opcode execution counters
+├── profile-inventory.sh <- repo + host profiler/tool availability
 ├── profile-hotspots.sh  <- macOS sample wrapper + VM execute attribution
 ├── scaling-check.py     <- complexity gate: flag superlinear (O(n^2)) behavior
+├── value-layout.sh      <- Rust-vs-C value/frame/object layout probe
+├── vm-execute-attribution.py <- source-region parser for sample output
 ├── workloads/           <- self-contained .lua microbenchmarks (timed vs C)
 │   ├── binarytrees.lua  <- GC pressure (CLBG-style)
 │   ├── closure_ops.lua  <- closure allocation + upvalue access
@@ -44,6 +47,11 @@ harness/bench/
 of a base size and fits the complexity exponent, failing if an operation that
 should be linear goes superlinear. That gate catches O(n^2) regressions a
 single-size ratio would miss (it is what would have caught the #38 table bug).
+
+`profile-inventory.sh` is the cheap first command for a new performance
+session. It prints which repo probes exist and which host profilers are
+available on the machine, including `sample`, `xctrace`, `leaks`, DTrace,
+`inferno-flamegraph`, `samply`, and Linux `perf`.
 
 Generated artifacts land under `results/` and `profiles/` (gitignored).
 The static dashboard at `history/index.html` IS tracked so it can be viewed
@@ -172,6 +180,18 @@ collection counts, heap cohorts, latest mark/sweep counters, grayagain count,
 and intern-table size. It is useful when `/usr/bin/sample` says a GC phase is
 hot but cannot explain how many objects the phase is visiting or freeing.
 
+`value-layout.sh` is a representation probe, not a benchmark:
+
+```bash
+bash harness/bench/value-layout.sh
+```
+
+It compiles a tiny Rust example plus a temporary C probe against
+`reference/lua-5.4.7/src` and prints `impl/type/size_bytes/align_bytes` rows
+for value, stack, frame, table, closure, userdata, proto, and upvalue
+structures. Use it before making claims about safe-Rust value layout or
+unsafe representation ceilings.
+
 ## Reproducibility rules
 
 - Always run with the matching `target/release/lua-rs` build (NOT `target/debug`)
@@ -195,7 +215,10 @@ hot but cannot explain how many objects the phase is visiting or freeing.
 5. `compare.sh` appends ledger rows directly. Typed bench runner entries in
    `harness/runners.toml` are still useful future cleanup, but not required
    for evidence-backed perf work.
-6. Backfill remains future work for answering "when did this regress?" across
+6. `profile-inventory.sh` and `value-layout.sh` are telemetry probes. They do
+   not write ledger rows and should be cited as design evidence, not speed
+   claims.
+7. Backfill remains future work for answering "when did this regress?" across
    older commits.
-7. Keep `results/` and `profiles/` generated artifacts ignored unless a run is
+8. Keep `results/` and `profiles/` generated artifacts ignored unless a run is
    deliberately promoted into committed evidence.

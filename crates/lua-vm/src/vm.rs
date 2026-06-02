@@ -793,6 +793,111 @@ pub(crate) fn forprep(state: &mut LuaState, ra: StackIdx) -> Result<bool, LuaErr
     }
 }
 
+/// `forlimit` for the legacy (<=5.3) numeric `for`. Mirrors 5.3.6 `forlimit`:
+/// returns `Some((clamped_limit, stopnow))` when `obj` is a number — clamping an
+/// out-of-integer-range float limit to `i64::MAX`/`MIN` and flagging `stopnow`
+/// when that means the loop must not run — or `None` when `obj` is not a number
+/// (the caller then falls through to the float path / error).
+fn forlimit_legacy(obj: &LuaValue, step: i64) -> Option<(i64, bool)> {
+    let round = if step < 0 { F2Imod::Ceil } else { F2Imod::Floor };
+    if let Some(p) = to_integer(obj, round) {
+        return Some((p, false));
+    }
+    let n = tonumber(obj)?;
+    if 0.0 < n {
+        Some((i64::MAX, step < 0))
+    } else {
+        Some((i64::MIN, step >= 0))
+    }
+}
+
+/// Prepare a legacy (<=5.3) numeric `for` (OP_FORPREP). Mirrors 5.3.6
+/// `OP_FORPREP`: subtract the step from the initial value and let the caller
+/// always jump forward to OP_FORLOOP (which performs the first test). This is
+/// what makes iteration 1 enter the body via a backward jump — the source of
+/// the extra per-iteration line-hook event on <=5.3 (issue #92). Note there is
+/// deliberately **no** "'for' step is zero" check (that was added in 5.4): on
+/// 5.3 a zero step simply fails FORLOOP's test and the loop runs zero times.
+pub(crate) fn forprep_legacy(state: &mut LuaState, ra: StackIdx) -> Result<(), LuaError> {
+    let init = state.get_at(ra);
+    let plimit = state.get_at(ra + 1);
+    let pstep = state.get_at(ra + 2);
+
+    if let (LuaValue::Int(initv), LuaValue::Int(stepv)) = (&init, &pstep) {
+        let (initv, stepv) = (*initv, *stepv);
+        if let Some((ilimit, stopnow)) = forlimit_legacy(&plimit, stepv) {
+            let base = if stopnow { 0 } else { initv };
+            state.set_at(ra + 1, LuaValue::Int(ilimit));
+            state.set_at(ra, LuaValue::Int(intop_sub(base, stepv)));
+            return Ok(());
+        }
+        // limit is not a number: fall through so the float path raises
+        // "'for' limit must be a number" in upstream source order.
+    }
+
+    let nlimit = match tonumber(&plimit) {
+        Some(f) => f,
+        None => return Err(crate::debug::for_error(state, &plimit, b"limit")),
+    };
+    let nstep = match tonumber(&pstep) {
+        Some(f) => f,
+        None => return Err(crate::debug::for_error(state, &pstep, b"step")),
+    };
+    let ninit = match tonumber(&init) {
+        Some(f) => f,
+        None => return Err(crate::debug::for_error(state, &init, b"initial value")),
+    };
+    state.set_at(ra + 1, LuaValue::Float(nlimit));
+    state.set_at(ra + 2, LuaValue::Float(nstep));
+    state.set_at(ra, LuaValue::Float(ninit - nstep));
+    Ok(())
+}
+
+/// One iteration of a legacy (<=5.3) numeric `for` (OP_FORLOOP). Adds the step
+/// to the index and tests against the already-clamped limit; returns `true`
+/// when the loop continues (the caller jumps back to the body). Mirrors 5.3.6
+/// `OP_FORLOOP` — compare-based, no precomputed count.
+fn forloop_legacy(state: &mut LuaState, ra: StackIdx) -> bool {
+    if let LuaValue::Int(step) = state.get_at(ra + 2) {
+        let idx = intop_add(
+            match state.get_at(ra) {
+                LuaValue::Int(x) => x,
+                _ => 0,
+            },
+            step,
+        );
+        let limit = match state.get_at(ra + 1) {
+            LuaValue::Int(l) => l,
+            _ => 0,
+        };
+        let cont = if step > 0 { idx <= limit } else { limit <= idx };
+        if cont {
+            state.set_at(ra, LuaValue::Int(idx));
+            state.set_at(ra + 3, LuaValue::Int(idx));
+        }
+        cont
+    } else {
+        let step = match state.get_at(ra + 2) {
+            LuaValue::Float(f) => f,
+            _ => return false,
+        };
+        let idx = match state.get_at(ra) {
+            LuaValue::Float(f) => f,
+            _ => return false,
+        } + step;
+        let limit = match state.get_at(ra + 1) {
+            LuaValue::Float(f) => f,
+            _ => return false,
+        };
+        let cont = if step > 0.0 { idx <= limit } else { limit <= idx };
+        if cont {
+            state.set_at(ra, LuaValue::Float(idx));
+            state.set_at(ra + 3, LuaValue::Float(idx));
+        }
+        cont
+    }
+}
+
 /// Increments the float loop index and returns `true` if the loop continues.
 fn float_for_loop(state: &mut LuaState, ra: StackIdx) -> bool {
     //    idx  = fltvalue(s2v(ra));
@@ -1554,6 +1659,16 @@ pub(crate) fn finish_op(state: &mut LuaState) -> Result<(), LuaError> {
 /// - `l_tforcall` / `l_tforloop` — inlined at TFORPREP / TFORCALL handlers
 pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), LuaError> {
     let mut trap: bool;
+    // The numeric-`for` opcodes use legacy (<=5.3) semantics on 5.1/5.2/5.3:
+    // FORPREP jumps forward to FORLOOP (so iteration 1 enters the body via a
+    // backward jump, firing one line-hook event per iteration), and FORLOOP is
+    // compare-based rather than 5.4's precomputed-count form (issue #92). The
+    // version is fixed for the VM's lifetime, so resolve it once here; the
+    // 5.4/5.5 path is unchanged and pays nothing.
+    let legacy_for = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
 
     // PORT NOTE: `startfunc:` is the entry point that (re)sets `trap`.
     'startfunc: loop {
@@ -2625,34 +2740,46 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     //    updatetrap(ci);
                     OpCode::ForLoop => {
                         let ra = base + i.arg_a();
-                        let ra_u = ra.0 as usize;
-                        if let LuaValue::Int(step) = state.stack[ra_u + 2].val {
-                            let count = match state.stack[ra_u + 1].val {
-                                LuaValue::Int(c) => c as u64,
-                                _ => 0,
-                            };
-                            if count > 0 {
-                                let idx = match state.stack[ra_u].val {
-                                    LuaValue::Int(x) => x,
-                                    _ => 0,
-                                };
-                                state.stack[ra_u + 1].val = LuaValue::Int((count - 1) as i64);
-                                let new_idx = intop_add(idx, step);
-                                state.stack[ra_u].val = LuaValue::Int(new_idx);
-                                state.stack[ra_u + 3].val = LuaValue::Int(new_idx);
+                        if legacy_for {
+                            if forloop_legacy(state, ra) {
                                 pc = (pc as i64 - i.arg_bx() as i64) as u32;
                             }
-                        } else if float_for_loop(state, ra) {
-                            pc = (pc as i64 - i.arg_bx() as i64) as u32;
+                            trap = state.ci_trap(ci);
+                        } else {
+                            let ra_u = ra.0 as usize;
+                            if let LuaValue::Int(step) = state.stack[ra_u + 2].val {
+                                let count = match state.stack[ra_u + 1].val {
+                                    LuaValue::Int(c) => c as u64,
+                                    _ => 0,
+                                };
+                                if count > 0 {
+                                    let idx = match state.stack[ra_u].val {
+                                        LuaValue::Int(x) => x,
+                                        _ => 0,
+                                    };
+                                    state.stack[ra_u + 1].val = LuaValue::Int((count - 1) as i64);
+                                    let new_idx = intop_add(idx, step);
+                                    state.stack[ra_u].val = LuaValue::Int(new_idx);
+                                    state.stack[ra_u + 3].val = LuaValue::Int(new_idx);
+                                    pc = (pc as i64 - i.arg_bx() as i64) as u32;
+                                }
+                            } else if float_for_loop(state, ra) {
+                                pc = (pc as i64 - i.arg_bx() as i64) as u32;
+                            }
+                            trap = state.ci_trap(ci);
                         }
-                        trap = state.ci_trap(ci);
                     }
                     // ── OP_FORPREP ─────────────────────────────────────────────
                     OpCode::ForPrep => {
                         let ra = base + i.arg_a();
                         state.set_ci_savedpc(ci, pc);
                         state.set_top(state.ci_top(ci));
-                        if forprep(state, ra)? {
+                        if legacy_for {
+                            // 5.3: prep subtracts the step and ALWAYS jumps forward
+                            // to FORLOOP (which runs the first test).
+                            forprep_legacy(state, ra)?;
+                            pc = (pc as i64 + i.arg_bx() as i64) as u32;
+                        } else if forprep(state, ra)? {
                             pc = (pc as i64 + i.arg_bx() as i64 + 1) as u32;
                         }
                     }

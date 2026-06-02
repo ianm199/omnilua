@@ -2313,3 +2313,129 @@ fn issue95_break_outside_loop_wording_v54() {
 fn issue95_break_outside_loop_wording_v55() {
     err_contains(LuaVersion::V55, "break", "break outside loop near 'break'");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Issue #92 — version-gated line-hook fidelity.
+//
+// Captures the `debug.sethook(f, "l")` line-event trace for `code`, exactly the
+// way Lua's own `db.lua` `test()` does it: the chunk is held in a *variable* so
+// the `sethook; load(s)(); sethook` driver sits on one physical line and the
+// only line events captured are the inner chunk's own lines (no driver-line
+// pollution). Returns the comma-joined line sequence.
+// ─────────────────────────────────────────────────────────────────────────
+fn trace_lines(version: LuaVersion, code: &str) -> String {
+    let lua = Lua::new_versioned(version);
+    let loader = if version == LuaVersion::V51 { "loadstring" } else { "load" };
+    let wrapper = format!(
+        "local s = [==[\n{code}\n]==]\n\
+         local out = {{}}\n\
+         local function f(e, l) out[#out + 1] = tostring(l) end\n\
+         debug.sethook(f, 'l'); {loader}(s)(); debug.sethook()\n\
+         return table.concat(out, ',')"
+    );
+    lua.load(&wrapper)
+        .eval()
+        .unwrap_or_else(|e| panic!("trace harness failed for `{code}`: {e:?}"))
+}
+
+/// Cause 2: the conditional `TEST`/`JMP` of an `if`/`elseif` is attributed to
+/// the `then`-line on 5.1–5.4 (a separate line-3 event) but folded onto the
+/// condition-expression line on 5.5 (no line-3 event). Reference traces captured
+/// per `db.lua` (5.3.4-tests `{2,3,4,7}` vs 5.5.0-tests `{2,4,7}`).
+const IF_MULTILINE: &str = "if\nmath.sin(1)\nthen\n a=1\nelse\n a=2\nend";
+
+#[test]
+fn issue92_if_test_jmp_line_attribution_pre55() {
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+    ] {
+        assert_eq!(trace_lines(v, IF_MULTILINE), "2,3,4,7", "version {v:?}");
+    }
+}
+
+#[test]
+fn issue92_if_test_jmp_line_attribution_v55() {
+    assert_eq!(trace_lines(LuaVersion::V55, IF_MULTILINE), "2,4,7");
+}
+
+/// `while`/`repeat` already attribute their conditional `TEST`/`JMP` to the
+/// condition-expression line on every version (the codegen `cond()` captures the
+/// line before any `do`/`until` token), so 5.5 does not change them. Pin that
+/// invariant so the cause-2 fix doesn't accidentally touch loop conditions.
+#[test]
+fn issue92_while_condition_line_attribution_unchanged_all_versions() {
+    let code = "local i = 0\nwhile\ni < 1\ndo\ni = i + 1\nend";
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        let got = trace_lines(v, code);
+        assert_eq!(got, trace_lines(LuaVersion::V54, code), "version {v:?} drifted: {got}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Issue #92 cause 1 — the numeric-`for` back-edge line-hook event.
+//
+// 5.1/5.2/5.3 compile a numeric `for` so FORPREP jumps *forward* to the FORLOOP
+// test at the bottom; iteration 1 therefore enters the body via a backward jump
+// and fires a line event, giving n+1 events for an n-iteration single-line loop.
+// 5.4 made FORPREP fall through to the body (count-based loop), so iteration 1
+// fires no event → n events. Expected traces captured from the reference
+// binaries (5.3.6 / 5.4.7) and corroborated by db.lua's own `test()` battery
+// (5.3.4-tests `{1,1,1,1,1}` vs 5.4.7-tests `{1,1,1,1}` for `for i=1,4`).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn issue92_numeric_for_backedge_legacy_pre54() {
+    // 4-iteration single-line loop: <=5.3 fire one event per iteration plus the
+    // entry → 5 events.
+    for v in [LuaVersion::V51, LuaVersion::V52, LuaVersion::V53] {
+        assert_eq!(trace_lines(v, "for i=1,4 do a=1 end"), "1,1,1,1,1", "version {v:?}");
+    }
+}
+
+#[test]
+fn issue92_numeric_for_backedge_modern_54_55() {
+    // 5.4 count-based loop: iteration 1 falls through, so 4 events.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        assert_eq!(trace_lines(v, "for i=1,4 do a=1 end"), "1,1,1,1", "version {v:?}");
+    }
+}
+
+/// A multi-line numeric `for` changes line between header and body every
+/// iteration, so `changedline` fires regardless of the back-edge rule — the
+/// trace is identical across all versions. (db.lua 5.3.4/5.4.7 both `{1,2,...}`.)
+#[test]
+fn issue92_numeric_for_multiline_unchanged_all_versions() {
+    let code = "for i=1,3 do\n  a=i\nend";
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        assert_eq!(trace_lines(v, code), "1,2,1,2,1,2,1,3", "version {v:?}");
+    }
+}
+
+/// The legacy numeric-`for` semantics must stay *behaviorally* correct, not just
+/// trace-correct. These results were diffed against the lua-5.3.6 reference
+/// binary: down-loops, zero-iteration loops, and (unlike 5.4) a zero step that
+/// runs zero times instead of raising "'for' step is zero".
+#[test]
+fn issue92_legacy_numeric_for_behavior_matches_53() {
+    eq(LuaVersion::V53, "local t={} for i=5,1,-1 do t[#t+1]=i end return table.concat(t,',')", "5,4,3,2,1");
+    eq(LuaVersion::V53, "local n=0 for i=1,0 do n=n+1 end return n", "0");
+    // 5.3 has no zero-step error; the comparison just fails and the loop is empty.
+    eq(LuaVersion::V53, "local n=0 for i=1,2,0 do n=n+1 if n>3 then break end end return n", "0");
+    // control variable stays an integer subtype on 5.3.
+    eq(LuaVersion::V53, "local r for i=1,1 do r=math.type(i) end return r", "integer");
+}

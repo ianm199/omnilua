@@ -4234,11 +4234,20 @@ fn test_then_block(
     lex_next(ls, state)?;
     let mut v = ExprDesc::default();
     expr(ls, state, &mut v)?;
+    // Lua 5.5 attributes the conditional `TEST`/`JMP` to the
+    // condition-expression line (captured here, before `then` is consumed);
+    // 5.1-5.4 attribute them to the `then`-keyword line (`ls.lastline` after
+    // `check_next`). Observable via `debug.sethook(f,"l")`: a multi-line
+    // `if / <cond> / then` fires a line event for the `then` line on <=5.4 but
+    // not on 5.5 (issue #92). `while`/`repeat` already use the condition line on
+    // every version (their `cond()` captures it before `do`/`until`).
+    let cond_line = ls.lastline;
+    let fold_onto_cond = state.global().lua_version == lua_types::LuaVersion::V55;
     check_next(ls, state, TK_THEN)?;
 
     let jf: i32;
     if ls.t.token == TK_BREAK {
-        let line = ls.lastline;
+        let line = if fold_onto_cond { cond_line } else { ls.lastline };
         cg_go_if_false(ls.fs.as_mut().unwrap(), line, &mut v)?;
         lex_next(ls, state)?; // skip 'break'
         enter_block(ls, false);
@@ -4252,7 +4261,7 @@ fn test_then_block(
             jf = cg_jump(ls.fs.as_mut().unwrap(), ls.linenumber);
         }
     } else {
-        let line = ls.lastline;
+        let line = if fold_onto_cond { cond_line } else { ls.lastline };
         cg_go_if_true(ls.fs.as_mut().unwrap(), line, &mut v)?;
         enter_block(ls, false);
         jf = v.f;

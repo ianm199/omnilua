@@ -1188,9 +1188,6 @@ pub struct GlobalState {
     /// until process exit, which matches `libloading`'s safety model.
     pub dynlib_unload_hook: Option<DynLibUnloadHook>,
 
-    // types.tsv: global_State.totalbytes → isize
-    pub totalbytes: isize,
-
     /// Per-runtime sandbox budget shared across all threads. Inactive by
     /// default (`interval == 0`); see [`SandboxLimits`].
     pub sandbox: SandboxLimits,
@@ -4341,8 +4338,8 @@ fn make_seed() -> u32 {
     }
 }
 
-/// Adjust the compatibility `GCdebt` split while preserving the collector's
-/// current total byte count in the shadow `totalbytes` field.
+/// Adjust the compatibility `GCdebt` value against the collector-owned live
+/// byte count.
 ///
 ///
 /// ```c
@@ -4351,7 +4348,6 @@ fn make_seed() -> u32 {
 /// //   lua_assert(tb > 0);
 /// //   if (debt < tb - MAX_LMEM)
 /// //     debt = tb - MAX_LMEM;
-/// //   g->totalbytes = tb - debt;
 /// //   g->GCdebt = debt;
 /// // }
 /// ```
@@ -4362,7 +4358,6 @@ pub(crate) fn set_debt(g: &mut GlobalState, mut debt: isize) {
     if debt < tb.saturating_sub(isize::MAX) {
         debt = tb - isize::MAX;
     }
-    g.totalbytes = tb - debt;
     g.gc_debt = debt;
 }
 
@@ -5016,7 +5011,6 @@ pub fn new_state() -> Option<LuaState> {
         dynlib_load_hook: None,
         dynlib_symbol_hook: None,
         dynlib_unload_hook: None,
-        totalbytes: std::mem::size_of::<GlobalState>() as isize,
         sandbox: SandboxLimits::default(),
         gc_debt: 0,
         gc_estimate: 0,

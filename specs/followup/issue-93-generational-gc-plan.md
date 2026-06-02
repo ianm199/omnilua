@@ -54,10 +54,8 @@ The real generational collector is still not complete:
 - Weak/ephemeron handling is correct enough for the current gates but still runs
   through VM snapshots and post-mark hooks instead of collector-owned weak-list
   processing for minor and major cycles.
-- `GlobalState.totalbytes` remains as a Lua C compatibility shadow updated by
-  `set_debt`; it is no longer the source of memory truth, but it should either
-  stay documented as compatibility-only or be removed once the port no longer
-  needs the split.
+- `GlobalState.totalbytes` has been removed; `gettotalbytes` maps to
+  collector-owned heap bytes through `GlobalState::total_bytes()`.
 
 ## Upstream Pieces to Port
 
@@ -102,8 +100,7 @@ Deliverables:
 - Done: charge/refund payload accounting for userdata, closures/upvalues,
   protos, tables, strings, and the currently identified GC-owned backing
   buffers.
-- Remaining: decide whether `GlobalState.totalbytes` stays as compatibility-only
-  shadow state or can be removed after the debt split is no longer needed.
+- Done: remove the unused `GlobalState.totalbytes` compatibility shadow.
 
 Verification:
 

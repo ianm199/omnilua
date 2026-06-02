@@ -5382,6 +5382,39 @@ mod tests {
     }
 
     #[test]
+    fn userdata_buffer_accounting_refunds_on_sweep() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let payload_len = 4096;
+        let userdata = state
+            .new_userdata_typed(b"accounting", payload_len, 3)
+            .expect("userdata allocation should succeed");
+        state.pop_n(1);
+        let key = state.external_root_value(LuaValue::UserData(userdata));
+        let allocated_bytes = state.global().heap.bytes_used();
+        assert!(
+            allocated_bytes > payload_len,
+            "userdata payload bytes must be charged to the GC heap"
+        );
+
+        state.gc().full_collect();
+        assert_eq!(
+            state.global().heap.bytes_used(),
+            allocated_bytes,
+            "rooted userdata payload bytes should remain charged after collection"
+        );
+
+        assert!(state.external_unroot_value(key).is_some());
+        state.gc().full_collect();
+        assert_eq!(state.global().heap.bytes_used(), 0);
+        assert_eq!(state.global().heap.allgc_count(), 0);
+    }
+
+    #[test]
     fn string_buffer_accounting_refunds_on_sweep() {
         let mut state = new_state().expect("state should initialize");
         let _heap_guard = {

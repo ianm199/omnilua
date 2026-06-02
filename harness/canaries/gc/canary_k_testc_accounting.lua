@@ -42,7 +42,14 @@ check_count("rooted table")
 assert(after_table >= after_string + 16 * 1024,
        "FAIL: table buffer payload was not charged")
 
-s, t = nil, nil
+local u = T.newuserdata(512 * 1024, 3)
+collectgarbage("collect")
+local after_userdata = total_bytes()
+check_count("rooted userdata")
+assert(after_userdata >= after_table + 256 * 1024,
+       "FAIL: userdata payload was not charged")
+
+s, t, u = nil, nil, nil
 collectgarbage("collect")
 collectgarbage("collect")
 local final = total_bytes()

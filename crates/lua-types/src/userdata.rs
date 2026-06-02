@@ -52,6 +52,17 @@ impl LuaUserData {
     pub fn set_host_value(&self, value: Option<Rc<dyn Any>>) {
         *self.host_value.borrow_mut() = value;
     }
+
+    /// Bytes owned outside the `GcBox` header/object allocation.
+    ///
+    /// C stores full-userdata payload and user values inline in the userdata
+    /// allocation. The Rust port owns them through `Box<[u8]>` and `Vec`, so
+    /// the VM charges them explicitly against the GC heap.
+    pub fn buffer_bytes(&self) -> usize {
+        self.data
+            .len()
+            .saturating_add(self.uv.borrow().capacity() * std::mem::size_of::<LuaValue>())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

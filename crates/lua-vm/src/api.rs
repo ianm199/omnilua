@@ -836,6 +836,7 @@ impl LuaState {
             metatable: std::cell::RefCell::new(None),
             host_value: std::cell::RefCell::new(None),
         });
+        u.account_buffer(u.buffer_bytes() as isize);
         self.push(LuaValue::UserData(u.clone()));
         self.gc().check_step();
         Ok(u)

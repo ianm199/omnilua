@@ -12,16 +12,27 @@
 
 set -uo pipefail
 ver="${1:?usage: check.sh 5.3 or 5.4 or 5.5}"
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+LUARS="${LUA_RS_BIN:-$ROOT/target/debug/lua-rs}"
+
+choose_ref() {
+  local local_ref="$1" tmp_ref="$2"
+  if [ -x "$local_ref" ]; then
+    echo "$local_ref"
+  else
+    echo "$tmp_ref"
+  fi
+}
+
 case "$ver" in
-  5.1) ref=/tmp/lua-refs/bin/lua5.1.5 ;;
-  5.2) ref=/tmp/lua-refs/bin/lua5.2.4 ;;
-  5.3) ref=/tmp/lua-refs/bin/lua5.3.6 ;;
-  5.4) ref=/tmp/lua-refs/bin/lua5.4.7 ;;
-  5.5) ref=/tmp/lua-refs/bin/lua5.5.0 ;;
+  5.1) ref="${LUA_RS_REF_51:-/tmp/lua-refs/bin/lua5.1.5}" ;;
+  5.2) ref="${LUA_RS_REF_52:-/tmp/lua-refs/bin/lua5.2.4}" ;;
+  5.3) ref="${LUA_RS_REF_53:-$(choose_ref "$ROOT/reference/lua-5.3.6/src/lua" "/tmp/lua-refs/bin/lua5.3.6")}" ;;
+  5.4) ref="${LUA_RS_REF_54:-$(choose_ref "$ROOT/reference/lua-5.4.7/src/lua" "/tmp/lua-refs/bin/lua5.4.7")}" ;;
+  5.5) ref="${LUA_RS_REF_55:-$(choose_ref "$ROOT/reference/lua-5.5.0/src/lua" "/tmp/lua-refs/bin/lua5.5.0")}" ;;
   *) echo "unknown version $ver"; exit 2 ;;
 esac
-ROOT="/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/.claude/worktrees/git-issues"
-LUARS="$ROOT/target/debug/lua-rs"
 [ -x "$ref" ] || { echo "missing reference binary $ref"; exit 2; }
 [ -x "$LUARS" ] || { echo "missing $LUARS (cargo build -p lua-cli)"; exit 2; }
 

@@ -17,3 +17,27 @@ binary = "reference/lua-5.4.7/src/lua"
 official_suite = "./harness/run_official_all.sh"
 single_test = "./harness/run_official_test.sh"
 smoke_set = "./harness/run_one_test.sh"
+
+[source.lua55]
+name = "lua"
+repo = "https://www.lua.org/ftp/lua-5.5.0.tar.gz"
+commit = "5.5.0"
+tag = "lua/lua@v5.5.0"
+tag_commit = "a5522f06d2679b8f18534fd6a9968f7eb539dc31"
+license = "MIT"
+source_dir = "reference/lua-5.5.0/src"
+primary_file = "reference/lua-5.5.0/src/lua.c"
+tests_dir = "reference/lua-5.5.0-tests"
+c_loc = 32106
+
+[build.lua55]
+command = "make -C reference/lua-5.5.0 guess"
+binary = "reference/lua-5.5.0/src/lua"
+
+[build.lua55_compat_off]
+command = "bash harness/build_lua55_compat_off.sh"
+binary = "reference/lua-5.5.0/src/lua-compat-off"
+
+[tests.lua55]
+official_suite = "./harness/run_official_all.sh --version 5.5 --tests-dir reference/lua-5.5.0-tests"
+single_test = "./harness/run_official_test.sh --version 5.5 --tests-dir reference/lua-5.5.0-tests"

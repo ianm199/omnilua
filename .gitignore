@@ -21,12 +21,19 @@ reference/lua-5.3.6/src/*.o
 reference/lua-5.3.6/src/lua
 reference/lua-5.3.6/src/luac
 reference/lua-5.3.6/src/liblua.a
+reference/lua-5.5.0/src/*.o
+reference/lua-5.5.0/src/lua
+reference/lua-5.5.0/src/lua-compat-off
+reference/lua-5.5.0/src/luac
+reference/lua-5.5.0/src/liblua.a
+reference/lua-5.5.0/src/luaconf.h.compat-backup
 
 # macOS
 .DS_Store
 
 # Agent output / harness state
 harness/oracle/results/
+harness/impl/official/5.*/
 *.actual.bytecode
 *.actual.stdout
 

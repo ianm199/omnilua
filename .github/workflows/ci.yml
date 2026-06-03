@@ -22,6 +22,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: make test
         run: make test
+      - name: Lua 5.5 reference build
+        run: make lua55-reference
+      - name: Lua 5.5 official suite
+        run: make conformance-55
 
   wasm-package:
     name: wasm package

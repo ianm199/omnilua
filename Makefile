@@ -3,6 +3,9 @@
 #   make test          build + Rust tests + conformance (what CI runs)
 #   make rust          workspace unit/integration tests + embedding doctests
 #   make conformance   official Lua 5.4 suite against the lua-rs binary
+#   make conformance-55 official Lua 5.5 suite against the lua-rs binary
+#   make lua55-reference build Lua 5.5 compat-on and compat-off C references
+#   make oracle-55     behavioral diff snippets vs reference C Lua 5.5.0
 #   make parity        behavioral diff vs reference C Lua 5.4.7 (the oracle)
 #   make perf          benchmark vs reference C Lua (measurement, not a gate)
 #   make scaling       flag superlinear (O(n^2)) behavior in hot operations
@@ -17,7 +20,7 @@ CARGO ?= cargo
 TEST_TIMEOUT_S ?= 90
 export TEST_TIMEOUT_S
 
-.PHONY: help test build setup rust conformance parity perf scaling profile clean
+.PHONY: help test build setup rust conformance conformance-55 lua55-reference oracle-55 parity perf scaling profile clean
 
 help:
 	@grep -E '^#   make ' Makefile | sed 's/^#   /  /'
@@ -41,6 +44,15 @@ rust:
 
 conformance: build setup
 	./harness/run_official_all.sh
+
+conformance-55: build
+	./harness/run_official_all.sh --version 5.5 --tests-dir reference/lua-5.5.0-tests
+
+lua55-reference:
+	bash harness/build_lua55_compat_off.sh
+
+oracle-55: build lua55-reference
+	./specs/oracle/check.sh 5.5
 
 # Behavioral parity oracle: same wrapped test through lua-rs AND reference C
 # 5.4.7, diff normalized stdout+exit. Exits nonzero on any divergence.

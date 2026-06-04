@@ -115,6 +115,29 @@ fn index_to_value(state: &LuaState, idx: i32) -> LuaValue {
     }
 }
 
+/// Fast path for ordinary positive stack indices.
+///
+/// Stdlib C callbacks receive their arguments at positive indices. For hot
+/// callbacks such as `ipairsaux`, this avoids the negative/pseudo-index
+/// branches in `index_to_value` while preserving the same "missing argument is
+/// nil" behavior for positive indices.
+#[inline(always)]
+pub fn positive_index_value(state: &LuaState, idx: i32) -> LuaValue {
+    debug_assert!(idx > 0, "positive_index_value requires a positive index");
+    let ci = state.current_call_info();
+    let func_idx = ci.func;
+    let slot = func_idx + idx;
+    debug_assert!(
+        idx as u32 <= ci.top.saturating_sub(func_idx + 1),
+        "unacceptable index"
+    );
+    if slot.0 >= state.top_idx().0 {
+        LuaValue::Nil
+    } else {
+        state.get_at(slot)
+    }
+}
+
 // Returns a StackIdx for a valid (non-pseudo) actual stack slot.
 #[inline]
 fn index_to_stack_idx(state: &LuaState, idx: i32) -> StackIdx {

@@ -20,34 +20,42 @@ profile-backed explanations where it still is. Some workloads may beat C in a
 microbench shape; that is not the goal. Regressions and unexplained >2× gaps
 are backlog until measured otherwise.
 
-Current selected matrix (best-of-5, Apple M3 Max, latest local evidence
-`harness/bench/results/20260602T183215Z-98bd6bd-compare.json`):
+Current selected matrix (best-of-5, Apple M3 Max, latest local telemetry
+`harness/bench/results/20260604T040423Z-837e560-bin-ab.tsv`):
 
 | workload | wall ratio | category |
 |---|---:|---|
-| table_ops | 1.00× | short table insert/remove/iterate, passes 1.5× gate |
-| table_ops_long | 1.05× | table insert/remove long run, still at parity |
-| table_hash_pressure | 1.14× | string-key construction + hash insertion, now near parity |
-| string_ops_long | 1.59× | byte-string pattern/gsub hot paths, around the gate |
-| mandelbrot_long | 1.82× | float arithmetic + branch-heavy loop dispatch |
-| fibonacci | 1.87× | recursive call dispatch + small-int math |
-| binarytrees | 1.93× | allocation + tree traversal / GC pressure |
-| closure_ops | 1.94× | closure calls + upvalue reads/writes |
-| gc_pressure | 2.50× | allocation/collection throughput under churn |
+| table_ops | 1.00× | short table insert/remove/iterate, at parity |
+| table_ops_long | 0.996× | long table insert/remove/iterate, at parity |
+| table_hash_pressure | 1.17× | string-key construction + hash insertion, near parity but noisy |
+| table_field_index | 1.44× | GETFIELD/SETFIELD + GETI/SETI throughput |
+| string_ops_long | 1.48× | byte-string pattern/gsub hot paths, around the gate |
+| mandelbrot_long | 1.68× | float arithmetic + branch-heavy loop dispatch |
+| fibonacci | 1.69× | recursive call dispatch + small-int math |
+| loop_variants | 1.71× | numeric/while/repeat/generic loop dispatch |
+| compare_immediates | 1.80× | branch-heavy integer/string constant compares |
+| closure_ops | 1.88× | closure calls + upvalue reads/writes |
+| bitwise_mixed | 1.89× | tight integer bitwise ops with constants |
+| call_return_shapes | 1.93× | Lua call frame + return-shape dispatch |
+| binarytrees | 1.98× | allocation + tree traversal / GC pressure |
+| gc_pressure | 2.00× | allocation/collection throughput under churn |
+| numeric_mixed | 2.04× | tight integer add/mul/sub loop (#134 guard) |
 
-The latest kept packet made two-operand string/number concatenation avoid an
-intermediate interned numeric string. `table_hash_pressure` moved from the
-recent 1.75×-2.00× band to 1.14× in the broad matrix and 1.17× in a
-best-of-10 focused run. The overall ratio stayed about 1.54× because the
-largest remaining workloads are VM-call and GC dominated, not string-key
-construction dominated.
-The follow-up intern-cache retain fast path removes a fixed post-mark sort /
-retain cost from `gc_pressure`; focused best-of-10 evidence put that workload
-at 2.00×, but the broad selected matrix above remains the last full-matrix
-snapshot.
-The next tall poles are core VM call/upvalue dispatch, GC cadence on
-`gc_pressure`, old-revisit/cohort volume on `binarytrees`, table string-key
-write paths on `table_hash_pressure`, and byte-string pattern matching.
+The latest kept packet expanded the matrix around issue #134-style bytecode
+specialization and loop/call shapes, then fixed the highest-confidence misses:
+arithmetic/bitwise/compare immediate opcodes are now emitted where Lua 5.4 uses
+them, and generic-for C iterators avoid the full `precall_slow` path. The final
+full-matrix average moved 1.617× -> 1.606× on the same local host; the clearest
+rows were `loop_variants` 1.778× -> 1.714×, `table_field_index` 1.500× ->
+1.443×, `table_ops_long` 1.059× -> 0.996×, and `call_return_shapes` 1.977× ->
+1.933×. `numeric_mixed` remained noisy in the final full run, but opcode
+telemetry confirmed the intended immediate/K opcodes are being executed.
+
+The next tall poles are now specific: Lua-call frame setup/return re-entry
+(`call_return_shapes`, `closure_ops`), upvalue traffic (`closure_ops`), table
+allocation/resize plus young-sweep cadence (`binarytrees`, `gc_pressure`), and
+the remaining generic iterator cost in `call_known_c`, `ipairs_aux`,
+`get_i_value`, and `table_get_with_tm`.
 
 ## The gate
 

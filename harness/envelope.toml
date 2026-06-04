@@ -103,6 +103,26 @@ fixtures = ["mandelbrot"]
 benchmarks = ["mandelbrot"]
 security_cases = []
 
+[[capability]]
+id = "lua-perf-numeric-mixed"
+description = "numeric_mixed bench workload runs within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-parse/src/lib.rs", "crates/lua-vm/src/vm.rs"]
+architecture_objects = ["Instruction", "LuaState"]
+fixtures = ["numeric_mixed"]
+benchmarks = ["numeric_mixed"]
+security_cases = []
+
+[[capability]]
+id = "lua-perf-bytecode-specialization"
+description = "Bytecode-specialization bench workloads run within 1.5x of reference Lua 5.4.7 wall-clock."
+phase = 7
+owners = ["crates/lua-parse/src/lib.rs", "crates/lua-vm/src/vm.rs", "crates/lua-types/src/table.rs"]
+architecture_objects = ["Instruction", "LuaState", "CallInfo", "LuaTable"]
+fixtures = ["bitwise_mixed", "call_return_shapes", "compare_immediates", "loop_variants", "table_field_index"]
+benchmarks = ["bitwise_mixed", "call_return_shapes", "compare_immediates", "loop_variants", "table_field_index"]
+security_cases = []
+
 [[non_claim]]
 id = "luajit-performance"
 description = "No LuaJIT-level performance without a JIT. We're aiming for parity with reference Lua 5.4.7's interpreter."

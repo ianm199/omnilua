@@ -940,6 +940,27 @@ fn ccall_inner(
 }
 
 #[inline]
+fn ccall_known_c_inner(
+    state: &mut LuaState,
+    func_idx: StackIdx,
+    n_results: i32,
+    inc: u32,
+    f: crate::state::LuaCallable,
+) -> Result<(), LuaError> {
+    state.n_ccalls += inc;
+
+    if state.c_calls() >= LUAI_MAXCCALLS {
+        state.check_stack(0)?;
+        state.check_c_stack()?;
+    }
+
+    precall_c(state, func_idx, n_results, f, 0)?;
+
+    state.n_ccalls -= inc;
+    Ok(())
+}
+
+#[inline]
 fn ccall_inner_with_status(
     state: &mut LuaState,
     func_idx: StackIdx,
@@ -984,6 +1005,28 @@ pub(crate) fn callnoyield(
 ) -> Result<(), LuaError> {
     // NYCI = 0x10001 increments both the recursion count and the non-yieldable count.
     ccall_inner(state, func_idx, n_results, NYCI)
+}
+
+/// Fast path for VM call sites that already know the callee stack slot and only
+/// want to bypass the generic Lua/non-function dispatch when it is a C function.
+///
+/// Returns `Ok(false)` when the slot is a Lua closure or a non-function, so the
+/// caller can fall back to the normal `call` path and preserve metamethod
+/// behavior.
+#[inline]
+pub(crate) fn call_known_c(
+    state: &mut LuaState,
+    func_idx: StackIdx,
+    n_results: i32,
+) -> Result<bool, LuaError> {
+    let cfunc = match &state.stack[func_idx.0 as usize].val {
+        LuaValue::Function(LuaClosure::C(cl)) => state.global().c_functions[cl.func].clone(),
+        LuaValue::Function(LuaClosure::LightC(f)) => state.global().c_functions[*f].clone(),
+        _ => return Ok(false),
+    };
+
+    ccall_known_c_inner(state, func_idx, n_results, 1, cfunc)?;
+    Ok(true)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

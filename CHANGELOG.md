@@ -4,6 +4,31 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.31] - 2026-06-04
+
+### Added
+
+- **benchmarks/perf** (#134): expanded the benchmark matrix with bytecode and
+  dispatch telemetry workloads: `numeric_mixed`, `bitwise_mixed`,
+  `compare_immediates`, `loop_variants`, `call_return_shapes`, and
+  `table_field_index`.
+
+### Changed
+
+- **parser/vm**: emit Lua 5.4 immediate and constant-pool opcode shapes for
+  arithmetic, bitwise, shift, and equality expressions where the reference
+  compiler uses them, while preserving the correct metamethod fallback opcodes.
+- **vm/stdlib**: tighten the generic-for C-iterator path used by `ipairs`,
+  avoiding the full generic call slow path when the iterator is already a C
+  function and removing repeated positive stack-index resolution in
+  `ipairs_aux`.
+
+### Docs
+
+- Documented the final performance matrix, profile artifacts, and next packets
+  for call frames, iterator dispatch, allocation/GC cadence, and upvalue-heavy
+  closure workloads.
+
 ## [0.0.25] - 2026-06-01
 
 ### Fixed

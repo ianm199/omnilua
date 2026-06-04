@@ -1890,8 +1890,8 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
         'returning: loop {
             let ci_slot = ci.as_usize();
             let func_idx = state.call_info[ci_slot].func;
-            let cl = match state.stack.get(func_idx.0 as usize).map(|slot| slot.val) {
-                Some(LuaValue::Function(lua_types::closure::LuaClosure::Lua(c))) => c,
+            let cl = match state.stack[func_idx.0 as usize].val {
+                LuaValue::Function(lua_types::closure::LuaClosure::Lua(c)) => c,
                 _ => {
                     return Err(LuaError::runtime(format_args!(
                         "internal: execute called on non-Lua frame"
@@ -3221,23 +3221,29 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         // inline l_tforcall:
                         let tfc_ra = base + tfc_i.arg_a();
                         if tfor_55 {
-                            let func = state.get_at(tfc_ra);
-                            let state_val = state.get_at(tfc_ra + 1);
-                            let control = state.get_at(tfc_ra + 3);
-                            state.set_at(tfc_ra + 3, func);
-                            state.set_at(tfc_ra + 4, state_val);
-                            state.set_at(tfc_ra + 5, control);
+                            let src = tfc_ra.0 as usize;
+                            let func = state.stack[src].val.clone();
+                            let state_val = state.stack[src + 1].val.clone();
+                            let control = state.stack[src + 3].val.clone();
+                            state.stack[src + 3].val = func;
+                            state.stack[src + 4].val = state_val;
+                            state.stack[src + 5].val = control;
                             state.set_top(tfc_ra + 6);
                             state.set_ci_savedpc(ci, pc);
-                            state.call_at(tfc_ra + 3, tfc_i.arg_c() as i32)?;
+                            if !state.call_known_c_at(tfc_ra + 3, tfc_i.arg_c() as i32)? {
+                                state.call_at(tfc_ra + 3, tfc_i.arg_c() as i32)?;
+                            }
                         } else {
-                            for k in 0..3u32 {
-                                let v = state.get_at(tfc_ra + k as i32);
-                                state.set_at(tfc_ra + 4 + k as i32, v);
+                            let src = tfc_ra.0 as usize;
+                            let dst = src + 4;
+                            for k in 0..3usize {
+                                state.stack[dst + k].val = state.stack[src + k].val.clone();
                             }
                             state.set_top(tfc_ra + 4 + 3);
                             state.set_ci_savedpc(ci, pc);
-                            state.call_at(tfc_ra + 4, tfc_i.arg_c() as i32)?;
+                            if !state.call_known_c_at(tfc_ra + 4, tfc_i.arg_c() as i32)? {
+                                state.call_at(tfc_ra + 4, tfc_i.arg_c() as i32)?;
+                            }
                         }
                         trap = state.ci_trap(ci);
                         base = state.ci_base(ci); // updatestack
@@ -3260,23 +3266,29 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::TForCall => {
                         let ra = base + i.arg_a();
                         if tfor_55 {
-                            let func = state.get_at(ra);
-                            let state_val = state.get_at(ra + 1);
-                            let control = state.get_at(ra + 3);
-                            state.set_at(ra + 3, func);
-                            state.set_at(ra + 4, state_val);
-                            state.set_at(ra + 5, control);
+                            let src = ra.0 as usize;
+                            let func = state.stack[src].val.clone();
+                            let state_val = state.stack[src + 1].val.clone();
+                            let control = state.stack[src + 3].val.clone();
+                            state.stack[src + 3].val = func;
+                            state.stack[src + 4].val = state_val;
+                            state.stack[src + 5].val = control;
                             state.set_top(ra + 6);
                             state.set_ci_savedpc(ci, pc);
-                            state.call_at(ra + 3, i.arg_c() as i32)?;
+                            if !state.call_known_c_at(ra + 3, i.arg_c() as i32)? {
+                                state.call_at(ra + 3, i.arg_c() as i32)?;
+                            }
                         } else {
-                            for k in 0..3u32 {
-                                let v = state.get_at(ra + k as i32);
-                                state.set_at(ra + 4 + k as i32, v);
+                            let src = ra.0 as usize;
+                            let dst = src + 4;
+                            for k in 0..3usize {
+                                state.stack[dst + k].val = state.stack[src + k].val.clone();
                             }
                             state.set_top(ra + 4 + 3);
                             state.set_ci_savedpc(ci, pc);
-                            state.call_at(ra + 4, i.arg_c() as i32)?;
+                            if !state.call_known_c_at(ra + 4, i.arg_c() as i32)? {
+                                state.call_at(ra + 4, i.arg_c() as i32)?;
+                            }
                         }
                         trap = state.ci_trap(ci);
                         base = state.ci_base(ci); // updatestack

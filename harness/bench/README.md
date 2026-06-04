@@ -26,13 +26,19 @@ harness/bench/
 ├── vm-execute-attribution.py <- source-region parser for sample output
 ├── workloads/           <- self-contained .lua microbenchmarks (timed vs C)
 │   ├── binarytrees.lua  <- GC pressure (CLBG-style)
+│   ├── bitwise_mixed.lua <- tight integer bitwise ops with constants
+│   ├── call_return_shapes.lua <- Lua call frame + return-shape dispatch
 │   ├── closure_ops.lua  <- closure allocation + upvalue access
+│   ├── compare_immediates.lua <- branch-heavy integer/string constant compares
 │   ├── fibonacci.lua    <- recursive call dispatch + small-int math
 │   ├── gc_pressure.lua  <- allocation/collection throughput under churn
+│   ├── loop_variants.lua <- numeric/while/repeat/generic loop dispatch
 │   ├── mandelbrot.lua   <- float math + nested loops
 │   ├── mandelbrot_long.lua <- longer float math profile target
+│   ├── numeric_mixed.lua <- tight integer add/mul/sub loop (#134)
 │   ├── string_ops.lua   <- concat/find/gsub/byte ops
 │   ├── string_ops_long.lua <- longer byte-string profile target
+│   ├── table_field_index.lua <- GETFIELD/SETFIELD + GETI/SETI throughput
 │   ├── table_hash_pressure.lua <- hash-part insertion (#38 regression guard)
 │   ├── table_ops.lua    <- table insert/remove/iterate, array + hash
 │   └── table_ops_long.lua <- longer table insert/remove/iterate target

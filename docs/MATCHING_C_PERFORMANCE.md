@@ -993,6 +993,127 @@ values. That was not kept; the experiment broke the warning/finalizer CLI path.
 The lesson is narrow: **avoid type erasure when the type is already statically
 known**. Do not weaken GC-barrier semantics to get the same shape.
 
+### 7. `20260604T040423Z-837e560` — bytecode-specialization matrix and iterator dispatch packet
+
+**Pattern:** *When a profile says "VM execute," add the workload shape that
+separates opcode selection, call frames, iterator dispatch, and allocation.*
+
+Issue #134 reported a tight numeric loop where the port missed immediate/K
+opcode shapes that upstream Lua 5.4 emits. The useful response was not one
+single benchmark; it was a small matrix expansion:
+
+- `numeric_mixed.lua` — tight integer add/mul/sub loop (#134 guard)
+- `bitwise_mixed.lua` — integer bitwise operations with constants
+- `compare_immediates.lua` — integer/string constant compares
+- `loop_variants.lua` — numeric/while/repeat/generic loop dispatch
+- `call_return_shapes.lua` — Lua call frame + return-shape dispatch
+- `table_field_index.lua` — GETFIELD/SETFIELD + GETI/SETI throughput
+
+Pre-codegen expanded telemetry
+(`harness/bench/results/20260604T023017Z-837e560-bin-ab.tsv`) put the new
+rows in the expected danger zone: `bitwise_mixed` 2.679x,
+`compare_immediates` 2.188x, `loop_variants` 1.984x, and `numeric_mixed`
+2.038x. The compiler packet then taught the parser to emit the same immediate
+and constant-pool opcodes Lua 5.4 uses for these shapes: `ADDI`, arithmetic
+`*K` opcodes, bitwise `*K`/shift-immediate opcodes, `EQK`, and the matching
+`MMBINI`/`MMBINK` fallback opcodes for metamethod correctness.
+
+Opcode telemetry confirmed the compiler win:
+
+- `harness/bench/profiles/opcode-profile/20260604T033901Z-837e560-bitwise_mixed/opcodes.tsv`
+  shows `BANDK`, `BORK`, `SHRI`, and the remaining variable-variable `BXOR`.
+- `harness/bench/profiles/opcode-profile/20260604T033919Z-837e560-compare_immediates/opcodes.tsv`
+  shows `EQK` and `EQI` in the hot loop.
+- `harness/bench/profiles/opcode-profile/20260604T033939Z-837e560-numeric_mixed/opcodes.tsv`
+  shows `ADDI` and `MULK` dominating the arithmetic loop.
+
+The remaining strongest signal was `loop_variants`, specifically generic-for
+over `ipairs`. The first narrow cleanup resolved positive stdlib callback
+arguments without the full `index_to_value` path and reused the already
+resolved table value for `lua_geti`-style integer access. That removed
+`index_to_value`, `get_i`, and `check_arg_integer` from the top profile.
+
+The next kept packet was VM-side and still semantic-preserving: `TFORCALL`
+now tries a known-C-function call path before falling back to the full generic
+`call_at` / `precall` path. Lua iterators, non-functions, and `__call`
+metamethods still use the normal call machinery. The same arm also copies the
+three generic-for iterator slots with direct stack-slot clones instead of
+round-tripping through `get_at` / `set_at`.
+
+Final local full matrix
+(`harness/bench/results/20260604T040423Z-837e560-bin-ab.tsv`) compared with
+the previous full matrix
+(`harness/bench/results/20260604T033554Z-837e560-bin-ab.tsv`):
+
+| workload | before | after |
+|---|---:|---:|
+| binarytrees | 2.075x | 1.976x |
+| bitwise_mixed | 1.857x | 1.889x |
+| call_return_shapes | 1.977x | 1.933x |
+| closure_ops | 1.941x | 1.882x |
+| compare_immediates | 1.828x | 1.800x |
+| fibonacci | 1.711x | 1.686x |
+| gc_pressure | 2.000x | 2.000x |
+| loop_variants | 1.778x | 1.714x |
+| mandelbrot | 1.625x | 1.625x |
+| mandelbrot_long | 1.679x | 1.679x |
+| numeric_mixed | 1.963x | 2.038x |
+| string_ops | 1.000x | 1.000x |
+| string_ops_long | 1.494x | 1.481x |
+| table_field_index | 1.500x | 1.443x |
+| table_hash_pressure | 1.000x | 1.167x |
+| table_ops | 1.000x | 1.000x |
+| table_ops_long | 1.059x | 0.996x |
+
+The simple average moved 1.617x -> 1.606x. Treat the short rows
+(`numeric_mixed`, `table_hash_pressure`, `gc_pressure`) as telemetry until
+repeated; the opcode profiles prove the compiler shape even where the final
+wall-clock row was noisy.
+
+Post-packet profiles:
+
+- `loop_variants_x10`
+  (`harness/bench/profiles/20260604T035857Z-837e560-loop_variants_x10/summary.txt`)
+  has `precall_slow` down to 0.3%; remaining cost is `call_known_c`,
+  `ipairs_aux`, `get_i_value`, and `table_get_with_tm`.
+- `call_return_shapes_x10`
+  (`harness/bench/profiles/20260604T035909Z-837e560-call_return_shapes_x10/vm-execute.txt`)
+  buckets the broad call gap into `OP_CALL`, frame setup, returns, return
+  re-entry, and dispatch fetch. That is a real call-frame packet, not a stdlib
+  iterator cleanup.
+- `binarytrees_x10`
+  (`harness/bench/profiles/20260604T040216Z-837e560-binarytrees_x10/summary.txt`)
+  shows table allocation/resize, hash insert, malloc/free, and young sweep.
+- `gc_pressure_x300`
+  (`harness/bench/profiles/20260604T040238Z-837e560-gc_pressure_x300/summary.txt`)
+  shows young sweeping, table raw sets, barriers, intern recording, and
+  allocator cost. GC counters at
+  `harness/bench/profiles/gc-profile/20260604T040146Z-837e560-gc_pressure_x200/gc-rates.tsv`
+  measured about 6,279 minor collections per run, so the next packet is
+  collector cadence/table allocation, not another opcode-selection fix.
+
+What did *not* change:
+
+- No benchmark-specific fast paths.
+- No skipped metamethod fallbacks for arithmetic/bitwise immediate opcodes.
+- No skipped `__call` behavior in generic-for; non-C iterators fall back.
+- No skipped GC barriers.
+- No new unsafe.
+
+Next packet boundaries:
+
+- **Call frame packet:** attack `OP_CALL`, frame setup, `OP_RETURN*`, and
+  return re-entry together. A prior attempt to duplicate frame setup inside
+  `OP_CALL` did not hold; this needs a cleaner `CallInfo`/frame design.
+- **Iterator packet, if kept narrow:** specialize the remaining C-iterator step
+  only if it can preserve hooks, yields, metamethods, and result adjustment.
+  The current generic C-call fast path already removed the obvious waste.
+- **Allocation/GC packet:** split table allocation/resize and young-collection
+  cadence. `binarytrees` and `gc_pressure` are now table/collector workloads,
+  not compiler workloads.
+- **Upvalue packet:** `closure_ops` still spends material VM time in
+  `GETUPVAL` / `SETUPVAL` plus call/return traffic.
+
 ## The patterns by name
 
 Distilled from the representative commits above, plus the redis-rs-port hotpath

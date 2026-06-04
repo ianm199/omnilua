@@ -904,11 +904,15 @@ pub(crate) fn pairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// the value is nil (signalling end-of-iteration).
 ///
 fn ipairs_aux(state: &mut LuaState) -> Result<usize, LuaError> {
-    let i = state.check_arg_integer(2)?;
+    let i = match lua_vm::api::positive_index_value(state, 2) {
+        LuaValue::Int(i) => i,
+        _ => state.check_arg_integer(2)?,
+    };
     // luaL_intop(+, a, b) → wrapping integer addition (PORTING.md §9 / macros.tsv `intop`)
     let i = (i as u64).wrapping_add(1u64) as i64;
     state.push(LuaValue::Int(i));
-    let t = state.get_i(1, i)?;
+    let table = lua_vm::api::positive_index_value(state, 1);
+    let t = state.table_get_i_value(&table, i)?;
     if t == LuaType::Nil {
         Ok(1)
     } else {

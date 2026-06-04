@@ -3215,6 +3215,10 @@ impl LuaState {
         crate::do_::call(self, func, nresults)
     }
     #[inline(always)]
+    pub fn call_known_c_at(&mut self, func: StackIdx, nresults: i32) -> Result<bool, LuaError> {
+        crate::do_::call_known_c(self, func, nresults)
+    }
+    #[inline(always)]
     pub fn precall(
         &mut self,
         func: StackIdx,

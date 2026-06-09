@@ -20,3 +20,13 @@ table_ops_long	stdlib	-	longer insert/remove/iterate; 0.43x row is stdlib diverg
 table_setfield_same	vm-parity	20000000	repeated short-string SETFIELD writes to an existing key
 table_seti_same	vm-parity	20000000	repeated integer SETI writes to an existing array slot
 table_settable_string_key	vm-parity	20000000	repeated string-key SETTABLE writes to an existing key
+method_calls	vm-parity	6000000	OP_SELF obj:method() dispatch through a method table
+metatable_index_chain	vm-parity	3000000	metamethod-PRESENT reads via 2-level __index chain
+pcall_error	vm-parity	1200000	pcall overhead + error throw/unwind (2 pcalls per iteration)
+varargs_spread	vm-parity	2000000	vararg pack/spread, select, table.pack/unpack
+coroutine_pingpong	vm-parity	800000	resume/yield switch cost (400 coroutines x 2000 yields)
+string_format_mixed	stdlib	400000	string.format mixed specifiers + tostring
+concat_chain	vm-parity	1500000	short multi-operand OP_CONCAT chains
+sort_seeded	stdlib	-	table.sort default + custom comparator, LCG input
+json_roundtrip	macro	1500	pure-Lua JSON encode/decode round trip (real-program opcode mix)
+startup_empty	startup	-	process + runtime init only; startup constant for budgets

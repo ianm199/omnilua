@@ -229,6 +229,36 @@ Interpretation:
 - Numeric-loop work is sensitive to dispatch-loop layout. Treat broad branch
   edits skeptically and validate them against `numeric_mixed`.
 
+### Build-config experiments (PERF_PUSH_SPEC P4)
+
+**PGO (P4.1, 2026-06-09): the largest single lever measured to date.**
+`harness/bench/build-pgo.sh` (pinned training set: full workload matrix +
+calls/nextvar/strings/closure from the official suite). Full-matrix A/B vs
+stock at 10 interleaved pairs (artifact
+`20260609T204715Z-3f4088e-bin-ab.tsv`): 17/20 improved, median ~ -11%,
+nearly all rows 10/10 pairs. `numeric_mixed` 0.768, `fibonacci` 0.786,
+`loop_variants` 0.824, `gc_pressure` 0.874, `binarytrees` 0.879, setter
+rows 0.89-0.91, `call_return_shapes` 0.907. Estimated vs-C overall moves
+~1.51x -> ~1.34x.
+
+Two model consequences:
+
+1. **Layout displacement confirmed.** The P3 `numeric_mixed` +2-3% blip is
+   not just erased but inverted to -23%. Sub-3% single-row verdicts on
+   non-PGO binaries are layout luck; the gate tolerance policy is the right
+   default until instruction counts arbitrate.
+2. **One real trade:** `table_ops_long` +13.6% (0/10 pairs) — the profile
+   deprioritizes its stdlib shift loops. That row is stdlib-divergence
+   class where we are 2.3x FASTER than C, so it stays ~2.1x ahead even
+   after the loss. Acceptable for shipping; revisit if the row class ever
+   approaches parity from above.
+
+Ship status: evidence supports wiring PGO into release builds (separate
+packet: pipeline changes, ledger `variant` labeling so PGO ratios are never
+silently compared against non-PGO history, reproducibility via the pinned
+training set). Until that lands, ledgered compare.sh runs stay on stock
+builds.
+
 ## Rejected Or Inconclusive Experiments
 
 Machine-readable registry: **`harness/rejected-experiments.jsonl`** — one JSON

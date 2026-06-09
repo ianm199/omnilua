@@ -406,21 +406,27 @@ pub use lua_types::status::LuaStatus;
 
 // ─── StackValue ───────────────────────────────────────────────────────────────
 
-/// One slot on the Lua value stack.  Wraps a `LuaValue` and an optional
-/// to-be-closed delta (for the `tbclist` mechanism).
+/// One slot on the Lua value stack.
 ///
-/// types.tsv: `StackValue → StackValue { val: LuaValue, tbclist.delta: u16 }`
+/// C's `StackValue` overlays a to-be-closed delta (`tbclist.delta: u16`) in a
+/// union with the value, because C threads its tbclist through the stack
+/// itself. The Rust port keeps that list as a side structure
+/// (`LuaState.tbclist: Vec<StackIdx>`), so the slot is just the value and
+/// stays 16 bytes — matching C's slot size without the union. A vestigial
+/// `tbc_delta: u16` field (written, never read) padded every slot to 24 bytes
+/// until it was removed on 2026-06-09 (PERF_PUSH_SPEC.md P3).
+///
+/// types.tsv: `StackValue → StackValue { val: LuaValue }` (tbclist.delta →
+/// `LuaState.tbclist: Vec<StackIdx>`)
 #[derive(Clone)]
 pub struct StackValue {
     pub val: LuaValue,
-    pub tbc_delta: u16,
 }
 
 impl Default for StackValue {
     fn default() -> Self {
         StackValue {
             val: LuaValue::Nil,
-            tbc_delta: 0,
         }
     }
 }
@@ -2329,9 +2335,9 @@ impl LuaState {
     pub fn push(&mut self, val: LuaValue) {
         let top = self.top.0 as usize;
         if top < self.stack.len() {
-            self.stack[top] = StackValue { val, tbc_delta: 0 };
+            self.stack[top] = StackValue { val };
         } else {
-            self.stack.push(StackValue { val, tbc_delta: 0 });
+            self.stack.push(StackValue { val });
         }
         self.top = StackIdx(self.top.0 + 1);
     }
@@ -2514,7 +2520,6 @@ impl LuaState {
         }
         for i in start.0..end.0 {
             self.stack[i as usize].val = LuaValue::Nil;
-            self.stack[i as usize].tbc_delta = 0;
         }
     }
     /// Hot-path accessor: returns `Some(i)` only when the stack slot at `idx`
@@ -5270,7 +5275,6 @@ fn stack_init(thread: &mut LuaState) {
 
     thread.stack[0] = StackValue {
         val: LuaValue::Nil,
-        tbc_delta: 0,
     };
 
     thread.top = StackIdx(1);

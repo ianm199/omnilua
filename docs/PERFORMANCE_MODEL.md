@@ -231,9 +231,19 @@ These are useful because they define the edges of the search space:
 Each candidate needs correctness first, then a targeted A/B, then at least one
 profile that shows the expected source bucket shrinking.
 
-### 0. Delete the dead `StackValue.tbc_delta` field
+### 0. Delete the dead `StackValue.tbc_delta` field — APPLIED 2026-06-09
 
-Hypothesis (2026-06-09 audit, near-certain): `StackValue.tbc_delta`
+Outcome: `StackValue` 24 -> 16 bytes (C slot parity). 15/21 workloads
+improved — `call_return_shapes` -9-11%, `table_seti_same` -8.5%,
+`global_settabup_same` -7-8%, `compare_immediates` -8%, matrix total -3.6%
+(artifact `20260609T193931Z-2b482e7-bin-ab.tsv`). Correctness: 30/30 lib
+tests, GC canaries, 44/44 official. Known cost, confirmed twice:
+`numeric_mixed` +2-3.7% (layout displacement signature; recovery owned by
+the PGO packet P4.1, arbitration by instruction counts P2.1). The
+repeated-`dofile` `table_ops` livelock found during this gate is
+pre-existing and tracked separately.
+
+Original hypothesis (2026-06-09 audit): `StackValue.tbc_delta`
 (`crates/lua-vm/src/state.rs:414-417`) is write-only — the only
 non-constructor reference is a `= 0` write at `state.rs:2517`; the real
 to-be-closed mechanism is `LuaState.tbclist: Vec<StackIdx>`

@@ -958,6 +958,7 @@ impl TableInner {
         LuaValue::Nil
     }
 
+    #[inline(always)]
     fn get_short_str_slot(&self, key: &GcRef<LuaString>) -> TableSlotRef {
         debug_assert!(key.is_short());
         if self.is_dummy() {
@@ -977,6 +978,65 @@ impl TableInner {
             }
             n = (n as isize + nx as isize) as usize;
         }
+    }
+
+    #[inline(always)]
+    fn try_update_short_str(
+        &mut self,
+        key: &GcRef<LuaString>,
+        value: LuaValue,
+    ) -> Result<(), LuaValue> {
+        debug_assert!(key.is_short());
+        if self.is_dummy() {
+            return Err(value);
+        }
+        let mut n = self.hashpow2_idx(key.hash());
+        loop {
+            if self.node[n].key_is_short_str() {
+                let ks = self.node[n].key_string();
+                if lua_string_content_eq(ks, key) {
+                    self.node[n].value = value;
+                    return Ok(());
+                }
+            }
+            let nx = self.node[n].next;
+            if nx == 0 {
+                return Err(value);
+            }
+            n = (n as isize + nx as isize) as usize;
+        }
+    }
+
+    #[inline(always)]
+    fn try_update_int(&mut self, key: i64, value: LuaValue) -> Result<(), LuaValue> {
+        let alimit = self.alimit as u64;
+        let uk = key as u64;
+        if uk.wrapping_sub(1) < alimit {
+            self.array[(key - 1) as usize] = value;
+            return Ok(());
+        }
+        if !self.is_real_asize() && alimit > 0 {
+            let masked = (uk.wrapping_sub(1)) & !(alimit.wrapping_sub(1));
+            if masked < alimit {
+                self.array[(key - 1) as usize] = value;
+                return Ok(());
+            }
+        }
+        if !self.is_dummy() {
+            let mut n = self.hash_idx_for_int(key);
+            loop {
+                if self.node[n].key_is_int() && self.node[n].key_int() == key {
+                    self.node[n].value = value;
+                    return Ok(());
+                }
+                let nx = self.node[n].next;
+                if nx == 0 {
+                    break;
+                }
+                n = (n as isize + nx as isize) as usize;
+            }
+        }
+        Err(value)
     }
 
     /// Read a short-string key directly to a [`LuaValue`], mirroring the
@@ -1305,6 +1365,7 @@ impl TableInner {
 pub struct LuaTable {
     inner: RefCell<TableInner>,
     metatable: RefCell<Option<GcRef<LuaTable>>>,
+    has_metatable: Cell<bool>,
     weak_mode: Cell<u8>,
 }
 
@@ -1323,6 +1384,7 @@ impl Default for LuaTable {
         LuaTable {
             inner: RefCell::new(TableInner::new()),
             metatable: RefCell::new(None),
+            has_metatable: Cell::new(false),
             weak_mode: Cell::new(0),
         }
     }
@@ -1464,6 +1526,27 @@ impl LuaTable {
         }
     }
 
+    /// Update an existing short-string slot without routing through the
+    /// generic cold setter. Returns the value to the caller when the key is
+    /// absent so the insertion/rehash path can account buffer growth.
+    #[inline(always)]
+    pub fn try_update_short_str(&self, k: &GcRef<LuaString>, v: LuaValue) -> Result<(), LuaValue> {
+        if !k.is_short() {
+            return Err(v);
+        }
+        let mut inner = self.inner.borrow_mut();
+        inner.try_update_short_str(k, v)
+    }
+
+    /// Update an existing integer slot without buffer accounting. This covers
+    /// the stable `SETI` hot path; absent keys still fall back to the normal
+    /// set path so array growth and hash insertion remain accounted.
+    #[inline(always)]
+    pub fn try_update_int(&self, k: i64, v: LuaValue) -> Result<(), LuaValue> {
+        let mut inner = self.inner.borrow_mut();
+        inner.try_update_int(k, v)
+    }
+
     /// Generic-key path for [`Self::try_raw_set`]. Split out so the
     /// integer fast path stays branch-light and inlineable.
     #[cold]
@@ -1545,12 +1628,18 @@ impl LuaTable {
         self.metatable.borrow().clone()
     }
 
+    #[inline(always)]
+    pub fn has_metatable(&self) -> bool {
+        self.has_metatable.get()
+    }
+
     /// Install a metatable. Inspects its `__mode` field eagerly so the
     /// GC trace impl can read [`weak_mode`] without re-entering the
     /// metatable RefCell.
     pub fn set_metatable(&self, mt: Option<GcRef<LuaTable>>) {
         let mode = mt.as_ref().map(|t| extract_weak_mode(t)).unwrap_or(0);
         self.weak_mode.set(mode);
+        self.has_metatable.set(mt.is_some());
         *self.metatable.borrow_mut() = mt;
     }
 

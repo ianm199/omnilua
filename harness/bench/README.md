@@ -38,10 +38,14 @@ harness/bench/
 │   ├── numeric_mixed.lua <- tight integer add/mul/sub loop (#134)
 │   ├── string_ops.lua   <- concat/find/gsub/byte ops
 │   ├── string_ops_long.lua <- longer byte-string profile target
+│   ├── global_settabup_same.lua <- repeated _ENV/global SETTABUP writes
 │   ├── table_field_index.lua <- GETFIELD/SETFIELD + GETI/SETI throughput
 │   ├── table_hash_pressure.lua <- hash-part insertion (#38 regression guard)
 │   ├── table_ops.lua    <- table insert/remove/iterate, array + hash
-│   └── table_ops_long.lua <- longer table insert/remove/iterate target
+│   ├── table_ops_long.lua <- longer table insert/remove/iterate target
+│   ├── table_setfield_same.lua <- repeated short-string SETFIELD writes
+│   ├── table_seti_same.lua <- repeated integer SETI writes
+│   └── table_settable_string_key.lua <- repeated string-key SETTABLE writes
 └── scaling/             <- size-parameterized workloads for scaling-check.py
     ├── array_insert.lua
     ├── gc_churn.lua

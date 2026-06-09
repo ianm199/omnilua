@@ -119,8 +119,8 @@ description = "Bytecode-specialization bench workloads run within 1.5x of refere
 phase = 7
 owners = ["crates/lua-parse/src/lib.rs", "crates/lua-vm/src/vm.rs", "crates/lua-types/src/table.rs"]
 architecture_objects = ["Instruction", "LuaState", "CallInfo", "LuaTable"]
-fixtures = ["bitwise_mixed", "call_return_shapes", "compare_immediates", "loop_variants", "table_field_index"]
-benchmarks = ["bitwise_mixed", "call_return_shapes", "compare_immediates", "loop_variants", "table_field_index"]
+fixtures = ["bitwise_mixed", "call_return_shapes", "compare_immediates", "global_settabup_same", "loop_variants", "table_field_index", "table_setfield_same", "table_seti_same", "table_settable_string_key"]
+benchmarks = ["bitwise_mixed", "call_return_shapes", "compare_immediates", "global_settabup_same", "loop_variants", "table_field_index", "table_setfield_same", "table_seti_same", "table_settable_string_key"]
 security_cases = []
 
 [[non_claim]]

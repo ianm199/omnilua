@@ -812,12 +812,19 @@ impl StackIdxExt for StackIdx {
 /// the lua-vm wrapper does not double-check.
 pub trait LuaTableRefExt {
     fn metatable(&self) -> Option<GcRef<LuaTable>>;
+    fn has_metatable(&self) -> bool;
     fn as_ptr(&self) -> *const ();
     fn get(&self, _k: &LuaValue) -> LuaValue;
     fn get_int(&self, _k: i64) -> LuaValue;
     fn get_short_str(&self, _k: &GcRef<LuaString>) -> LuaValue;
     fn raw_set(&self, _state: &mut LuaState, _k: LuaValue, _v: LuaValue) -> Result<(), LuaError>;
     fn raw_set_int(&self, _state: &mut LuaState, _k: i64, _v: LuaValue) -> Result<(), LuaError>;
+    fn raw_set_short_str(
+        &self,
+        _state: &mut LuaState,
+        _k: GcRef<LuaString>,
+        _v: LuaValue,
+    ) -> Result<(), LuaError>;
     fn invalidate_tm_cache(&self);
     fn resize(&self, _state: &mut LuaState, _na: usize, _nh: usize) -> Result<(), LuaError>;
     fn next(&self, _k: LuaValue) -> Result<Option<(LuaValue, LuaValue)>, LuaError>;
@@ -826,6 +833,10 @@ impl LuaTableRefExt for GcRef<LuaTable> {
     #[inline]
     fn metatable(&self) -> Option<GcRef<LuaTable>> {
         (**self).metatable()
+    }
+    #[inline]
+    fn has_metatable(&self) -> bool {
+        (**self).has_metatable()
     }
     #[inline]
     fn as_ptr(&self) -> *const () {
@@ -845,23 +856,53 @@ impl LuaTableRefExt for GcRef<LuaTable> {
     }
     /// Forwards to [`LuaTable::try_raw_set`], which performs the nil/NaN
     /// key validation internally as part of its integer-fast-path match.
-    #[inline]
-    fn raw_set(&self, _state: &mut LuaState, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
-        let before = (**self).buffer_bytes();
-        let result = (**self).try_raw_set(k, v);
-        if result.is_ok() {
-            account_table_buffer_delta(self, before);
+    #[inline(always)]
+    fn raw_set(&self, state: &mut LuaState, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
+        match k {
+            LuaValue::Int(i) => return self.raw_set_int(state, i, v),
+            LuaValue::Str(s) if s.is_short() => return self.raw_set_short_str(state, s, v),
+            k => {
+                let before = (**self).buffer_bytes();
+                let result = (**self).try_raw_set(k, v);
+                if result.is_ok() {
+                    account_table_buffer_delta(self, before);
+                }
+                result
+            }
         }
-        result
     }
-    #[inline]
+    #[inline(always)]
     fn raw_set_int(&self, _state: &mut LuaState, k: i64, v: LuaValue) -> Result<(), LuaError> {
-        let before = (**self).buffer_bytes();
-        let result = (**self).try_raw_set_int(k, v);
-        if result.is_ok() {
-            account_table_buffer_delta(self, before);
+        match (**self).try_update_int(k, v) {
+            Ok(()) => Ok(()),
+            Err(v) => {
+                let before = (**self).buffer_bytes();
+                let result = (**self).try_raw_set_int(k, v);
+                if result.is_ok() {
+                    account_table_buffer_delta(self, before);
+                }
+                result
+            }
         }
-        result
+    }
+    #[inline(always)]
+    fn raw_set_short_str(
+        &self,
+        _state: &mut LuaState,
+        k: GcRef<LuaString>,
+        v: LuaValue,
+    ) -> Result<(), LuaError> {
+        match (**self).try_update_short_str(&k, v) {
+            Ok(()) => Ok(()),
+            Err(v) => {
+                let before = (**self).buffer_bytes();
+                let result = (**self).try_raw_set(LuaValue::Str(k), v);
+                if result.is_ok() {
+                    account_table_buffer_delta(self, before);
+                }
+                result
+            }
+        }
     }
     fn invalidate_tm_cache(&self) {}
     fn resize(&self, _state: &mut LuaState, na: usize, nh: usize) -> Result<(), LuaError> {
@@ -3473,7 +3514,7 @@ impl LuaState {
         // get-hot-path cost on tables without metamethods, which is the
         // common case in table.remove/insert shift loops and most user code.
         if let LuaValue::Table(tbl) = t {
-            if tbl.metatable().is_none() {
+            if !tbl.has_metatable() {
                 return Ok(tbl.get(k));
             }
         }
@@ -3509,7 +3550,7 @@ impl LuaState {
         v: LuaValue,
     ) -> Result<(), LuaError> {
         if let LuaValue::Table(tbl) = t {
-            if tbl.metatable().is_none() {
+            if !tbl.has_metatable() {
                 self.gc_table_barrier_back(tbl, &v);
                 return self.table_raw_set(t, k, v);
             }
@@ -3839,14 +3880,22 @@ impl LuaState {
     pub fn gc_barrier_back(&mut self, t: &dyn std::any::Any, v: &LuaValue) {
         self.gc().barrier_back(t, v);
     }
+    #[inline(always)]
     pub fn gc_value_barrier_back(&mut self, t: &LuaValue, v: &LuaValue) {
+        if !v.is_collectable() {
+            return;
+        }
         if let LuaValue::Table(tbl) = t {
             self.gc_table_barrier_back(tbl, v);
         } else {
             self.gc_barrier_back(t, v);
         }
     }
+    #[inline(always)]
     pub fn gc_table_barrier_back(&mut self, t: &GcRef<LuaTable>, v: &LuaValue) {
+        if !v.is_collectable() {
+            return;
+        }
         self.gc().table_barrier_back(t, v);
     }
     pub fn gc_barrier_upval(&mut self, uv: &GcRef<UpVal>, v: &LuaValue) {
@@ -3941,6 +3990,9 @@ fn barrier_lua_value<P>(
 ) where
     P: lua_gc::Trace + 'static,
 {
+    if !child.is_collectable() {
+        return;
+    }
     if generational && matches!(kind, BarrierKind::Backward) {
         heap.generational_backward_barrier(parent.0);
     }

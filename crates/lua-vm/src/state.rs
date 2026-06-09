@@ -2459,26 +2459,29 @@ impl LuaState {
     /// `ls->h` anchor table.
     ///
     /// macros.tsv: `luaS_new → state.intern_str(s)`
+    /// The hit path takes a borrowed `&[u8]` lookup with ZERO allocation —
+    /// the previous entry-API shape boxed the key on every call, so a tight
+    /// concat loop reusing 1000 interned strings paid 1.5M key
+    /// allocations/frees (12.6% intern_str + ~25% allocator in the
+    /// concat_chain profile, 20260609T2201Z). C-Lua's `luaS_newlstr` walks
+    /// its bucket allocation-free; this matches that shape.
     pub fn intern_str(&mut self, bytes: &[u8]) -> Result<GcRef<LuaString>, LuaError> {
         if bytes.len() <= crate::string::MAX_SHORT_LEN {
-            let mut inserted = false;
+            {
+                let global = self.global();
+                if let Some(existing) = global.interned_lt.get(bytes) {
+                    return Ok(existing.clone());
+                }
+            }
             let interned = {
                 let key = bytes.to_vec().into_boxed_slice();
                 let mut global = self.global_mut();
-                match global.interned_lt.entry(key) {
-                    Entry::Occupied(existing) => existing.get().clone(),
-                    Entry::Vacant(vacant) => {
-                        let new_ref = GcRef::new(LuaString::from_bytes(vacant.key().to_vec()));
-                        new_ref.account_buffer(new_ref.buffer_bytes() as isize);
-                        vacant.insert(new_ref.clone());
-                        inserted = true;
-                        new_ref
-                    }
-                }
+                let new_ref = GcRef::new(LuaString::from_bytes(key.to_vec()));
+                new_ref.account_buffer(new_ref.buffer_bytes() as isize);
+                global.interned_lt.insert(key, new_ref.clone());
+                new_ref
             };
-            if inserted {
-                self.mark_gc_check_needed();
-            }
+            self.mark_gc_check_needed();
             Ok(interned)
         } else {
             self.mark_gc_check_needed();

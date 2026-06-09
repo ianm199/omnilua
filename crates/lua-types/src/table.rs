@@ -849,7 +849,18 @@ impl TableInner {
 
             if othern != mp {
                 let mut prev = othern;
+                let mut steps = 0usize;
                 while (prev as isize + self.node[prev].next as isize) as usize != mp {
+                    steps += 1;
+                    if steps > self.node.len() {
+                        panic!(
+                            "table hash chain invariant broken: node {} unreachable from main position {} \
+                             ({} nodes; usually a missing GC key barrier — see ltable.c:717 parity note)",
+                            mp,
+                            othern,
+                            self.node.len()
+                        );
+                    }
                     prev = (prev as isize + self.node[prev].next as isize) as usize;
                 }
                 self.node[prev].next = (f as isize - prev as isize) as i32;

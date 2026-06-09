@@ -862,12 +862,21 @@ impl LuaTableRefExt for GcRef<LuaTable> {
     }
     /// Forwards to [`LuaTable::try_raw_set`], which performs the nil/NaN
     /// key validation internally as part of its integer-fast-path match.
+    ///
+    /// A collectable KEY stored into the table needs its own backward
+    /// barrier, mirroring C-Lua's `luaC_barrierback(L, obj2gco(t), key)`
+    /// inside `luaH_newkey` (ltable.c:717). Without it a young key inserted
+    /// into an old table is invisible to the generational collector and is
+    /// freed while still referenced — the 2026-06-09 table livelock.
     #[inline(always)]
     fn raw_set(&self, state: &mut LuaState, k: LuaValue, v: LuaValue) -> Result<(), LuaError> {
         match k {
             LuaValue::Int(i) => return self.raw_set_int(state, i, v),
             LuaValue::Str(s) if s.is_short() => return self.raw_set_short_str(state, s, v),
             k => {
+                if k.is_collectable() {
+                    state.gc_table_barrier_back(self, &k);
+                }
                 let before = (**self).buffer_bytes();
                 let result = (**self).try_raw_set(k, v);
                 if result.is_ok() {
@@ -891,16 +900,20 @@ impl LuaTableRefExt for GcRef<LuaTable> {
             }
         }
     }
+    /// The miss arm inserts a NEW short-string key, so the key itself is
+    /// barriered (C-Lua does this inside `luaH_newkey`, ltable.c:717); the
+    /// hit arm only overwrites a value whose key is already traced.
     #[inline(always)]
     fn raw_set_short_str(
         &self,
-        _state: &mut LuaState,
+        state: &mut LuaState,
         k: GcRef<LuaString>,
         v: LuaValue,
     ) -> Result<(), LuaError> {
         match (**self).try_update_short_str(&k, v) {
             Ok(()) => Ok(()),
             Err(v) => {
+                state.gc_table_barrier_back(self, &LuaValue::Str(k));
                 let before = (**self).buffer_bytes();
                 let result = (**self).try_raw_set(LuaValue::Str(k), v);
                 if result.is_ok() {

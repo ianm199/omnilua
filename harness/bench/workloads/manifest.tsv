@@ -15,7 +15,7 @@ string_ops	stdlib	-	concat/find/gsub/byte ops
 string_ops_long	stdlib	-	longer byte-string pattern/gsub target
 table_field_index	vm-parity	12000000	GETFIELD/SETFIELD + GETI/SETI throughput
 table_hash_pressure	vm-parity	-	string-key construction + hash insertion (#38 guard)
-table_ops	stdlib	-	LIVELOCK under repeat (generational-GC pacing bug, see task/registry); auto-skipped by compare_bins until fixed; table.insert/remove/iterate
+table_ops	stdlib	-	table.insert/remove/iterate; was LIVELOCKED until the 2026-06-09 GC key-barrier fix (missing ltable.c:717 parity)
 table_ops_long	stdlib	-	longer insert/remove/iterate; 0.43x row is stdlib divergence, not VM parity
 table_setfield_same	vm-parity	20000000	repeated short-string SETFIELD writes to an existing key
 table_seti_same	vm-parity	20000000	repeated integer SETI writes to an existing array slot

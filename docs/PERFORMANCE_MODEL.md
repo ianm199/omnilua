@@ -54,7 +54,7 @@ paths hid the two tallest poles on the board:
 | table_field_index | 1.19 | 1.14 | |
 | table_hash_pressure | 1.07 | 1.02 | at parity |
 | table_ops_long | 0.43 | 0.43 | stdlib-divergence row, not VM parity |
-| table_ops | — | — | skipped: generational-GC LIVELOCK (tracked) |
+| table_ops | — | — | livelock FIXED 2026-06-09 (missing key barrier, ltable.c:717 parity); row re-baselines next compare.sh run |
 | startup_empty | — | — | absolute startup constant only; excluded from ratios/ledger |
 
 All ratios above are STOCK builds. The measured PGO lever (see Build-config

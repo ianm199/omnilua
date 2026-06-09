@@ -4,6 +4,23 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.32] - 2026-06-09
+
+### Added
+
+- **benchmarks/perf** (#134): added focused coverage for isolated table and
+  global setter hot paths: `table_setfield_same`,
+  `table_settable_string_key`, `table_seti_same`, and
+  `global_settabup_same`.
+
+### Changed
+
+- **vm/table** (#134): accelerated stable table/global setter paths by adding
+  existing-slot updates for short-string and integer keys, routing `SETFIELD`,
+  string-key `SETTABLE`, `SETI`, and no-metatable `SETTABUP` through those
+  paths, caching table metatable presence, and avoiding write-barrier work for
+  non-collectable values.
+
 ## [0.0.31] - 2026-06-04
 
 ### Added

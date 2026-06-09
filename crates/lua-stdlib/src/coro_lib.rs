@@ -319,20 +319,31 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
 }
 
 fn push_parent_gc_snapshot(state: &mut LuaState) {
-    let top = state.top_idx();
-    let stack_snapshot: Vec<LuaValue> = (0..top.0)
-        .map(|i| state.get_at(lua_vm::state::StackIdx(i)))
-        .collect();
-    let open_upval_snapshot = state.openupval.clone();
+    let top = (state.top_idx().0 as usize).min(state.stack.len());
+    let (mut stack_snapshot, mut upval_snapshot) = {
+        let mut g = state.global_mut();
+        (
+            g.snapshot_stack_pool.pop().unwrap_or_default(),
+            g.snapshot_upval_pool.pop().unwrap_or_default(),
+        )
+    };
+    stack_snapshot.extend(state.stack[..top].iter().map(|sv| sv.val));
+    upval_snapshot.extend(state.openupval.iter().cloned());
     let mut g = state.global_mut();
     g.suspended_parent_stacks.push(stack_snapshot);
-    g.suspended_parent_open_upvals.push(open_upval_snapshot);
+    g.suspended_parent_open_upvals.push(upval_snapshot);
 }
 
 fn pop_parent_gc_snapshot(state: &mut LuaState) {
     let mut g = state.global_mut();
-    g.suspended_parent_open_upvals.pop();
-    g.suspended_parent_stacks.pop();
+    if let Some(mut v) = g.suspended_parent_open_upvals.pop() {
+        v.clear();
+        g.snapshot_upval_pool.push(v);
+    }
+    if let Some(mut v) = g.suspended_parent_stacks.pop() {
+        v.clear();
+        g.snapshot_stack_pool.push(v);
+    }
 }
 
 /// Helper: push a string literal or fall back to Nil on intern failure.

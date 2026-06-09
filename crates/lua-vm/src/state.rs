@@ -1744,6 +1744,16 @@ pub struct GlobalState {
     /// child coroutine cannot sweep entries still present in the parent's
     /// `openupval` list.
     pub suspended_parent_open_upvals: Vec<Vec<GcRef<UpVal>>>,
+
+    /// Capacity pools for the two snapshot kinds above. A resume previously
+    /// allocated and freed a fresh `Vec` per snapshot — 2 mallocs + 2 frees
+    /// on every `coroutine.resume` (the top allocator frames in the
+    /// coroutine_pingpong profile, 20260609T2243Z). Popped snapshots park
+    /// their (cleared) buffers here for reuse; pool depth is bounded by the
+    /// maximum resume nesting depth. The pooled vectors are always empty, so
+    /// they root nothing.
+    pub snapshot_stack_pool: Vec<Vec<LuaValue>>,
+    pub snapshot_upval_pool: Vec<Vec<GcRef<UpVal>>>,
 }
 
 /// `LUA_MASKCOUNT` (`1 << LUA_HOOKCOUNT`) — the count-hook event mask the
@@ -5764,6 +5774,8 @@ pub fn new_state() -> Option<LuaState> {
         cross_thread_upvals: std::collections::HashMap::new(),
         suspended_parent_stacks: Vec::new(),
         suspended_parent_open_upvals: Vec::new(),
+        snapshot_stack_pool: Vec::new(),
+        snapshot_upval_pool: Vec::new(),
     };
 
     let global_rc = Rc::new(RefCell::new(global));

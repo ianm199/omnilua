@@ -1,6 +1,0 @@
-testing strings and string library
-testing 'format %a %A'
-
- >>> testC not active: skipping 'pushfstring' tests <<<
-
-OK

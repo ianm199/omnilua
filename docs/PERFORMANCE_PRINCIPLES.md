@@ -23,50 +23,13 @@ profile-backed explanations where it still is. Some workloads may beat C in a
 microbench shape; that is not the goal. Regressions and unexplained >2× gaps
 are backlog until measured otherwise.
 
-Current selected matrix (best-of-5, Apple M3 Max, latest release-candidate
-telemetry `harness/bench/results/20260604T043551Z-4866f4c-compare.tsv`;
-total wall-clock ratio 1.49x, unweighted row average 1.57x):
-
-| workload | wall ratio | category |
-|---|---:|---|
-| table_ops | 1.00× | short table insert/remove/iterate, at parity |
-| table_ops_long | 1.00× | long table insert/remove/iterate, at parity |
-| table_hash_pressure | 1.14× | string-key construction + hash insertion, near parity but noisy |
-| table_field_index | 1.41× | GETFIELD/SETFIELD + GETI/SETI throughput |
-| string_ops_long | 1.49× | byte-string pattern/gsub hot paths, around the gate |
-| mandelbrot_long | 1.57× | float arithmetic + branch-heavy loop dispatch |
-| fibonacci | 1.62× | recursive call dispatch + small-int math |
-| mandelbrot | 1.62× | float arithmetic + branch-heavy loop dispatch |
-| loop_variants | 1.66× | numeric/while/repeat/generic loop dispatch |
-| compare_immediates | 1.66× | branch-heavy integer/string constant compares |
-| closure_ops | 1.78× | closure calls + upvalue reads/writes |
-| binarytrees | 1.91× | allocation + tree traversal / GC pressure |
-| numeric_mixed | 1.93× | tight integer add/mul/sub loop (#134 guard) |
-| bitwise_mixed | 1.96× | tight integer bitwise ops with constants |
-| gc_pressure | 2.00× | allocation/collection throughput under churn |
-| call_return_shapes | 2.02× | Lua call frame + return-shape dispatch |
-
-The latest kept packet expanded the matrix around issue #134-style bytecode
-specialization and loop/call shapes, then fixed the highest-confidence misses:
-arithmetic/bitwise/compare immediate opcodes are now emitted where Lua 5.4 uses
-them, and generic-for C iterators avoid the full `precall_slow` path. The final
-unweighted full-matrix average moved 1.617× -> 1.606× on the same local host.
-The release-candidate rerun after the conformance fixes had a 1.49× total
-wall-clock ratio and a 1.57× unweighted row average. The clearest rows remain
-`loop_variants`, `table_field_index`, and `table_ops_long`; `numeric_mixed`
-still needs a deeper VM/call-frame pass even though opcode telemetry confirmed
-the intended immediate/K opcodes are being executed.
-
-The release gate also paid for itself: rerunning the official suites after the
-perf packet exposed version-sensitive correctness edges in `__call` chain
-limits, stripped-debug error prefixes, and high-index method-name attribution.
-Those were fixed before release, with Lua 5.4 at 44/44 and Lua 5.5 at 34/34.
-
-The next tall poles are now specific: Lua-call frame setup/return re-entry
-(`call_return_shapes`, `closure_ops`), upvalue traffic (`closure_ops`), table
-allocation/resize plus young-sweep cadence (`binarytrees`, `gc_pressure`), and
-the remaining generic iterator cost in `call_known_c`, `ipairs_aux`,
-`get_i_value`, and `table_get_with_tm`.
+The current scorecard, tall-pole ranking, and packet candidates live in
+**`docs/PERFORMANCE_MODEL.md`** — the single source of truth for state.
+Hand-copied scorecards in this file rotted (a v0.0.31-era matrix sat here
+while the model doc carried v0.0.32) and were removed on 2026-06-09; this
+file keeps only the rules and the named patterns. Experiment-by-experiment
+history lives in `docs/MATCHING_C_PERFORMANCE.md`, and the active work plan
+is `docs/PERF_PUSH_SPEC.md`.
 
 ## The gate
 
@@ -386,13 +349,18 @@ the ORDER/BITWISE opcodes. But the bench-driven discipline matters:
 we'd otherwise have claimed "fixed the fibonacci arith clones" when
 the truth is "fixed mandelbrot incidentally, fibonacci was elsewhere."
 
-### 5. Reference-counted values: clone-vs-borrow
+### 5. Value copies are free; borrows are the tax
 
-`LuaValue` carries `GcRef<T>` for tables / strings / closures. Cloning
-that ref is cheap (one refcount bump) but not free. In tight loops,
-prefer borrowing through `&LuaValue` or `&GcRef<T>` if the lifetime
-allows. Profile to see whether `Drop`/`Clone` for `LuaValue` is
-showing up.
+`LuaValue` is a 16-byte `Copy` enum and `GcRef<T>` is a `Copy` pointer
+wrapper (`crates/lua-types/src/gc.rs`) — there is no reference count.
+Copying values in tight loops is a plain memcpy and almost never the
+bottleneck. (An earlier version of this section described a refcount bump
+that does not exist in the current representation; corrected 2026-06-09.)
+The real representation tax is interior mutability and helper boundaries:
+`RefCell`/`Cell` borrow-flag traffic on shared GC structures (`LuaTable`'s
+metatable and data cells), and `Result`-shaped fast-path helpers that move
+keys/values back out by value on the miss path. Profile for borrow flags
+and helper frames, not for `Clone`/`Drop`.
 
 ### 6. Avoid type erasure on hot paths
 

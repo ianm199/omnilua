@@ -48,3 +48,6 @@ harness/bench/profiles/
 # Harness loop state (process state, not artifacts)
 harness/loop/state/
 .claude/worktrees/
+
+# oracle scratch outputs — never commit (harness/CLAUDE.md)
+harness/impl/official/*.out

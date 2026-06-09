@@ -1,6 +1,0 @@
-testing generational garbage collection
-+
-
- >>> testC not active: skipping some generational tests <<<
-
-OK

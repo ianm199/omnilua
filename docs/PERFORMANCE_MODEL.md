@@ -6,9 +6,12 @@ gaps, and packet candidates into one operating model.
 
 Read this alongside:
 
+- `docs/PERF_PUSH_SPEC.md` for the active 2026-06 work plan (phases P0–P7).
 - `docs/PERFORMANCE_PRINCIPLES.md` for the rules and packet discipline.
 - `docs/MATCHING_C_PERFORMANCE.md` for the longer research journal.
 - `harness/bench/README.md` for exact benchmark/profiler usage.
+- `harness/rejected-experiments.jsonl` before forming any packet that touches
+  a previously tried mechanism.
 
 ## Current Position
 
@@ -45,6 +48,22 @@ Local Apple M3 Max telemetry after the release dashboard commit
 Important reading: aggregate table workloads are not the problem anymore.
 Specific existing-key setter opcodes are.
 
+### Measurement caveats on the table above (2026-06-09 audit)
+
+- **The Linux column comes from ephemeral `ubuntu-latest` runners**
+  (`release.yml`); hardware varies per release, so cross-release Linux
+  trends conflate instance drift with code drift. Treat Linux CI ratios as
+  smoke. The pinned Apple M3 Max host is the wall-clock trend instrument.
+- **The top setter rows were measured on 0.05–0.07 s samples** at
+  centisecond timer resolution with process startup included
+  (`20260609T163417Z` artifact: `table_seti_same` C wall 0.05 s,
+  `gc_pressure` 0.02 s). The tall-pole *ranking* is provisional until the
+  re-baseline at enforced ≥0.5 s samples (PERF_PUSH_SPEC P1.3/P1.6).
+- **`table_ops_long` at 0.430x is not a VM-parity number.** We appear to be
+  2.3x faster than C there because stdlib shift loops diverge from C's
+  per-element API layering (pending confirmation). Label it a stdlib row;
+  do not average it with VM rows or let it mask VM regressions.
+
 ## Mental Model
 
 The remaining gap is mostly interpreter overhead, not a single algorithmic
@@ -53,7 +72,12 @@ failure. Use these buckets when classifying profiles:
 - **Dispatch and trap checks.** `vm::execute` source-line attribution often
   shows `DISPATCH_FETCH`, `UNKNOWN_INLINED`, and hook/trap-adjacent lines. Treat
   broad dispatch edits as high risk because small code-layout changes can move
-  unrelated workloads.
+  unrelated workloads. Structural note: C's `trap` serves two masters — hooks
+  *and* stack-reallocation pointer revalidation (`lvm.c:1139` "stack
+  reallocation or hooks?", `ldo.c:193`). The Rust stack is index-based, so the
+  realloc half does not apply here; some per-`CallInfo` trap reads exist only
+  as C-pointer-machinery mimicry. Trap packets should ask "which re-reads
+  serve a purpose we actually have" before guarding individual sites.
 - **Call frame setup and return re-entry.** Recursive and closure-heavy
   workloads show time in `OP_CALL`, `FRAME_SETUP`, `OP_RETURN1`, and the ret
   label that restores the previous `CallInfo`.
@@ -64,9 +88,11 @@ failure. Use these buckets when classifying profiles:
   measuring repeated writes to already-present keys. These should avoid generic
   insertion/rehash and metamethod work when the VM has already proved a plain
   table/no-metatable path.
-- **Representation and borrow boundaries.** Look for `RefCell` borrows, cloned
-  `LuaValue`s, helper calls that C-Lua expresses as macros, and type-erased
-  helpers where the VM already knows the concrete type.
+- **Representation and borrow boundaries.** Look for `RefCell` borrows, helper
+  calls that C-Lua expresses as macros, and type-erased helpers where the VM
+  already knows the concrete type. Note `LuaValue` and `GcRef` are `Copy`
+  (16-byte memcpys, no refcount) — copies are essentially free; the cost is
+  borrow-flag traffic and miss-path value round-trips, not clones.
 - **GC and allocation.** Use GC counters and allocation-oriented profiles before
   assuming a VM opcode is the bottleneck in allocation-heavy workloads.
 
@@ -86,6 +112,8 @@ performance agents on the same host.
 | Which opcodes execute most often? | `bash harness/bench/opcode-profile.sh workload` | `harness/bench/profiles/opcode-profile/*/opcodes.tsv` |
 | Is GC cadence the problem? | `bash harness/bench/gc-profile.sh workload` | `gc.tsv`, `gc-delta.tsv`, `gc-rates.tsv` |
 | Is layout itself a limit? | `bash harness/bench/value-layout.sh` | value/frame/object size rows |
+| Where do allocations come from? | `cargo build --release -p lua-cli --features dhat-heap`, run workload | dhat heap profile (counts/bytes/stacks) |
+| Is the allocator a factor? | A/B a `--features fast-alloc` (mimalloc) build via `compare_bins.sh` | bin-ab artifacts |
 | Did complexity regress? | `make scaling` / `harness/bench/scaling-check.py` | scaling report |
 | What changed over commits? | `python3 harness/bench/history.py` | `harness/bench/history/index.html` |
 
@@ -169,6 +197,12 @@ Interpretation:
 
 ## Rejected Or Inconclusive Experiments
 
+Machine-readable registry: **`harness/rejected-experiments.jsonl`** — one JSON
+object per line with `{id, date, mechanism, files, symbols,
+workloads_regressed, evidence, reason, retry_conditions}`. A packet brief that
+re-touches a registered mechanism must cite its `id` and state what is
+different this time. New rejections append to the registry.
+
 These are useful because they define the edges of the search space:
 
 - **Hash-node `Cell<LuaValue>` values.** This allowed existing short-string
@@ -187,6 +221,34 @@ These are useful because they define the edges of the search space:
 
 Each candidate needs correctness first, then a targeted A/B, then at least one
 profile that shows the expected source bucket shrinking.
+
+### 0. Delete the dead `StackValue.tbc_delta` field
+
+Hypothesis (2026-06-09 audit, near-certain): `StackValue.tbc_delta`
+(`crates/lua-vm/src/state.rs:414-417`) is write-only — the only
+non-constructor reference is a `= 0` write at `state.rs:2517`; the real
+to-be-closed mechanism is `LuaState.tbclist: Vec<StackIdx>`
+(`state.rs:2021`, `func.rs:293`). The field pads every stack slot to 24
+bytes where C's is 16. Removing it cuts a third of the bytes on every stack
+copy, grow, and scan, with zero semantic change. `StackValue` does not leak
+outside `lua-vm`.
+
+Source anchors:
+
+- `crates/lua-vm/src/state.rs` `StackValue`, the 4 constructor sites, `:2517`
+
+Gate:
+
+```bash
+cargo test -p lua-vm -p lua-types --lib
+make conformance
+./harness/canaries/gc/run_canaries.sh
+bash harness/bench/compare_bins.sh --a /tmp/lua-rs-base --b target/release/lua-rs --gate
+```
+
+Watch `call_return_shapes`, `fibonacci`, `closure_ops`, and the setter rows.
+Risk: low; if the official suite or canaries disagree, the field was not dead
+and this entry gets corrected rather than worked around.
 
 ### 1. Existing short-string table setter fast path
 
@@ -336,7 +398,9 @@ cp target/release/lua-rs /tmp/lua-rs-base
 ```
 
 4. Choose one packet. Do not mix table representation, dispatch, call/return,
-   and GC changes in one packet.
+   and GC changes in one packet. Check `harness/rejected-experiments.jsonl`
+   first; retrying a registered mechanism requires citing its id and what is
+   different this time.
 
 5. Run correctness first, then targeted A/B. Use `--repeat-each` for subsecond
    workloads.
@@ -362,8 +426,11 @@ make conformance
   packets, but some are stale after recent landed work. New packet entries
   should reference current `v0.0.32` artifacts.
 - `harness/runners.toml` does not yet model benchmark/profile runners.
-- There is no allocation-stack profiler equivalent to Linux `perf` wired into
-  the default macOS workflow.
+- Allocation-stack profiling exists but is unscripted: `lua-cli` already has
+  `--features dhat-heap` (dhat global allocator) and `--features fast-alloc`
+  (mimalloc) wired (`crates/lua-cli/src/main.rs:1436-1447`). `alloc-profile.sh`
+  and the C-side counting-allocator probe are specced in
+  `PERF_PUSH_SPEC.md` P2.6.
 - Backfill remains future work for "when did this regress?" questions across
   older commits.
 - Generated profile and result artifacts are ignored, so durable reports must

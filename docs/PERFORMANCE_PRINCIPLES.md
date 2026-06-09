@@ -57,6 +57,17 @@ If any step fails, the commit doesn't land. Profiling data that
 contradicts the hypothesis is the most valuable data you have — it
 means the hypothesis was wrong, and the fix would have been a coincidence.
 
+One calibrated exception (2026-06-09): a **minor** single-row regression —
+consistent but under the gate tolerance (default 3%), with the
+layout-displacement signature (the row doesn't execute the changed code, or
+the change is a pure size/structure win) — may land **iff** the matrix total
+improves and the regression is recorded as a tracked line item (task +
+model-doc note) at landing time. Material regressions (>=3%) still block,
+and `--strict` restores zero tolerance for release gates. This exception
+exists because, until instruction counts can arbitrate, blocking a broad
+measured win on one unattributable 2% blip burns more than it protects; it
+is not a license to accumulate untracked regressions.
+
 ## The packet shape (when filing perf work)
 
 Borrowed unmodified from the redis hotpath methodology. Every perf

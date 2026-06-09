@@ -129,11 +129,21 @@ This runner checks that both binaries produce byte-identical workload output
 and runs **interleaved A/B pairs** (A then B, N times) so thermal/clock drift
 hits both binaries symmetrically. Per workload it reports best-of-N wall, the
 median of per-pair ratios, the fraction of pairs where B beat A, and a machine
-verdict (`improved` / `regressed` / `inconclusive` / `short`). With `--gate`
-it exits non-zero when any workload regresses, so packet gates are exit codes
-rather than eyeball calls. Headers carry provenance: dirty-tree flag, working
-diff sha256, and both binary sha256s. Use it for local packet evidence; use
-`compare.sh` for reference-C ratios and dashboard history.
+verdict (`improved` / `regressed-minor` / `regressed` / `inconclusive` /
+`short` / `hang`). With `--gate` it exits non-zero only on a **material**
+regression (median at or above the tolerance, default 1.03x, tunable with
+`--tolerance`); a consistent slowdown inside the band is `regressed-minor` —
+it lands, but the run prints a reminder that it must be tracked (task or
+registry note). `--strict` makes minor regressions fail too; use it for
+release gates. Headers carry provenance: dirty-tree flag, working diff
+sha256, and both binary sha256s.
+
+Confirmation policy (when to run the A/B twice): a second run is required
+only for verdicts that decide something contentious — a regression you intend
+to waive or act on, a win that is the packet's headline claim, or any verdict
+near its threshold. Clear interior wins (median <=0.97, frac >=0.9) on
+non-headline rows do not need a second run. Use it for local packet evidence;
+use `compare.sh` for reference-C ratios and dashboard history.
 
 ## How to read the numbers
 

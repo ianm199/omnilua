@@ -49,6 +49,7 @@ MEDIAN_REGRESS=1.01
 FRAC_HI=0.7
 FRAC_LO=0.3
 SHORT_FLOOR_S=0.2
+MAX_SAMPLE_S="${MAX_SAMPLE_S:-120}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -129,6 +130,10 @@ run_out() {
     "$bin" "$workload" 2>&1
 }
 
+# Every sample runs under a hard watchdog (perl alarm — portable on macOS,
+# which has no `timeout`). A workload that hangs gets verdict "hang" instead
+# of wedging the bench host (the 2026-06-09 table_ops repeated-dofile
+# livelock burned 27 minutes at 100% CPU before this existed).
 measure_one() {
     local bin="$1"
     local workload="$2"
@@ -139,20 +144,24 @@ measure_one() {
     case "$(uname -s)" in
         Darwin)
             if [ "$repeat" -le 1 ]; then
-                /usr/bin/time -lp "$bin" "$workload" >/dev/null 2>"$tmp"
+                perl -e 'alarm shift @ARGV; exec @ARGV' "$MAX_SAMPLE_S" \
+                    /usr/bin/time -lp "$bin" "$workload" >/dev/null 2>"$tmp"
             else
                 eval_src="for __bench_i = 1, $repeat do dofile([[$workload]]) end"
-                /usr/bin/time -lp "$bin" -e "$eval_src" >/dev/null 2>"$tmp"
+                perl -e 'alarm shift @ARGV; exec @ARGV' "$MAX_SAMPLE_S" \
+                    /usr/bin/time -lp "$bin" -e "$eval_src" >/dev/null 2>"$tmp"
             fi
             real=$(awk '$1=="real" {print $2; exit}' "$tmp")
             rss=$(awk '/maximum resident set size/ {print $1; exit}' "$tmp")
             ;;
         *)
             if [ "$repeat" -le 1 ]; then
-                /usr/bin/time -f '%e %M' "$bin" "$workload" >/dev/null 2>"$tmp"
+                perl -e 'alarm shift @ARGV; exec @ARGV' "$MAX_SAMPLE_S" \
+                    /usr/bin/time -f '%e %M' "$bin" "$workload" >/dev/null 2>"$tmp"
             else
                 eval_src="for __bench_i = 1, $repeat do dofile([[$workload]]) end"
-                /usr/bin/time -f '%e %M' "$bin" -e "$eval_src" >/dev/null 2>"$tmp"
+                perl -e 'alarm shift @ARGV; exec @ARGV' "$MAX_SAMPLE_S" \
+                    /usr/bin/time -f '%e %M' "$bin" -e "$eval_src" >/dev/null 2>"$tmp"
             fi
             parsed=$(awk '/^[0-9.]+ [0-9]+$/ {r=$1; k=$2} END {if (r != "") print r, k}' "$tmp")
             real=$(printf '%s' "$parsed" | awk '{print $1}')
@@ -162,7 +171,7 @@ measure_one() {
     esac
     rm -f "$tmp"
     if [ -z "${real:-}" ] || [ -z "${rss:-}" ]; then
-        echo "[err] failed to parse /usr/bin/time output for $bin $workload" >&2
+        echo "[err] sample failed or timed out (>${MAX_SAMPLE_S}s) for $bin $workload" >&2
         return 1
     fi
     printf "%s %s\n" "$real" "$rss"
@@ -207,31 +216,46 @@ for wpath in "$WORKLOAD_DIR"/*.lua; do
     match="ok"
     [ "$out_a" = "$out_b" ] || match="diff"
 
+    hang=0
     repeat=1
     if [ "$REPEAT_EACH" = "auto" ]; then
-        cal=$(measure_one "$A_BIN" "$wpath" 1) || exit 1
-        cal_wall=$(echo "$cal" | awk '{print $1}')
-        repeat=$(awk -v w="$cal_wall" -v m="$MIN_SAMPLE_S" 'BEGIN{
-            if (w < 0.001) w = 0.001
-            r = (w >= m) ? 1 : int(m / w) + 1
-            if (r > 2000) r = 2000
-            print r
-        }')
-        [ "$repeat" -gt 1 ] && echo "    calibrated repeat_each=$repeat (single run ${cal_wall}s)" >&2
+        if cal=$(measure_one "$A_BIN" "$wpath" 1); then
+            cal_wall=$(echo "$cal" | awk '{print $1}')
+            repeat=$(awk -v w="$cal_wall" -v m="$MIN_SAMPLE_S" 'BEGIN{
+                if (w < 0.001) w = 0.001
+                r = (w >= m) ? 1 : int(m / w) + 1
+                if (r > 2000) r = 2000
+                print r
+            }')
+            [ "$repeat" -gt 1 ] && echo "    calibrated repeat_each=$repeat (single run ${cal_wall}s)" >&2
+        else
+            hang=1
+        fi
     else
         repeat="$REPEAT_EACH"
     fi
 
     samples=$(mktemp)
-    for i in $(seq 1 "$RUNS"); do
-        pa=$(measure_one "$A_BIN" "$wpath" "$repeat") || exit 1
-        pb=$(measure_one "$B_BIN" "$wpath" "$repeat") || exit 1
-        aw=$(echo "$pa" | awk '{print $1}'); ar=$(echo "$pa" | awk '{print $2}')
-        bw=$(echo "$pb" | awk '{print $1}'); br=$(echo "$pb" | awk '{print $2}')
-        printf '%s %s %s %s\n' "$aw" "$bw" "$ar" "$br" >> "$samples"
-        pr=$(awk -v a="$aw" -v b="$bw" 'BEGIN{if (a>0) printf "%.4f", b/a; else print "NaN"}')
-        printf '%s\t%d\t%s\t%s\t%s\n' "$wname" "$i" "$aw" "$bw" "$pr" >> "$RAW"
-    done
+    if [ "$hang" = "0" ]; then
+        for i in $(seq 1 "$RUNS"); do
+            pa=$(measure_one "$A_BIN" "$wpath" "$repeat") || { hang=1; break; }
+            pb=$(measure_one "$B_BIN" "$wpath" "$repeat") || { hang=1; break; }
+            aw=$(echo "$pa" | awk '{print $1}'); ar=$(echo "$pa" | awk '{print $2}')
+            bw=$(echo "$pb" | awk '{print $1}'); br=$(echo "$pb" | awk '{print $2}')
+            printf '%s %s %s %s\n' "$aw" "$bw" "$ar" "$br" >> "$samples"
+            pr=$(awk -v a="$aw" -v b="$bw" 'BEGIN{if (a>0) printf "%.4f", b/a; else print "NaN"}')
+            printf '%s\t%d\t%s\t%s\t%s\n' "$wname" "$i" "$aw" "$bw" "$pr" >> "$RAW"
+        done
+    fi
+
+    if [ "$hang" = "1" ]; then
+        rm -f "$samples"
+        echo "    HANG: sample exceeded ${MAX_SAMPLE_S}s; recording verdict=hang" >&2
+        printf '%s\tNaN\tNaN\tNaN\tNaN\tNaN\t%d\t0\t0\tNaN\thang\thang\n' "$wname" "$repeat" >> "$TSV"
+        if [ -n "$JSON_ROWS" ]; then JSON_ROWS="$JSON_ROWS,"; fi
+        JSON_ROWS="$JSON_ROWS{\"workload\":\"$wname\",\"verdict\":\"hang\",\"repeat_each\":$repeat,\"max_sample_s\":$MAX_SAMPLE_S}"
+        continue
+    fi
 
     stats=$(awk '
         { aw[NR]=$1; bw[NR]=$2; ar[NR]=$3; br[NR]=$4

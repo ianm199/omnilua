@@ -119,6 +119,28 @@ Specific existing-key setter opcodes are.
 
 ## Mental Model
 
+**Decomposition (P2.1 rig, 2026-06-09, the most important measured fact in
+this document):** `wall_ratio = Ir_ratio x CPI_ratio`, and the first
+per-iteration instruction budgets show the C gap is almost pure INSTRUCTION
+COUNT — our cycles-per-instruction is *better* than C's:
+
+| workload | C Ir/iter | rs Ir/iter | Ir ratio | wall ratio | CPI factor |
+|---|---:|---:|---:|---:|---:|
+| concat_chain | 2,965 | 8,100 | 2.73 | 2.54 | 0.93 |
+| table_seti_same | 61 | 157 | 2.57 | 1.95 | 0.76 |
+| fibonacci | (totals) | | 2.32 | 1.58 | 0.68 |
+| string_format_mixed | 12,286 | 20,336 | 1.66 | 1.90 | 1.14 |
+
+Consequences: (a) we are not memory/branch-bound on these rows — we simply
+execute ~2.3-2.7x more instructions, which is the recoverable-work bucket,
+not a safety tax; (b) Apple-class IPC hides a third of the bloat, weaker CI
+cores hide less — that is the whole Linux-vs-M3 ratio mystery; (c) packets
+should now be stated as "remove ~N instructions/iteration" and verified by
+recount (`instr-count.sh`). C does the entire `t[1] = i` loop iteration in
+61 instructions; our extra 96 have names. (`string_format_mixed` is the
+counterexample: better Ir ratio, worse CPI — formatting is the one row that
+is genuinely stall-bound.)
+
 The remaining gap is mostly interpreter overhead, not a single algorithmic
 failure. Use these buckets when classifying profiles:
 
@@ -167,6 +189,7 @@ performance agents on the same host.
 | Is layout itself a limit? | `bash harness/bench/value-layout.sh` | value/frame/object size rows |
 | Where do allocations come from? | `cargo build --release -p lua-cli --features dhat-heap`, run workload | dhat heap profile (counts/bytes/stacks) |
 | Is the allocator a factor? | A/B a `--features fast-alloc` (mimalloc) build via `compare_bins.sh` | bin-ab artifacts |
+| Is a small wall delta real work or layout luck? | `bash harness/bench/instr-count.sh --workloads w1,w2` | deterministic Ir + per-iteration budgets (`results/*-instr*.tsv`) |
 | Did complexity regress? | `make scaling` / `harness/bench/scaling-check.py` | scaling report |
 | What changed over commits? | `python3 harness/bench/history.py` | `harness/bench/history/index.html` |
 

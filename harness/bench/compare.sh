@@ -69,6 +69,9 @@ CPU="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || grep -m1 'model name' /
 #   which we normalize to bytes (KB * 1024) so the ledger stays byte-keyed
 #   regardless of which runner produced the row.
 
+# Per-sample watchdog (COMPARE_MAX_S, default 120s; perl alarm — macOS has no
+# timeout(1)) so a hung workload cannot wedge the ledgered run.
+COMPARE_MAX_S="${COMPARE_MAX_S:-120}"
 measure_one() {
     local bin="$1"
     local workload="$2"
@@ -77,12 +80,14 @@ measure_one() {
     local real rss rss_kb parsed
     case "$(uname -s)" in
         Darwin)
-            /usr/bin/time -lp "$bin" "$workload" >/dev/null 2>"$tmp"
+            perl -e 'alarm shift @ARGV; exec @ARGV' "$COMPARE_MAX_S" \
+                /usr/bin/time -lp "$bin" "$workload" >/dev/null 2>"$tmp"
             real=$(awk '$1=="real" {print $2}' "$tmp" | head -1)
             rss=$(awk '/maximum resident set size/ {print $1}' "$tmp" | head -1)
             ;;
         *)
-            /usr/bin/time -f '%e %M' "$bin" "$workload" >/dev/null 2>"$tmp"
+            perl -e 'alarm shift @ARGV; exec @ARGV' "$COMPARE_MAX_S" \
+                /usr/bin/time -f '%e %M' "$bin" "$workload" >/dev/null 2>"$tmp"
             parsed=$(awk '/^[0-9.]+ [0-9]+$/ {r=$1; k=$2} END {if (r != "") print r, k}' "$tmp")
             real=$(printf '%s' "$parsed" | awk '{print $1}')
             rss_kb=$(printf '%s' "$parsed" | awk '{print $2}')

@@ -118,7 +118,12 @@ bash harness/bench/compare_bins.sh \
 Short workloads are handled automatically: `--repeat-each` defaults to
 `auto`, which calibrates a repeat factor per workload so every measured
 sample is at least `--min-sample` seconds (default 0.5). Pass an explicit
-`--repeat-each N` to override.
+`--repeat-each N` to override. The calibration and the output-match check
+are cached (keyed on binary sha256 + workload mtime), so repeat invocations
+of the same binary pair skip both. `--quick` is the exploratory preset
+(5 runs, 0.3 s floor) — use it for inner-loop iteration and keep the default
+for landing gates. Workloads marked `LIVELOCK` in `manifest.tsv` are
+auto-skipped unless explicitly requested with `--workloads`.
 
 Output:
 - `harness/bench/results/<UTC>-<sha>-bin-ab.tsv`

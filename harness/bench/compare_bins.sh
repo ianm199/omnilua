@@ -29,8 +29,16 @@
 # Usage:
 #   bash harness/bench/compare_bins.sh --a /tmp/lua-rs-base --b target/release/lua-rs \
 #     --label-a base --label-b candidate --runs 10 --workloads gc_pressure,binarytrees
-#   bash harness/bench/compare_bins.sh --a ... --b ... --gate   # exit 3 on any regression
-#   --repeat-each N overrides auto calibration; --min-sample S tunes the floor.
+#   bash harness/bench/compare_bins.sh --a ... --b ... --gate     # fail on material regression
+#   bash harness/bench/compare_bins.sh --a ... --b ... --quick    # exploratory: 5 runs, 0.3s floor
+#   --repeat-each N overrides auto calibration; --min-sample S tunes the floor;
+#   --skip w1,w2 excludes workloads; --no-match skips the output-equality check.
+#
+# Latency notes: the output-match check and the repeat calibration are cached
+# in results/.match-cache.tsv / .calib-cache.tsv keyed on binary sha256 +
+# workload mtime, so repeat invocations of the same binary pair skip both.
+# Workloads whose manifest.tsv notes contain LIVELOCK are auto-skipped unless
+# explicitly named via --workloads.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -58,6 +66,10 @@ SHORT_FLOOR_S=0.2
 MAX_SAMPLE_S="${MAX_SAMPLE_S:-120}"
 GATE_TOLERANCE="${GATE_TOLERANCE:-1.03}"
 STRICT=0
+NO_MATCH=0
+SKIP_LIST=""
+CALIB_CACHE="$OUT_DIR/.calib-cache.tsv"
+MATCH_CACHE="$OUT_DIR/.match-cache.tsv"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -72,6 +84,9 @@ while [ $# -gt 0 ]; do
         --tolerance)   GATE_TOLERANCE="$2";  shift 2 ;;
         --gate)        GATE=1;               shift ;;
         --strict)      GATE=1; STRICT=1;     shift ;;
+        --quick)       RUNS=5; MIN_SAMPLE_S=0.3; shift ;;
+        --no-match)    NO_MATCH=1;           shift ;;
+        --skip)        SKIP_LIST="$2";       shift 2 ;;
         -h|--help)
             sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# //; s/^#//'
             exit 0 ;;
@@ -137,7 +152,7 @@ B_SHA=$(sha12 "$B_BIN")
 run_out() {
     local bin="$1"
     local workload="$2"
-    "$bin" "$workload" 2>&1
+    perl -e 'alarm shift @ARGV; exec @ARGV' "$MAX_SAMPLE_S" "$bin" "$workload" 2>&1
 }
 
 # Every sample runs under a hard watchdog (perl alarm — portable on macOS,
@@ -221,18 +236,44 @@ for wpath in "$WORKLOAD_DIR"/*.lua; do
     wname=$(basename "$wpath" .lua)
     if [ -n "$WORKLOAD_FILTER" ]; then
         echo ",$WORKLOAD_FILTER," | grep -q ",$wname," || continue
+    else
+        if grep -q "^${wname}	.*LIVELOCK" "$WORKLOAD_DIR/manifest.tsv" 2>/dev/null; then
+            echo "==> $wname SKIPPED: manifest marks LIVELOCK (run via --workloads to retest)" >&2
+            continue
+        fi
+    fi
+    if [ -n "$SKIP_LIST" ] && echo ",$SKIP_LIST," | grep -q ",$wname,"; then
+        echo "==> $wname SKIPPED (--skip)" >&2
+        continue
     fi
 
     echo "==> $wname" >&2
-    out_a=$(run_out "$A_BIN" "$wpath")
-    out_b=$(run_out "$B_BIN" "$wpath")
+    wl_mtime=$(stat -f %m "$wpath" 2>/dev/null || stat -c %Y "$wpath" 2>/dev/null)
     match="ok"
-    [ "$out_a" = "$out_b" ] || match="diff"
+    if [ "$NO_MATCH" = "1" ]; then
+        match="skipped"
+    elif grep -q "^${A_SHA}	${B_SHA}	${wname}	${wl_mtime}\$" "$MATCH_CACHE" 2>/dev/null; then
+        match="cached"
+    else
+        out_a=$(run_out "$A_BIN" "$wpath") || out_a="__RUN_A_FAILED__"
+        out_b=$(run_out "$B_BIN" "$wpath") || out_b="__RUN_B_FAILED__"
+        if [ "$out_a" = "__RUN_A_FAILED__" ] || [ "$out_b" = "__RUN_B_FAILED__" ]; then
+            match="hang"
+        elif [ "$out_a" = "$out_b" ]; then
+            printf '%s\t%s\t%s\t%s\n' "$A_SHA" "$B_SHA" "$wname" "$wl_mtime" >> "$MATCH_CACHE"
+        else
+            match="diff"
+        fi
+    fi
 
     hang=0
     repeat=1
     if [ "$REPEAT_EACH" = "auto" ]; then
-        if cal=$(measure_one "$A_BIN" "$wpath" 1); then
+        cached_repeat=$(awk -F'\t' -v k1="$A_SHA" -v k2="$wname" -v k3="$wl_mtime" -v k4="$MIN_SAMPLE_S" \
+            '$1==k1 && $2==k2 && $3==k3 && $4==k4 {print $5; exit}' "$CALIB_CACHE" 2>/dev/null || true)
+        if [ -n "$cached_repeat" ]; then
+            repeat="$cached_repeat"
+        elif cal=$(measure_one "$A_BIN" "$wpath" 1); then
             cal_wall=$(echo "$cal" | awk '{print $1}')
             repeat=$(awk -v w="$cal_wall" -v m="$MIN_SAMPLE_S" 'BEGIN{
                 if (w < 0.001) w = 0.001
@@ -241,6 +282,7 @@ for wpath in "$WORKLOAD_DIR"/*.lua; do
                 print r
             }')
             [ "$repeat" -gt 1 ] && echo "    calibrated repeat_each=$repeat (single run ${cal_wall}s)" >&2
+            printf '%s\t%s\t%s\t%s\t%s\n' "$A_SHA" "$wname" "$wl_mtime" "$MIN_SAMPLE_S" "$repeat" >> "$CALIB_CACHE"
         else
             hang=1
         fi

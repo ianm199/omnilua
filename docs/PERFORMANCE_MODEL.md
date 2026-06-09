@@ -212,7 +212,16 @@ These are useful because they define the edges of the search space:
 - **Broad hook/trap guarding across branch/test opcodes.** This improved some
   table setter rows, but a repeated run regressed `numeric_mixed` by about 11%
   and `compare_immediates` by about 2%. Broad dispatch-shape edits are not
-  safe by intuition alone.
+  safe by intuition alone. *Resolution 2026-06-09:* the **narrowed** variant
+  (2 FORLOOP sites + `finish_order_imm_jump` only) was adjudicated under the
+  P0.1 protocol and **kept** — it improved `compare_immediates` ~5%,
+  `global_settabup_same` ~3-4%, `numeric_mixed` ~2%, `binarytrees` ~3% in two
+  interleaved-pair rounds; the bundled `code: &[Instruction]` fetch change
+  measured neutral on the opcodes it touches (its apparent
+  `global_settabup_same` blip was layout displacement — that workload never
+  executes the changed code). One round-1 `binarytrees` "regression" was
+  traced to the stop hook building/smoking mid-bench; the P7.4 marker now
+  prevents that class of contamination.
 - **Arithmetic direct-K rewrites.** Earlier local arithmetic rewrites regressed
   numeric/fibonacci/bitwise neighbors and were reverted. Keep arithmetic work
   profile-led and per-opcode.

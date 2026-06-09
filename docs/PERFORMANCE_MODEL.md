@@ -15,6 +15,40 @@ Read this alongside:
 
 ## Current Position
 
+**Re-baselined 2026-06-09** (P1.6): Apple M3 Max, commit `87ef21f`, the first
+scorecard with enforced >=0.5 s samples, interleaved pairs, and repeat
+calibration (artifact `20260609T203851Z-87ef21f-compare.tsv`, ledgered).
+Overall wall ratio **1.51x**. Sorted by median pair ratio:
+
+| workload | wall ratio | median | note |
+|---|---:|---:|---|
+| table_setfield_same | 2.35 | 2.37 | tallest pole: existing short-string SETFIELD |
+| global_settabup_same | 2.33 | 2.33 | _ENV SETTABUP write path |
+| binarytrees | 2.05 | 2.15 | GC family; RSS 4.5x |
+| gc_pressure | 2.04 | 2.02 | GC family |
+| table_seti_same | 1.95 | 1.97 | integer SETI existing slot |
+| call_return_shapes | 1.86 | 1.90 | frame setup / return re-entry |
+| closure_ops | 1.85 | 1.91 | upvalues; RSS 5.1x |
+| table_settable_string_key | 1.83 | 1.84 | |
+| numeric_mixed | 1.77 | 1.71 | |
+| bitwise_mixed | 1.71 | 1.70 | |
+| string_ops | 1.69 | 1.69 | old "1.00x" row was startup quantization |
+| loop_variants | 1.65 | 1.65 | |
+| fibonacci | 1.58 | 1.62 | |
+| mandelbrot / _long | 1.53 | 1.53 | |
+| compare_immediates | 1.48 | 1.49 | improved by 2026-06-09 packets |
+| string_ops_long | 1.47 | 1.46 | |
+| table_field_index | 1.19 | 1.14 | |
+| table_hash_pressure | 1.07 | 1.02 | at parity |
+| table_ops_long | 0.43 | 0.43 | stdlib-divergence row, not VM parity |
+| table_ops | — | — | skipped: generational-GC LIVELOCK (tracked) |
+
+RSS is now a first-class problem: `binarytrees` 4.5x and `closure_ops` 5.1x
+memory ratios are unexplained pending the allocation-parity probe (spec P2.6).
+
+The pre-re-baseline framing below is retained for history; its absolute
+numbers came from 50-70 ms samples and ephemeral Linux CI hardware:
+
 As of `v0.0.32` / commit `169b868` on the Linux release runner, the largest
 reference-Lua gaps are not broad "table performance" or broad "Rust is slow"
 claims. They are specific bytecode and representation shapes:

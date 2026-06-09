@@ -123,7 +123,15 @@ if [ "${BENCH_IGNORE_RUNNING:-0}" != "1" ]; then
         fi
         anc="$anc|$p"
     done
-    others=$(pgrep -f 'compare_bins|harness/bench/compare\.sh|profile-hotspots|callgrind' 2>/dev/null | grep -Ev "^($anc)\$" || true)
+    scan_others() {
+        pgrep -f 'compare_bins|harness/bench/compare\.sh|profile-hotspots|callgrind' 2>/dev/null | grep -Ev "^($anc)\$" || true
+    }
+    others=$(scan_others)
+    if [ -n "$others" ]; then
+        sleep 3
+        rescan=$(scan_others)
+        others=$(comm -12 <(echo "$others" | sort) <(echo "$rescan" | sort) | tr -d ' ' | grep . || true)
+    fi
     if [ -n "$others" ]; then
         echo "[err] another measurement process appears to be running (pids: $(echo "$others" | tr '\n' ' '))." >&2
         echo "[err] one measurement process at a time; set BENCH_IGNORE_RUNNING=1 to override." >&2

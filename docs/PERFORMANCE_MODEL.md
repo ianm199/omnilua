@@ -15,6 +15,44 @@ Read this alongside:
 
 ## Current Position
 
+**2026-06-10** — full stock + PGO matrices at `fc0805b` (artifacts
+`20260610T000424Z-fc0805b-compare.tsv` stock,
+`20260610T001xZ` `variant=pgo`, both ledgered). **PGO is the shipping
+configuration** (release CI publishes it). Overall: stock 1.65x, **PGO
+1.41x**, no PGO row above 2.08x:
+
+| workload | stock | PGO | | workload | stock | PGO |
+|---|---:|---:|---|---|---:|---:|
+| coroutine_pingpong | 2.17 | 2.08 | | mandelbrot/_long | 1.69 | 1.53 |
+| method_calls | 2.35 | 2.05 | | table_settable_string_key | 1.81 | 1.49 |
+| table_setfield_same | 2.40 | 2.02 | | fibonacci | 1.67 | 1.44 |
+| binarytrees | 2.20 | 1.98 | | string_format_mixed | 1.64 | 1.44 |
+| global_settabup_same | 2.36 | 1.88 | | compare_immediates | 1.69 | 1.41 |
+| concat_chain | 2.00 | 1.82 | | loop_variants | 1.70 | 1.40 |
+| bitwise_mixed | 2.02 | 1.76 | | string_ops | 1.51 | 1.28 |
+| call_return_shapes | 2.11 | 1.70 | | metatable_index_chain | 1.52 | 1.27 |
+| gc_pressure | 2.06 | 1.67 | | table_field_index | 1.24 | 1.15 |
+| table_seti_same | 2.05 | 1.66 | | string_ops_long | 1.31 | 1.14 |
+| closure_ops | 1.94 | 1.60 | | sort_seeded | 1.70 | 1.06 |
+| pcall_error | 1.83 | 1.59 | | table_hash_pressure | 0.95 | 0.84 |
+| varargs_spread | 2.02 | 1.58 | | table_ops / _long | 0.44 | 0.48 |
+| numeric_mixed | 1.75 | 1.57 | | json_roundtrip | 1.96 | 1.56 |
+
+Reading rules for this table:
+
+- These matrices predate the FORLOOP register window (`661ee2a`, loop tick
+  75 -> 61 Ir) — the next release run includes it.
+- **Stock cross-snapshot comparisons are unreliable**: between the 06-09
+  morning baseline and this table, rows untouched by any packet drifted
+  ±5-15% (bitwise 1.71 -> 2.02, mandelbrot 1.53 -> 1.69) from code-layout
+  redistribution across three GlobalState/dispatch shape changes — proven
+  not to be added work by Ir recounts (fibonacci flat to 4e-7). Judge
+  packets by their gated interleaved A/Bs and recounts; judge releases by
+  the PGO column, where layout is profile-driven and the drift collapses.
+- RSS is unsolved: binarytrees 4.2x / closure_ops 5.2x memory (spec W2.3).
+
+### Prior snapshot — re-baselined 2026-06-09 (P1.6)
+
 **Re-baselined 2026-06-09** (P1.6): Apple M3 Max, commit `87ef21f`, the first
 scorecard with enforced >=0.5 s samples, interleaved pairs, and repeat
 calibration (artifact `20260609T203851Z-87ef21f-compare.tsv`, ledgered).
@@ -141,6 +179,31 @@ recount (`instr-count.sh`). C does the entire `t[1] = i` loop iteration in
 counterexample: better Ir ratio, worse CPI — formatting is the one row that
 is genuinely stall-bound.)
 
+**Differential probe budgets (2026-06-10, `harness/bench/probes/`):**
+subtracting `loop_only` from a workload isolates per-opcode cost. Findings:
+
+| component | C Ir/iter | rs Ir/iter | ratio |
+|---|---:|---:|---:|
+| bare FORLOOP tick | 24 | 61 (75 pre-window) | 2.54 |
+| SETI on top | +37 | +82 | 2.2 |
+| SETFIELD on top | +53 | +118 | 2.2 |
+| CALL+RETURN+ADD on top | +191 | +425 | 2.2 |
+
+The opcode surplus is UNIFORM (~2.2x) across families — there is no single
+rotten opcode; the cost is spread across dispatch preamble, bounds checks,
+borrow flags, and helper boundaries. The dispatch tick itself was the worst
+outlier (3.12x) until the FORLOOP register window (`661ee2a`); its remaining
+~37-instruction surplus over C needs per-function attribution (callgrind on
+a >8GB-VM box) to cut further.
+
+Two budget-reading caveats, both learned the hard way: (1) **C-side budgets
+on STRING-KEY rows carry ±10% per-run noise** — C's hash seed is
+per-process (address/time), so its collision chains differ per run; our
+seed is fixed. Only int-key/loop/call C budgets are exact. (2) Micro-edits
+inside the giant dispatch match can shift codegen of UNRELATED arms by a
+few Ir (the rejected `setter-arm-direct-operand-reads` experiment) —
+always recount the probe, never assume.
+
 The remaining gap is mostly interpreter overhead, not a single algorithmic
 failure. Use these buckets when classifying profiles:
 
@@ -190,6 +253,9 @@ performance agents on the same host.
 | Where do allocations come from? | `cargo build --release -p lua-cli --features dhat-heap`, run workload | dhat heap profile (counts/bytes/stacks) |
 | Is the allocator a factor? | A/B a `--features fast-alloc` (mimalloc) build via `compare_bins.sh` | bin-ab artifacts |
 | Is a small wall delta real work or layout luck? | `bash harness/bench/instr-count.sh --workloads w1,w2` | deterministic Ir + per-iteration budgets (`results/*-instr*.tsv`) |
+| What does one opcode cost in isolation? | instr-count over `harness/bench/probes/` pairs (e.g. `loop_only` vs a setter row) | differential Ir/iter for both binaries |
+| Did codegen diverge from luac? | `make bytecode-parity` | per-workload mnemonic diff vs `luac -l -l`; allowlist only shrinks |
+| Is the PGO build still healthy? | `make perf-pgo` | conformance-gated, variant=pgo ledger rows |
 | Did complexity regress? | `make scaling` / `harness/bench/scaling-check.py` | scaling report |
 | What changed over commits? | `python3 harness/bench/history.py` | `harness/bench/history/index.html` |
 
@@ -224,7 +290,20 @@ Do not present a hypothesis as a measured fact.
 
 ## Current Findings
 
-### Table/global setters
+### Landed packets, 2026-06-09/10 wave (each gated + recount-arbitrated)
+
+| packet | commit | result |
+|---|---|---|
+| GC key write barrier (CORRECTNESS) | `b5e65fb` | missing ltable.c:717 parity let the generational GC free live interned keys → livelock + silent-wrong-lookup risk; fixed, ~1-2% cost on insert rows (work C also pays) |
+| tbc_delta deletion (P3) | `3ec9433` | stack slots 24 -> 16 B; 15/21 rows improved, call_return -9-11% |
+| trap-guard adjudication (P0.1) | `2f236de` | narrowed hookmask guard kept (-2-5% dispatch rows); broad variant stays rejected |
+| coroutine snapshot pools | `04cd144` | per-resume Vec alloc/free x2 removed; pingpong -12-16%; fibonacci blip PROVEN displacement (+296 of 82.3e9 Ir) |
+| C-shaped stringtable | `534f5bb` | one-hash intern, zero-alloc hit, O(dead) GC removal; concat -22%, format -15%, hash-pressure -13%, string_ops -11% |
+| FORLOOP register window | `661ee2a` | six bounds checks -> one; loop tick 75 -> 61 Ir, baked into every loop row |
+| PGO shipped (P4.1) | `967b801` | release CI publishes conformance-gated, variant-labeled PGO ratios; median -11%, and it erases layout-displacement noise |
+| bytecode-parity gate (P2.3) | `f20bdfb` | 31 rows EXACT opcode parity vs luac; 19 baselined divergences in 4 classes (see candidates) |
+
+### Table/global setters (HISTORICAL — pre-stringtable/window; kept for the method)
 
 Artifacts:
 
@@ -335,7 +414,43 @@ These are useful because they define the edges of the search space:
 ## Packet Candidates
 
 Each candidate needs correctness first, then a targeted A/B, then at least one
-profile that shows the expected source bucket shrinking.
+profile that shows the expected source bucket shrinking — and since the P2.1
+rig exists, a recount showing the predicted Ir delta.
+
+**Status 2026-06-10:** candidate 0 APPLIED; candidate 1's intern-churn half
+is superseded by the stringtable (`534f5bb`) — its remaining substance is
+the RefCell/helper-boundary diet, now quantified (SETI op = 82 Ir vs C 37).
+Candidates 2-5 stand, with budgets attached. New candidates, evidence in
+hand:
+
+### 6. Codegen divergence packets (bytecode-parity allowlist, task 11)
+
+Four classes from `make bytecode-parity`, hottest first: (a) C emits
+LEI/LTI immediate compares where we emit LOADF+LE — mandelbrot's INNER
+LOOP pays the extra op; (b) unfolded negative constants (LOADI+UNM for
+`-1`, every descending for-step — cold); (c) extra constant
+materialization (json_roundtrip carries 29 divergent ops — mine the diff);
+(d) RETURN/RETURN0/RETURN1 selection differs from luac in closing returns
+— **needs a correctness look** (the specializations differ in
+vararg/close handling) before any perf work. Gate: allowlist counts drop,
+parity stays green, conformance, targeted A/B.
+
+### 7. Dispatch-preamble attribution
+
+The loop tick still carries ~37 Ir over C with a near-minimal FORLOOP body.
+opcode() decode is already a bounds-checked cast (vm.rs:50). The remaining
+surplus needs per-function counts: callgrind on a machine whose docker VM
+exceeds 8GB (it OOMs locally), or finer probes. Do NOT hand-guess here —
+the rejected direct-operand-reads experiment shows micro-edits in the
+dispatch match move unrelated arms.
+
+### 8. RSS / allocation parity (spec W2.3, unstarted)
+
+binarytrees 4.2x and closure_ops 5.2x memory vs C are the largest
+unexplained numbers on the board. dhat-heap build + a counting-allocator
+patched C copy in /tmp decompose it into alloc count vs object size vs
+retention. LuaTable is 104 B vs C's 56 (measured); start there if the
+decomposition blames object size.
 
 ### 0. Delete the dead `StackValue.tbc_delta` field — APPLIED 2026-06-09
 
@@ -531,7 +646,19 @@ cp target/release/lua-rs /tmp/lua-rs-base
    workloads.
 
 6. If the A/B passes, run the matching profile and verify the predicted bucket
-   moved.
+   moved. If the A/B shows a boundary verdict (any `regressed`/
+   `regressed-minor` on a row the change does not execute), arbitrate by
+   recount: `instr-count.sh` on that row before and after. Flat Ir + wall
+   rise = layout displacement, waived with the numbers in the commit;
+   rising Ir = real, the gate stands. Never argue a waiver without the
+   recount — two 2026-06-09 precedents (fibonacci +4e-7% Ir at wall 1.030;
+   the direct-reads rejection) define the protocol. Conversely, recount the
+   target probe BEFORE paying for an A/B: a candidate whose Ir does not
+   drop is dead on arrival.
+
+   Marker protocol: hold `harness/.perf-experiment` (touch it yourself)
+   whenever the tree is dirty across a turn/session boundary — the runners
+   are ownership-aware and will not delete a marker they did not create.
 
 7. Run final validation.
 

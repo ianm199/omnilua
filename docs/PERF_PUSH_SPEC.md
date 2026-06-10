@@ -1,8 +1,17 @@
 # Perf push spec — measurement floor first, tradeoffs last
 
-Status: DRAFT for approval. Date: 2026-06-09. Derived from the 2026-06-09 deep
-audit of `docs/PERFORMANCE_MODEL.md`, `docs/MATCHING_C_PERFORMANCE.md`,
-`harness/bench/*`, and the `lua-vm`/`lua-types` hot paths.
+Status: EXECUTING (approved 2026-06-09; phases P0/P1/P2.1-2.3/P3/P4.1/P6/P7
+done; Wave 2 in progress — see §Wave 2 and the acceptance checklist for live
+state). Derived from the 2026-06-09 deep audit of `docs/PERFORMANCE_MODEL.md`,
+`docs/MATCHING_C_PERFORMANCE.md`, `harness/bench/*`, and the
+`lua-vm`/`lua-types` hot paths.
+
+Execution ledger: ~45 commits on main since `v0.0.32` through 2026-06-10.
+Open work, priority order: W2.3 RSS/alloc parity; codegen divergence packets
+(task 11, incl. a CORRECTNESS look at the RETURN-specialization class);
+dispatch-preamble attribution (needs callgrind on a bigger box); W2.2
+call/return diet; P4.2-4.4 build-knob experiments (fat-LTO / fast-alloc /
+panic-abort — still unmeasured); W2.5/P5 safety-tax ablation.
 
 This spec is the work plan that turns the audit into packets. It follows the
 house rules: every packet has a gate, the oracle is the only truth-teller, no
@@ -510,16 +519,16 @@ what a packet *is* (predicted instruction delta, verified by recount).
 
 ## 12. Acceptance checklist (the push is done when)
 
-- [ ] `d0dc949`'s two mechanisms each have a recorded verdict; rejected parts reverted; registry entry written.
-- [ ] Runners interleave, stamp provenance, enforce ≥0.5 s samples, and emit machine verdicts; `compare.sh` has auto `--repeat-each`.
-- [ ] Re-baselined Current Position table committed from promoted evidence; row classes labeled; CI wall-clock demoted to smoke.
-- [ ] `instr-count.sh` determinism proven (<0.5% spread); per-iteration budget table (C vs rs) committed for every matrix workload.
-- [ ] Bytecode-parity gate green over all workloads (or allowlisted with justifications) and wired as a make target.
-- [ ] `StackValue` is 16 bytes; matrix + Ir evidence linked in the commit.
-- [ ] PGO, fat-LTO, fast-alloc, panic-abort: four recorded verdicts with artifacts.
+- [x] `d0dc949`'s two mechanisms each have a recorded verdict; rejected parts reverted; registry entry written.
+- [x] Runners interleave, stamp provenance, enforce ≥0.5 s samples, and emit machine verdicts; `compare.sh` has auto `--repeat-each`.
+- [x] Re-baselined Current Position table committed from promoted evidence; row classes labeled; CI wall-clock demoted to smoke.
+- [x] `instr-count.sh` determinism proven (<0.5% spread); per-iteration budget table (C vs rs) committed for every matrix workload.
+- [x] Bytecode-parity gate green over all workloads (or allowlisted with justifications) and wired as a make target.
+- [x] `StackValue` is 16 bytes; matrix + Ir evidence linked in the commit.
+- [ ] PGO, fat-LTO, fast-alloc, panic-abort: PGO verdict recorded AND SHIPPED; the other three remain unmeasured.
 - [ ] Safety-tax price list committed; per-workload "at floor / not at floor" classification written into the model doc.
-- [ ] New workload rows live with budgets; metamethod-present and pcall paths measured for the first time.
-- [ ] Model/principles docs corrected (GcRef Copy, dhat/mimalloc, trap dual-role, single scorecard); rejected-experiments registry active; stop-hook contains scratch + unvalidated perf diffs.
+- [x] New workload rows live with budgets; metamethod-present and pcall paths measured for the first time.
+- [x] Model/principles docs corrected (GcRef Copy, dhat/mimalloc, trap dual-role, single scorecard); rejected-experiments registry active; stop-hook contains scratch + unvalidated perf diffs.
 
 ## Wave 2 (2026-06-10, unattended execution plan)
 

@@ -22,6 +22,13 @@ harness/bench/
 ├── profile-inventory.sh <- repo + host profiler/tool availability
 ├── profile-hotspots.sh  <- macOS sample wrapper + VM execute attribution
 ├── scaling-check.py     <- complexity gate: flag superlinear (O(n^2)) behavior
+├── instr-count.sh       <- deterministic Ir budgets (cachegrind in docker) — the A/B arbiter
+├── instr/               <- container half of the instruction-count rig
+├── probes/              <- differential probes (loop_only, call_only) — NOT matrix rows
+├── bytecode-parity.py   <- codegen parity gate vs luac -l -l (make bytecode-parity)
+├── bytecode-parity-allow.txt <- baselined divergences; counts may only shrink
+├── build-pgo.sh         <- PGO build w/ pinned training set (make perf-pgo ships it)
+├── with-timeout.sh      <- process-GROUP killing watchdog (perl; macOS has no timeout)
 ├── value-layout.sh      <- Rust-vs-C value/frame/object layout probe
 ├── vm-execute-attribution.py <- source-region parser for sample output
 ├── workloads/           <- self-contained .lua microbenchmarks (timed vs C)

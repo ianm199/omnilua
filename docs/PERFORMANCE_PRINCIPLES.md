@@ -391,6 +391,53 @@ Packet rule: add typed sibling helpers for known-type hot paths; keep the
 generic helper for cold/dynamic sites. Do not turn this into skipped GC
 barriers, skipped metamethod checks, or benchmark-only dispatch.
 
+## Patterns from the instruction-count era (added 2026-06-10)
+
+These assume the P2.1 rig (`harness/bench/instr-count.sh`) and the
+differential probes (`harness/bench/probes/`).
+
+### Recount before bench
+
+A perf candidate's first gate is a deterministic recount of the probe it
+should move, NOT an A/B. Recounts cost ~2 minutes and are noise-free; an
+A/B costs 5-10 and can lie by ±3%. The direct-operand-reads experiment was
+falsified this way before any wall-clock was spent: both forms bounds-check,
+and the "obvious win" was +3-6 Ir from register pressure in the dispatch
+match.
+
+### Differential probes isolate opcodes
+
+`Ir(workload) - Ir(loop_only)` over the iteration count gives exact
+per-opcode budgets for BOTH interpreters. Pair every hot workload with a
+probe that removes only the operation under study. Caveat: C-side budgets
+for string-key rows wobble ±10% per run (C's per-process hash seed); only
+int/loop/call C budgets are exact.
+
+### Displacement waivers must be proven, not argued
+
+A wall regression on a row that does not execute the changed code may be
+waived ONLY with a recount showing flat instructions (fibonacci: wall 1.030,
+Ir +4e-7%). PGO erases this noise class — which is also why shipped ratios
+are PGO'd and why stock cross-snapshot drift is not evidence of anything.
+
+### Single-bounds-check register windows
+
+When an opcode arm touches K adjacent stack slots, slice once and convert:
+`let w: &mut [StackValue; K] = (&mut stack[ra..ra+K]).try_into().unwrap()`.
+One bounds check replaces K(+writes) of them; indexing into the fixed-size
+array is compile-time checked. FORLOOP went 75 -> 61 Ir/tick this way.
+The failed sibling (swapping `get_at` for direct indexing WITHOUT the
+window) shows the win is the check count, not the access style.
+
+### Audit port scaffolding — costs C never pays
+
+Some hot-path work exists only to satisfy the port's own structure, not Lua
+semantics: the dead `tbc_delta` stack field (the side-list already existed),
+per-resume parent-stack snapshot allocations (the GC-root copy was needed;
+the malloc/free pair was not), double-stored intern bytes (map key + string).
+Standing question for any hot frame: "does C-Lua do this work at all?" —
+distinct from the macro-boundary rule, which asks whether C compiles it away.
+
 ## Profile discipline
 
 - **Wall-clock sampling ≠ CPU profiling.** `/usr/bin/sample` and the

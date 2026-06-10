@@ -1563,3 +1563,38 @@ that generalize should make their way back into "The patterns by name" or
 - Whatever pattern emerges from running the same playbook on
   `redis-rs-port` and `nginx-rs-port`. If the lessons transfer, the
   methodology is the real product.
+
+## 2026-06-09/10 — the measurement-floor wave (summary entry)
+
+A two-day burst executed per `docs/PERF_PUSH_SPEC.md`; full detail lives in
+the spec, `docs/PERFORMANCE_MODEL.md` (refreshed), and per-commit messages.
+Headline movements, Apple M3 Max:
+
+- Trustworthy stock baseline established (interleaved pairs, >=0.5s
+  calibrated samples, provenance): overall 1.51x on 2026-06-09 morning.
+- Landed: GC key-barrier CORRECTNESS fix (missing ltable.c:717 parity —
+  generational GC freed live interned keys; livelock + wrong-lookup risk),
+  tbc_delta deletion (stack slots 24->16B), narrowed trap guard, coroutine
+  snapshot pools (-12-16%), C-shaped stringtable (concat -22%, strings
+  -11-15%), FORLOOP register window (loop tick 75->61 Ir).
+- PGO shipped to release CI, conformance-gated, variant-labeled: overall
+  1.41x PGO'd at fc0805b, no row above 2.08x.
+- New instruments, all committed: instr-count.sh (cachegrind-in-docker,
+  deterministic Ir + per-iteration budgets), differential probes
+  (probes/loop_only, call_only), bytecode-parity gate vs luac -l -l
+  (31 rows exact, 19 baselined divergences in 4 classes), per-sample
+  watchdogs everywhere, build-pgo.sh, ownership-aware perf marker.
+- Model finding of record: the C gap is ~pure INSTRUCTION COUNT (Ir
+  2.2-2.7x, CPI better than C); opcode surplus is uniform ~2.2x; loop tick
+  was the 3.1x outlier. Linux-vs-M3 ratio splits = IPC headroom, solved.
+- Experiments rejected on evidence (registry has mechanisms + retry
+  conditions): intern hit-path borrowed lookup (+80 Ir/iter — workload
+  was miss-dominated), setter-arm direct operand reads (+3-6 Ir, register
+  pressure), plus the day's boundary verdicts arbitrated by recount.
+
+Process scars worth remembering: the stop hook auto-committed in-flight
+experiments four times before the marker became ownership-aware
+(`c5871e0`); two watchdog-orphaned interpreters spun at 100% CPU for hours
+contaminating an afternoon of absolute walls (ratios survived via
+interleaving); and every "obvious" micro-optimization that skipped the
+recount step was wrong.

@@ -13,6 +13,10 @@
 # Usage:
 #   bash harness/bench/instr-count.sh --workloads concat_chain,fibonacci
 #   bash harness/bench/instr-count.sh --workloads table_seti_same --label myexp
+#   bash harness/bench/instr-count.sh --dir /tmp/myprobes --workloads short_gc
+#     (--dir mounts a host directory of ad-hoc .lua files — e.g. iteration-
+#      scaled copies of slow workloads, so a relative-delta recount takes
+#      seconds instead of minutes; budgets need manifest rows, deltas don't)
 #
 # Expect ~20-100x slowdown under callgrind; target packet-sized workload
 # lists, not the full matrix. First run builds the container toolchain
@@ -24,10 +28,12 @@ cd "$ROOT"
 
 WORKLOADS="startup_empty"
 LABEL="instr"
+EXTRA_DIR=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --workloads) WORKLOADS="startup_empty,$2"; shift 2 ;;
         --label)     LABEL="$2";                   shift 2 ;;
+        --dir)       EXTRA_DIR="$2";               shift 2 ;;
         -h|--help)
             sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# //; s/^#//'
             exit 0 ;;
@@ -70,9 +76,14 @@ DIRTY="no"
     printf 'workload\tbinary\tIr\n'
 } > "$TSV"
 
+EXTRA_MOUNT=()
+if [ -n "$EXTRA_DIR" ]; then
+    EXTRA_MOUNT=(-v "$EXTRA_DIR":/extra:ro)
+fi
 docker run --rm \
     -v "$ROOT":/src:ro \
     -v "$VOL":/cache \
+    "${EXTRA_MOUNT[@]}" \
     "$IMG" bash /src/harness/bench/instr/run-inside.sh "$WORKLOADS" >> "$TSV"
 
 echo "==> $TSV" >&2

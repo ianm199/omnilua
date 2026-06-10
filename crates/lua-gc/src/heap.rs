@@ -685,6 +685,11 @@ pub struct GcHeader {
 const HDR_FINALIZED: u8 = 1;
 const HDR_COLLECTED: u8 = 2;
 const HDR_GRAY_LISTED: u8 = 4;
+/// Set by sweep under `LUA_RS_GC_QUARANTINE=1` instead of freeing the box.
+/// Debug builds assert this bit is clear on every `Gc` dereference and on
+/// every `Marker::mark_box` visit, turning use-after-sweep into a
+/// deterministic panic with a backtrace (see `Heap::release_box`).
+const HDR_FREED: u8 = 8;
 
 impl GcHeader {
     fn new_white(size: usize, color: Color, flags: u8) -> Self {
@@ -833,7 +838,15 @@ impl<T: ?Sized> Gc<T> {
         // outlives the Gc until sweep, which only frees boxes not reachable
         // from any root — so as long as this Gc is on the stack or in a
         // traced field, the box is live.
-        unsafe { self.ptr.as_ref() }
+        let bx = unsafe { self.ptr.as_ref() };
+        debug_assert!(
+            !bx.header.flag(HDR_FREED),
+            "use-after-sweep: Gc<{}> dereferenced after the collector swept it \
+             (caught by LUA_RS_GC_QUARANTINE; this is a rooting bug — the object \
+             was reachable by execution but not by the root trace)",
+            std::any::type_name::<T>()
+        );
+        bx
     }
 
     fn header(&self) -> &GcHeader {
@@ -1142,6 +1155,12 @@ impl Marker {
     }
 
     fn mark_box(&mut self, ptr: NonNull<GcBox<dyn Trace>>, header: &GcHeader, id: usize) {
+        debug_assert!(
+            !header.flag(HDR_FREED),
+            "GC marker reached a quarantined (swept) object at {id:#x} — a root \
+             traced a stale GcRef (caught by LUA_RS_GC_QUARANTINE; bug-B class: \
+             garbage slot fed into the marker)"
+        );
         if self.visited.insert(id) {
             let age = header.age.get();
             self.stats.marked += 1;
@@ -1368,6 +1387,21 @@ pub struct Heap {
     /// locals but not from roots) into deterministic failures — pair with
     /// an ASAN build. Debug instrument only; never set in benchmarks.
     stress: bool,
+    /// Quarantine mode (env `LUA_RS_GC_QUARANTINE=1`, read once at
+    /// construction): sweep unlinks dead boxes but parks them on the
+    /// `quarantined` list with `HDR_FREED` set instead of freeing, so a
+    /// use-after-sweep dereference reads intact (still-allocated) memory and
+    /// trips a `debug_assert` in `Gc::as_box` / `Marker::mark_box` — a
+    /// deterministic Rust panic with a backtrace, no ASAN or nightly needed.
+    /// All sweep accounting (byte refunds, token removal, object counts) is
+    /// unchanged so collection cadence is identical to a normal run. Memory
+    /// grows without bound; debug-build test instrument only — the asserts
+    /// compile out in release. Pair with `LUA_RS_GC_STRESS=1`.
+    quarantine: bool,
+    /// Intrusive list of swept-but-not-freed boxes under quarantine mode,
+    /// linked through `header.next` (unused once unlinked from the owner
+    /// list). Freed for real in `drop_all`.
+    quarantined: Cell<Option<NonNull<GcBox<dyn Trace>>>>,
     /// Multiplier on bytes_used to set next threshold after collection.
     pause_multiplier: Cell<usize>,
     /// State machine for the incremental collector.
@@ -1431,6 +1465,8 @@ impl Heap {
             next_allocation_token: Cell::new(1),
             threshold: Cell::new(64 * 1024), // initial threshold: 64 KB
             stress: std::env::var_os("LUA_RS_GC_STRESS").is_some_and(|v| v == "1"),
+            quarantine: std::env::var_os("LUA_RS_GC_QUARANTINE").is_some_and(|v| v == "1"),
+            quarantined: Cell::new(None),
             pause_multiplier: Cell::new(200), // 200% = collect when bytes 2x threshold
             state: Cell::new(GcState::Pause),
             paused: Cell::new(true), // start paused; caller enables when world is consistent
@@ -1616,6 +1652,28 @@ impl Heap {
 
     fn header_from_ptr<'a>(&'a self, ptr: NonNull<GcBox<dyn Trace>>) -> &'a GcHeader {
         unsafe { &(*ptr.as_ptr()).header }
+    }
+
+    /// The single point where a swept box leaves the heap. The caller must
+    /// already have unlinked `ptr` from its owner list and settled all
+    /// accounting (byte refund, token removal, object count). Under
+    /// quarantine mode the box is poisoned and parked instead of freed, so
+    /// later use-after-sweep dereferences hit intact memory and the
+    /// `HDR_FREED` debug asserts instead of undefined behavior.
+    fn release_box(&self, ptr: NonNull<GcBox<dyn Trace>>) {
+        if self.quarantine {
+            let header = self.header_from_ptr(ptr);
+            header.set_flag(HDR_FREED, true);
+            header.next.set(self.quarantined.get());
+            self.quarantined.set(Some(ptr));
+        } else {
+            // SAFETY: the caller unlinked `ptr` from its owner list, so no
+            // heap chain reaches it; only stale (buggy) GcRefs could. This
+            // is the sole runtime free of a GcBox.
+            unsafe {
+                let _ = Box::from_raw(ptr.as_ptr());
+            }
+        }
     }
 
     fn clear_generation_cursors(&self) {
@@ -2390,9 +2448,7 @@ impl Heap {
                     .borrow_mut()
                     .remove(&(ptr.as_ptr() as *const () as usize));
                 self.objects.set(self.objects.get().saturating_sub(1));
-                unsafe {
-                    let _ = Box::from_raw(ptr.as_ptr());
-                }
+                self.release_box(ptr);
             } else {
                 if matches!(color, Color::Black | Color::Gray) {
                     header.color.set(current_white);
@@ -2471,9 +2527,7 @@ impl Heap {
                     .borrow_mut()
                     .remove(&(ptr.as_ptr() as *const () as usize));
                 self.objects.set(self.objects.get().saturating_sub(1));
-                unsafe {
-                    let _ = Box::from_raw(ptr.as_ptr());
-                }
+                self.release_box(ptr);
                 continue;
             }
 
@@ -2681,6 +2735,7 @@ impl Heap {
         self.drop_list(&self.head);
         self.drop_list(&self.finobj);
         self.drop_list(&self.tobefnz);
+        self.drop_list(&self.quarantined);
         self.bytes.set(0);
         self.objects.set(0);
     }

@@ -1,1 +1,5 @@
-PASS canary_f
+/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/target/debug/lua-rs: ...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:21: FAIL: old table was not touched by young store
+stack traceback:
+	[C]: in function 'assert'
+	...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:21: in main chunk
+	[C]: in ?

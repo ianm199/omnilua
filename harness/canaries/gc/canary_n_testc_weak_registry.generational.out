@@ -1,2 +1,5 @@
-METRIC weakregistry mode=generational state=pause bytes=49512 debt=-9900 threshold=59412 allgc=270 allgcnew=0 allgcsurvival=10 allgcold1=73 allgcold=183 collections=3 minorcollections=2 fullcollections=1 weak=3 weaklive=3 weakdead=0 weakretained=3 weakvalues=1 ephemeron=1 allweak=1 grayagain=73 pendingfin=4 tobefin=0 pendingfinyoung=0 pendingfinold=4 tobefinyoung=0 tobefinold=0 finobjnew=0 finobjsur=0 finobjold1=0 finobjrold=4 finobjscan=0 marked=173 markedyoung=113 markedold=60 traced=114 tracedyoung=113 tracedold=1 sweepvisited=98 sweepvisitedyoung=98 sweepvisitedold=0 sweeprevisit=1 sweepfreed=15 sweepfreedbytes=6139 tables=27 functions=8 threads=0 userdata=3 strings=228
-PASS canary_n
+/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/target/debug/lua-rs: ...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:62: FAIL: weak-key entry survived
+stack traceback:
+	[C]: in function 'assert'
+	...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:62: in main chunk
+	[C]: in ?

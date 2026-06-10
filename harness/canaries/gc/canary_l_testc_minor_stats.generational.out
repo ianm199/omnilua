@@ -1,2 +1,5 @@
-METRIC minorstats mode=generational state=pause bytes=47591 debt=-9500 threshold=57091 allgc=257 allgcnew=0 allgcsurvival=2 allgcold1=0 allgcold=251 collections=4 minorcollections=2 fullcollections=2 weak=0 weaklive=0 weakdead=0 weakretained=0 weakvalues=0 ephemeron=0 allweak=0 grayagain=1 pendingfin=4 tobefin=0 pendingfinyoung=0 pendingfinold=4 tobefinyoung=0 tobefinold=0 finobjnew=0 finobjsur=0 finobjold1=0 finobjrold=4 finobjscan=0 marked=105 markedyoung=32 markedold=73 traced=33 tracedyoung=32 tracedold=1 sweepvisited=10 sweepvisitedyoung=10 sweepvisitedold=0 sweeprevisit=1 sweepfreed=8 sweepfreedbytes=3646 tables=21 functions=7 threads=0 userdata=3 strings=223
-PASS canary_l
+/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/target/debug/lua-rs: ...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:29: FAIL: telemetry root was not touched
+stack traceback:
+	[C]: in function 'assert'
+	...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:29: in main chunk
+	[C]: in ?

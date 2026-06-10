@@ -520,3 +520,51 @@ what a packet *is* (predicted instruction delta, verified by recount).
 - [ ] Safety-tax price list committed; per-workload "at floor / not at floor" classification written into the model doc.
 - [ ] New workload rows live with budgets; metamethod-present and pcall paths measured for the first time.
 - [ ] Model/principles docs corrected (GcRef Copy, dhat/mimalloc, trap dual-role, single scorecard); rejected-experiments registry active; stop-hook contains scratch + unvalidated perf diffs.
+
+## Wave 2 (2026-06-10, unattended execution plan)
+
+State at wave start: PGO overall 1.41x (artifact 20260610T001xZ, variant=pgo),
+no row above 2.08x. All waves below follow the packet gate; instruction
+recounts arbitrate every boundary verdict. Commit deliberately and often;
+hold `harness/.perf-experiment` whenever the tree is dirty at a turn
+boundary.
+
+### W2.1 Setter-family instruction diet (tallest recoverable band)
+`table_setfield_same` 2.02 / `global_settabup_same` 1.88 / `table_seti_same`
+1.66 PGO. Budget says C does `t[1]=i` in 61 Ir/iter, we use 157. Method:
+**differential workloads** — `wave2/loop_only.lua` (bare numeric for) vs the
+setter rows; Ir(setter) − Ir(loop) isolates per-iteration opcode cost for
+BOTH binaries with cachegrind totals only (no callgrind needed). Then audit
+the rs-side path (`OP_SETI`/`OP_SETFIELD` arm → `raw_set_*` →
+`try_update_*`) against the C macro chain and remove nameable work:
+RefCell borrow shape, helper-boundary `Result` round trips, double
+metatable/dummy checks. Target: setter Ir/iter under ~110. Gate: recount +
+gated A/B + 44/44.
+
+### W2.2 Call/return + method dispatch diet
+`method_calls` 2.05 / `call_return_shapes` 1.70 PGO; fibonacci Ir ratio
+2.32. Same differential method with a `call_only.lua` micro-workload.
+Audit `precall`/`poscall`/`OP_SELF` arms. The journal's rejected naive
+attempts (registry: return-reentry-cleanup, callinfo-cached-closure,
+naive-exact-lua-call-fastpath) define forbidden shapes — cite before
+retrying anything adjacent.
+
+### W2.3 RSS / allocation parity (P2.6)
+binarytrees RSS 4.2x, closure_ops 5.2x. Run the dhat-heap build per GC
+workload; build the counting-allocator patched C reference in /tmp;
+produce the decomposition table (alloc count vs object size vs retention).
+Fix the single top finding if bounded (e.g. Vec->Box<[T]> in LuaTable).
+
+### W2.4 Bytecode-parity gate (P2.3, plumbing)
+`lua-code` listing example + `bytecode-parity.sh` diffing against
+`luac -l -l` for every workload; `make bytecode-parity`. Static, cheap,
+prevents codegen-divergence regressions.
+
+### W2.5 Safety-tax ablation (P5) — only if W2.1/W2.2 land first
+Branch `diag/safety-tax`, never merges: price bounds checks and RefCell
+borrows per workload via feature-gated unchecked variants. Produces the
+empirical floor for the 1.4-1.7 band.
+
+### W2.6 Wrap
+Fresh stock+PGO matrices, model doc Current Position refresh, dashboard,
+board + memory updates, clean tree.

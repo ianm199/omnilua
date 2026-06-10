@@ -1,5 +1,7 @@
 use std::mem::{align_of, size_of};
 
+use lua_gc::{GcBox, GcHeader};
+use lua_types::table::{TableInner, TableNode};
 use lua_types::{
     CallInfoIdx, GcRef, LuaClosure, LuaLClosure, LuaProto, LuaString, LuaTable, LuaUserData,
     LuaValue, StackIdx, UpVal,
@@ -65,4 +67,21 @@ fn main() {
         align_of::<LuaUserData>(),
     );
     row("UpVal", size_of::<UpVal>(), align_of::<UpVal>());
+    row("GcHeader", size_of::<GcHeader>(), align_of::<GcHeader>());
+    row(
+        "GcBox<LuaTable>",
+        size_of::<GcBox<LuaTable>>(),
+        align_of::<GcBox<LuaTable>>(),
+    );
+    row(
+        "GcBox<LuaString>",
+        size_of::<GcBox<LuaString>>(),
+        align_of::<GcBox<LuaString>>(),
+    );
+    row(
+        "TableInner",
+        size_of::<TableInner>(),
+        align_of::<TableInner>(),
+    );
+    row("TableNode", size_of::<TableNode>(), align_of::<TableNode>());
 }

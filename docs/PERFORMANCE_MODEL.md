@@ -514,6 +514,34 @@ follow-on packet is candidate 9. The mark-buffer pool landed; the
 `sweep_young` scratch buffers (next_revisit Vec + IdentityHashSet,
 ~15 MB/run churn) are a small remaining pooling packet.
 
+### 9-pre. DONE 2026-06-10: GcHeader diet (first slice of the diet)
+
+Header 64 -> 40 bytes on every heap object — but from the COLD side
+only: `type_name` (16 B, diagnostics-only) became a `Trace` trait
+method; the three cold bool flags share one byte; pacer `size` is u32.
+Color and age KEEP dedicated bytes: the first attempt packed them
+C-`marked`-style and cost +4.2% Ir on gc_pressure (mask/RMW in the
+mark/sweep loops; callgrind-localized; registry
+`gcheader-pack-hot-fields`). `GcBox<LuaString>` 88 -> 64 (-27%),
+`GcBox<LuaTable>` 168 -> 144; `table-bytes.sh` shows every shape -32 B.
+Shipping-config (PGO) A/B: binarytrees/closure_ops/gc_pressure/
+string_ops_long all IMPROVED with RSS -9..-15%; table_seti_same +1.8%
+regressed-minor (tracked: ~+1-4 Ir/iter cross-crate inlining coupling);
+fibonacci +3.1% wall on FLAT Ir (recounted twice) = data-placement
+luck, waived per the displacement protocol.
+
+### 10. Allocation-token side table (found via table-bytes residue)
+
+Every `Heap::allocate` inserts (identity, token) into
+`allocation_tokens: IdentityHashMap<usize>` — the ~50 B/object residue
+the per-shape tool shows above the box size, plus a hashmap insert on
+EVERY allocation (wall cost on alloc-heavy rows). It exists so weak
+handles can validate targets across address reuse WITHOUT dereferencing
+possibly-freed memory — moving the token into the header breaks the
+freed-but-not-reused case (reading a freed header is UB), so any diet
+here must rethink the weak-registry validation flow first. High value,
+needs design.
+
 ### 9. Table representation diet (from the W2.3 decomposition)
 
 A table allocation averages 176 B vs C's 56 B `Table` struct, and the

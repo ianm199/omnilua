@@ -35,6 +35,7 @@ int main(void) {
   ROW("lua_State", lua_State);
   ROW("TString", TString);
   ROW("Table", Table);
+  ROW("Node", Node);
   ROW("LClosure", LClosure);
   ROW("UpVal", UpVal);
   return 0;

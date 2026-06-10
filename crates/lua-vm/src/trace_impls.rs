@@ -24,6 +24,11 @@ use lua_types::{LuaClosure, LuaValue};
 /// Phase-B internal richer LuaString. The byte buffer is a Rust `Rc<[u8]>`
 /// (not GC-managed); no fields to mark.
 impl Trace for LuaStringImpl {
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn trace(&self, _m: &mut Marker) {}
 }
 
@@ -31,10 +36,20 @@ impl Trace for LuaStringImpl {
 /// `Option<()>` / `Vec<()>` stubs — no GC edges to walk yet. Becomes
 /// real when userdata machinery lands post-D-1.
 impl Trace for LuaUserDataImpl {
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn trace(&self, _m: &mut Marker) {}
 }
 
 impl Trace for FinalizerObject {
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn trace(&self, m: &mut Marker) {
         match self {
             FinalizerObject::Table(t) => t.trace(m),
@@ -44,6 +59,11 @@ impl Trace for FinalizerObject {
 }
 
 impl Trace for LuaState {
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn trace(&self, m: &mut Marker) {
         // and the open-upvalue list. Trace frame-bounded live ranges instead of
         // every slot up to `ci.top`: that reserved tail can contain stale values
@@ -102,6 +122,11 @@ impl Trace for LuaState {
 }
 
 impl Trace for GlobalState {
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn trace(&self, m: &mut Marker) {
         // per-type metatables, and pending finalizers. We expand the set to
         // include preallocated short strings (memerrmsg, tmname[]) and the

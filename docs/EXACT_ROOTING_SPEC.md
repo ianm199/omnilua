@@ -42,6 +42,30 @@ stacks; no `unsafe` additions.
 | 2 | Coroutine traceback reads swept `LuaLClosure` (#140 bug A) | OPEN | `target/release/lua-rs harness/impl/official/db.wrap.lua` → exit 139 EVERY run; ASAN debug build trips without stress | READ 8 in `debug::funcname_from_call` → `ci_lua_proto` (`get_at(ci.func)` → `cl.proto`); freed by `sweep_young_range` (minor); alloc'd by `OP_CLOSURE`/`push_closure`; call path `debug.traceback(co)` ← db.lua ~734-806 |
 | 3 | Root tracer derefs stale debug-local slots (#140 bug B) | OPEN | `LUA_RS_GC_STRESS=1` + ASAN on full db.lua | READ in `Marker::mark_box` ← `LuaState::trace` — the `trace_debug_locals` pass feeds a stale slot's GcRef into the marker |
 
+Named suspects from the code audit (2026-06-10, this spec's revision):
+
+- **`try_borrow` silent root loss.** `trace_reachable_threads`
+  (`crates/lua-vm/src/state.rs` ~4228) skips any thread whose `RefCell`
+  cannot be borrowed at collect time — silently. The snapshot pools cover
+  exactly one such path (the resume chain). Any other borrow held across
+  an allocation — `debug.traceback(co)` introspecting a coroutine while
+  interning frame-name strings is the prime candidate — un-roots the
+  entire coroutine for that cycle. Bug-A-shaped. Immediate mitigation
+  regardless of diagnosis: debug-assert that every borrow-failure is
+  covered by a snapshot (see P0).
+- **Finished-coroutine top/ci asymmetry.** The tracer covers
+  `[ci.func .. top)` for the current frame; if coroutine completion
+  resets `top` low while leaving the ci chain walkable,
+  `debug.traceback` still reads `get_at(ci.func)`
+  (`debug.rs::ci_lua_proto`) on slots the tracer never covered. Also a
+  divergence question: C's dead coroutine has `ci == base_ci` (no
+  walkable frames).
+- **Exactness has two sides.** The root-gap classes above are all of the
+  form *some reader's read-set ⊄ the tracer's trace-set*. The debug
+  machinery reads beyond `top` (ci.func slots, `getlocal` up to
+  `ci.top`); the tracer stops at `top`. P1 must inventory readers, not
+  just storage locations.
+
 Hard-won method facts:
 - ASAN build: `RUSTFLAGS=-Zsanitizer=address cargo +nightly build -p
   lua-cli --target aarch64-apple-darwin`. lldb cannot attach in the agent
@@ -98,7 +122,29 @@ Our port has four structural deviations, each a root-gap class:
 
 ### P0 — instruments first (the battery)
 
-Build `harness/asan-stress.sh`:
+**P0.a — the rung-2 instrument: quarantine/poison mode.** The ASAN
+battery below is a rung-6 tool (nightly build, slow, signature
+archaeology, lldb cannot attach). Per the fast-iteration-tools doctrine,
+build the in-process deterministic tester FIRST: `LUA_RS_GC_QUARANTINE=1`
+— sweep does not free; it unlinks the GcBox, poisons the header
+(dedicated `Color::Freed`-style state), and parks the box on a quarantine
+list. `Marker::mark_box` and the debug deref path assert against poisoned
+headers / removed allocation tokens. Combined with `LUA_RS_GC_STRESS=1`,
+any read of a swept object becomes a deterministic Rust panic with a
+backtrace in a plain debug build, in milliseconds, no nightly. The heap
+already maintains `allocation_tokens` (sweep removes the token), so the
+validation half may largely exist — surface it as a first-class
+instrument. Memory grows unboundedly under quarantine; test-only by
+design. ASAN remains the truth-teller for reads that bypass headers.
+
+**P0.b — the try_borrow assert.** In `trace_reachable_threads`,
+debug-assert that the number of marked-alive threads whose state cannot
+be borrowed at collect time is covered by the parent-snapshot structure
+(audit the actual borrow lifecycle for the exact invariant). This
+converts the silent under-coverage into a loud failure independent of
+whether it is bug A's mechanism.
+
+**P0.c — the battery.** Build `harness/asan-stress.sh`:
 - Caches the nightly ASAN build keyed on commit sha (bincache pattern).
 - Runs, under BOTH `LUA_RS_GC_STRESS=1` and stress-off, in BOTH GC modes:
   all GC canaries, the deadkey/#140 repro set, and the full official
@@ -111,11 +157,33 @@ Build `harness/asan-stress.sh`:
   override exists) to the PR gate — this alone would have caught bug 2
   years... weeks earlier.
 
+**Red-gate trap.** The release-profile gate will be red from day one
+(db.wrap segfaults every run until P3). A permanently red gate trains
+everyone to ignore it. Gate on "no NEW failures vs a baseline TSV"
+(adjacency-gate pattern) or quarantine db.wrap with written
+justification; un-quarantine as part of P3's proof.
+
 Acceptance: battery runs; documents current state (expected: bug-2 trip
-on db, bug-3 trip under stress); wired into `harness/CLAUDE.md` + bench
+on db, bug-3 trip under stress, ideally both now ALSO tripping as Rust
+panics under stress+quarantine); wired into `harness/CLAUDE.md` + bench
 README.
 
 ### P1 — root-source inventory (pre-computed analysis, not archaeology)
+
+Two reframings from the code audit:
+
+1. **Checkpoints, not allocations.** Allocation entry points do not
+   collect inline — collection fires only at the explicit
+   `gc_cond_step`/`gc_check_step` checkpoints (~25 sites in vm.rs,
+   do_.rs, api.rs, tagmethods.rs). Holding a `GcRef` in a Rust local
+   across allocations *within one opcode arm* is safe today; the real
+   contract is "no checkpoint between allocation and rooting". So the
+   Rust-temporary audit enumerates what is live-but-unrooted AT each
+   checkpoint — a far smaller surface than grepping every allocation.
+2. **Readers, not just storage.** For every reader of stack/ci data
+   (VM, debug machinery, stdlib introspection), is its read-set ⊆ the
+   trace-set at every checkpoint? Bug A is exactly a reader
+   (`debug.traceback`) whose read-set the tracer does not cover.
 
 Produce `ANALYSES/GC_ROOTS.md`: every place a `GcRef`/`Gc` can live,
 audited against "who traces this, and is it traced at every
@@ -128,9 +196,27 @@ coroutine LuaStates + snapshot pools + yielded values, to-be-closed list,
 metatables (incl. `setmetatable(t,t)` self-cycles), string table (weak by
 design — dead-interned removal contract), pending finalizer lists,
 lua-rs-runtime embedding handles, and — the open-ended class — Rust-frame
-temporaries in lua-vm/lua-stdlib (enumerate by grepping allocation calls
-reachable inside opcode arms and C-functions; each call site needs an
-"anchored where?" answer).
+temporaries in lua-vm/lua-stdlib (per reframing 1: enumerate per
+checkpoint, not per allocation; each checkpoint needs a "what is
+live-but-unrooted here?" answer).
+
+Additional rows the audit already knows it owes:
+
+- `strcache` is traced as a STRONG root (`trace_impls.rs` ~196) where C
+  clears stale cache entries in the atomic pass — over-retention
+  divergence; weak/resurrection canaries get a row.
+- `try_borrow` coverage in `trace_reachable_threads` (P0.b's assert is
+  the mitigation; the row documents the invariant).
+- Stack shrink sites: C shrinks thread stacks only inside the atomic
+  pass (`luaD_shrinkstack` in `traversethread`); any port site that
+  shrinks elsewhere vs ci entries above the new length.
+- Snapshot push/pop balance in `coro_lib.rs` (multiple pop sites; error
+  and unwind paths must not leak or double-pop) and snapshot coverage
+  (full live stack incl. ci.func slots?).
+- Defensive code that can mask coverage bugs, to convert to asserts: the
+  dead else-branch in the frame walk (non-current frame with
+  `ci.next == None` traces to `self.top`) and the
+  `end_idx.min(self.stack.len())` clamp in `LuaState::trace`.
 
 Each row gets: traced-by, checkpoint coverage, and a canary exercising it
 under stress+ASAN (the fast in-memory tester doctrine — most can be
@@ -154,14 +240,44 @@ taste:
   before committing; budget tolerance per the standard gate. Note C
   effectively pays this cost differently (its top discipline keeps the
   window small).
-- **(c) Anchor API for Rust temporaries.** Whatever (a)/(b) decides, the
-  Rust-frame class needs either a scoped anchor (`state.anchor(value)`
+- **(c) Anchor API for Rust temporaries.** Whatever (a)/(b)/(d) decides,
+  the Rust-frame class needs either a scoped anchor (`state.anchor(value)`
   RAII pushing to a traced side-stack) or a rule that C-function code
   keeps values on the Lua stack across allocations. Inventory P1 decides
   how many sites exist; if few, fix in place; if many, build the API.
+  Audit data so far: ~30 hold-across-allocation sites, ~5 near
+  checkpoints (worst: VarArgPack, `vm.rs` ~3518-3530). Presumption: fix
+  in place, no API; enforce dynamically via quarantine+stress canaries.
+- **(d) C's actual composite design — the presumptive winner, spike it
+  first.** (a) and (b) split what C does into halves and price each
+  half in the expensive place. C does both halves, each where it is
+  cheap:
+  - *Exactness only at checkpoints.* `lvm.c:1131`:
+    `#define checkGC(L,c) { luaC_condGC(L, (savepc(L), L->top.p = (c)), ...)}`
+    — top is MADE exact by one store at each checkpoint
+    (`checkGC(L, ra + 1)` after OP_NEWTABLE/OP_CLOSURE,
+    `checkGC(L, L->top.p)` after concat). Collections only happen at
+    checkpoints, so top only needs to be true there. ~25 sites, each
+    with a live mark the C source hands us.
+  - *Stale-slot clearing once per GC cycle, inside the GC.*
+    `lgc.c traversethread`, atomic phase:
+    `for (o = th->top.p; o < th->stack_last.p + EXTRA_STACK; o++) setnilvalue(s2v(o));`
+    — the dead tail is nil'd during the atomic pass. The return hot
+    path clears nothing.
 
-Spike deliverables: Ir delta for clear-on-pop; A/B on call-heavy rows;
-written decision in this spec.
+  Under (d) the frame-bounded range walk collapses to C's `[0 .. top)`,
+  the debug-local heuristic is DELETED (bug B dies as a class), and the
+  suspended/finished-coroutine asymmetry behind bug A loses its
+  structural cause. §4's "widening without clearing" trap is answered
+  the way C answers it — lazily, in-GC. Implementation wrinkle:
+  `Trace::trace` takes `&self`; the clear pass needs `Cell` slots or a
+  separate `&mut` pre-mark phase mirroring C's atomic. Readers must
+  then tolerate nil where they previously read stale-but-alive values
+  (`ci_lua_proto` currently panics on a non-closure slot).
+
+Spike deliverables: Ir delta for (d)'s checkpoint stores + once-per-cycle
+clear vs (b)'s clear-on-pop; A/B on call-heavy rows; written decision in
+this spec.
 
 ### P3 — fix bug A (coroutine traceback)
 
@@ -172,7 +288,8 @@ canary + release-profile db.wrap green ×10 runs.
 
 ### P4 — fix bug B (debug-local tracing)
 
-Falls out of P2(b) if widening is chosen (delete the heuristic). If (a)
+Falls out of P2(b) or P2(d) if either is chosen (delete the heuristic).
+If (a)
 is chosen instead: make the heuristic read-safe (only trace slots below a
 verified live-water mark) or replace with precise liveness from the
 function's `maxstacksize`/active-range metadata at a SAVED pc that is
@@ -199,7 +316,12 @@ stressed, mirroring the bench manifest pattern.
 
 - **Over-marking is not free-safe.** Widened ranges trace stale slots —
   garbage refs in the marker is bug 3 by another road. Widening WITHOUT
-  pop-clearing is strictly worse than today. The pair is atomic.
+  pop-clearing is strictly worse than today. The pair is atomic. (Option
+  (d) pairs them C's way: clear lazily in-GC, not on pop.)
+- **`try_borrow` is a silent root-loss primitive.** Any thread borrow
+  held across an allocation point un-roots that thread for the cycle,
+  and nothing reports it. P0.b's assert is mandatory before trusting
+  any battery-green result.
 - **Resurrection semantics.** Over-marking can keep weak-table entries /
   finalizable objects alive a cycle longer than C. The weak/ephemeron
   canaries and gc.lua/gengc.lua are the oracle; any divergence is a
@@ -228,6 +350,9 @@ numbers.
 
 ## 6. Acceptance checklist
 
+- [ ] P0 quarantine/poison mode exists; stress+quarantine reproduces the
+      open bugs as deterministic Rust panics
+- [ ] P0 try_borrow coverage assert lands (debug builds)
 - [ ] P0 battery exists, wired, documented; release-profile suite in PR gate
 - [ ] `ANALYSES/GC_ROOTS.md` complete with per-row canaries
 - [ ] P2 strategy decision recorded with spike numbers

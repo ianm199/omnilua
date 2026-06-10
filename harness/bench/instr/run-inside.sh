@@ -42,6 +42,7 @@ count_ir() {
 IFS=',' read -ra WLIST <<< "$WORKLOADS"
 for wname in "${WLIST[@]}"; do
     wpath="/src/harness/bench/workloads/${wname}.lua"
+    [ -f "$wpath" ] || wpath="/src/harness/bench/probes/${wname}.lua"
     [ -f "$wpath" ] || { echo "[inside] missing workload $wname" >&2; continue; }
     echo "[inside] callgrind: $wname (ref)" >&2
     printf '%s\tref\t%s\n' "$wname" "$(count_ir "$REF_BIN" "$wpath")"

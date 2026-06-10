@@ -3211,20 +3211,24 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             }
                         } else {
                             let ra_u = ra.0 as usize;
-                            if let LuaValue::Int(step) = state.stack[ra_u + 2].val {
-                                let count = match state.stack[ra_u + 1].val {
+                            let window: &mut [crate::state::StackValue; 4] = (&mut state.stack
+                                [ra_u..ra_u + 4])
+                                .try_into()
+                                .expect("FORLOOP register window");
+                            if let LuaValue::Int(step) = window[2].val {
+                                let count = match window[1].val {
                                     LuaValue::Int(c) => c as u64,
                                     _ => 0,
                                 };
                                 if count > 0 {
-                                    let idx = match state.stack[ra_u].val {
+                                    let idx = match window[0].val {
                                         LuaValue::Int(x) => x,
                                         _ => 0,
                                     };
-                                    state.stack[ra_u + 1].val = LuaValue::Int((count - 1) as i64);
+                                    window[1].val = LuaValue::Int((count - 1) as i64);
                                     let new_idx = intop_add(idx, step);
-                                    state.stack[ra_u].val = LuaValue::Int(new_idx);
-                                    state.stack[ra_u + 3].val = LuaValue::Int(new_idx);
+                                    window[0].val = LuaValue::Int(new_idx);
+                                    window[3].val = LuaValue::Int(new_idx);
                                     pc = (pc as i64 - i.arg_bx() as i64) as u32;
                                 }
                             } else if float_for_loop(state, ra) {

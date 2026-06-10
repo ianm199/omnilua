@@ -30,3 +30,5 @@ concat_chain	vm-parity	1500000	short multi-operand OP_CONCAT chains
 sort_seeded	stdlib	-	table.sort default + custom comparator, LCG input
 json_roundtrip	macro	1500	pure-Lua JSON encode/decode round trip (real-program opcode mix)
 startup_empty	startup	-	process + runtime init only; startup constant for budgets
+loop_only	probe	20000000	differential probe: bare FORLOOP, lives in probes/ not workloads/
+call_only	probe	8000000	differential probe: CALL/RETURN+ADD over the same loop

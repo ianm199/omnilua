@@ -48,7 +48,7 @@ lua-wasm = { path = "crates/lua-wasm", version = "0.0.32" }
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 
 [profile.dev]

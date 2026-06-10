@@ -1,9 +1,0 @@
-harness/run_official_test.sh: line 120: 57965 Killed: 9               gtimeout --signal=KILL "$TEST_TIMEOUT_S" "$BIN" -e "$PREAMBLE_EXPR" "$src_file" > "$out_file" 2>&1
-FAIL  reference/lua-c/testes/db.lua  (cause=unknown, reached_exec=0)
---- first 5 lines of failure context ---
-testing debug library and debug information
-+
-testing inspection of parameters/returned values
-+
-+
---- (full output at /Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/harness/impl/official/db.out) ---

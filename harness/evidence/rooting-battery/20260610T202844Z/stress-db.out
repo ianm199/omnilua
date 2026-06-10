@@ -1,4 +1,0 @@
-FAIL  reference/lua-c/testes/db.lua  (cause=runtime-panic, reached_exec=0)
---- first 5 lines of failure context ---
-4:thread 'main' (137573598) panicked at /Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/crates/lua-gc/src/heap.rs:842:9:
---- (full output at /Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/harness/impl/official/db.out) ---

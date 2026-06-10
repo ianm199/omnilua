@@ -1,7 +1,0 @@
-testing debug library and debug information
-+
-
-thread 'main' (137352012) panicked at /Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/crates/lua-gc/src/heap.rs:842:9:
-use-after-sweep: Gc<lua_types::string::LuaString> dereferenced after the collector swept it (caught by LUA_RS_GC_QUARANTINE; this is a rooting bug — the object was reachable by execution but not by the root trace)
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-[panic] use-after-sweep: Gc<lua_types::string::LuaString> dereferenced after the collector swept it (caught by LUA_RS_GC_QUARANTINE; this is a rooting bug — the object was reachable by execution but not by the root trace)

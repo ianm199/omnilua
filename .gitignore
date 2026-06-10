@@ -53,3 +53,4 @@ harness/loop/state/
 harness/impl/official/*.out
 harness/.perf-experiment
 harness/impl/stop-build.err
+harness/evidence/rooting-battery/

@@ -112,7 +112,7 @@ if [ "$QUAR_ONLY" = "1" ]; then
         echo "BATTERY (quarantine-only): $findings finding(s); evidence in $EVIDENCE"
         exit 1
     fi
-    rmdir "$EVIDENCE" 2>/dev/null || true
+    rm -rf "$EVIDENCE" 2>/dev/null || true
     echo "BATTERY (quarantine-only): clean"
     exit 0
 fi

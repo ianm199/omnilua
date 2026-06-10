@@ -42,8 +42,8 @@ GAP = known uncovered path. DIVERGENT = safe but not C-faithful.
 
 | # | Location | Traced by | Verdict | Evidence / canary |
 |---|---|---|---|---|
-| 1 | Stack slots, per-frame ranges `[ci.func..next.func)` / `[ci.func..top)` | `LuaState::trace` (trace_impls.rs:74-89) | **GAP (bug B, OPEN)**: the range walk itself traces stale slots that hold swept refs (slots above top in cycle N become in-range in cycle N+1 without being rewritten). Deterministic: battery config 2 on db/coroutine/db.wrap | quarantine panic at `Gc::as_box` ← `LuaValue::trace` ← trace_impls.rs:87; ASAN heap-UAF on db.wrap stress=1. Cure = P2(d) |
-| 2 | Debug-local heuristic (named locals above top at stale `saved_pc`) | trace_impls.rs:90-105 | **GAP (bug B sibling)**: under/over-coverage by design; delete under P2(d) | #140 bug B text; subsumed by row 1's fix |
+| 1 | Stack slots `[0..top)` | `LuaState::trace` via `gc_trace_bound` (C `traversethread` parity) | OK (P2 option (d), 2026-06-10): tight bound + `clear_dead_stack_tail` before every collect + site-local savestate fixups (`get_varargs`, VarArgPack). Was bug B: the old frame-range walk traced stale slots because C's atomic dead-slice clear was never ported | battery config 2 — deterministic panic at `9807995`, clean after; ASAN UAF on db.wrap stress=1 gone |
+| 2 | Debug-local heuristic | DELETED (P2 option (d)) | OK: the tight-bound + Protect-fixup pair makes `[0..top)` cover live locals at every collect point; the saved_pc heuristic is gone | same as row 1 |
 | 3 | ci chain func slots | stack walk (each range starts at `ci.func`) | OK while thread traced; was the victim read of bug A when whole thread went untraced | canary_q |
 | 4 | Open upvalues | `self.openupval` loop (trace_impls.rs:109) + `twups` + `cross_thread_upvals` (GlobalState) | OK | canary_b |
 | 5 | Registry (`l_registry`), globals, loaded | GlobalState::trace :136,157-158 | OK | suite-wide |

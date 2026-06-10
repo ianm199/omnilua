@@ -855,6 +855,7 @@ impl LuaState {
         });
         u.account_buffer(u.buffer_bytes() as isize);
         self.push(LuaValue::UserData(u.clone()));
+        self.gc_pre_collect_clear();
         self.gc().check_step();
         Ok(u)
     }
@@ -985,6 +986,7 @@ pub fn to_lua_string(state: &mut LuaState, idx: i32) -> Result<Option<GcRef<LuaS
         return Ok(None);
     }
     state.obj_to_string(idx)?;
+    state.gc_pre_collect_clear();
     state.gc().check_step();
     let updated = index_to_value(state, idx);
     if let LuaValue::Str(s) = updated {
@@ -1088,6 +1090,7 @@ pub fn push_integer(state: &mut LuaState, n: i64) {
 pub fn push_lstring(state: &mut LuaState, s: &[u8]) -> Result<GcRef<LuaString>, LuaError> {
     let ts = state.intern_str(s)?;
     state.push(LuaValue::Str(ts.clone()));
+    state.gc_pre_collect_clear();
     state.gc().check_step();
     Ok(ts)
 }
@@ -1099,12 +1102,14 @@ pub fn push_string(
     match s {
         None => {
             state.push(LuaValue::Nil);
+            state.gc_pre_collect_clear();
             state.gc().check_step();
             Ok(None)
         }
         Some(bytes) => {
             let ts = state.intern_str(bytes)?;
             state.push(LuaValue::Str(ts.clone()));
+            state.gc_pre_collect_clear();
             state.gc().check_step();
             Ok(Some(ts))
         }
@@ -1117,6 +1122,7 @@ pub fn push_string(
 pub fn push_vfstring(state: &mut LuaState, formatted: &[u8]) -> Result<GcRef<LuaString>, LuaError> {
     let ts = state.intern_str(formatted)?;
     state.push(LuaValue::Str(ts.clone()));
+    state.gc_pre_collect_clear();
     state.gc().check_step();
     Ok(ts)
 }
@@ -1190,6 +1196,7 @@ pub fn push_cclosure(
             ccl.account_buffer(ccl.buffer_bytes() as isize);
         }
         state.push(LuaValue::Function(cl));
+        state.gc_pre_collect_clear();
         state.gc().check_step();
     }
     Ok(())
@@ -1328,6 +1335,7 @@ pub fn create_table(state: &mut LuaState, narray: i32, nrec: i32) -> Result<(), 
         t.resize(state, narray as usize, nrec as usize)?;
     }
     state.push(LuaValue::Table(t));
+    state.gc_pre_collect_clear();
     state.gc().check_step();
     Ok(())
 }
@@ -2274,6 +2282,7 @@ pub fn concat(state: &mut LuaState, n: i32) -> Result<(), LuaError> {
         let empty = state.intern_str(b"")?;
         state.push(LuaValue::Str(empty));
     }
+    state.gc_pre_collect_clear();
     state.gc().check_step();
     Ok(())
 }
@@ -2306,6 +2315,7 @@ pub fn new_userdata_uv(
     debug_assert!(nuvalue >= 0 && nuvalue < u16::MAX as i32, "invalid value");
     let u = state.new_userdata(size, nuvalue as usize)?;
     state.push(LuaValue::UserData(u.clone()));
+    state.gc_pre_collect_clear();
     state.gc().check_step();
     Ok(u)
 }

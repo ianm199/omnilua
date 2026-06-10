@@ -934,7 +934,9 @@ pub(crate) fn get_varargs(
                 }
             };
             let wanted: i32 = if wanted < 0 {
+                state.set_top(state.call_info[ci_idx.as_usize()].top);
                 state.check_stack(nextra)?;
+                state.gc_pre_collect_clear();
                 state.gc().check_step();
                 state.set_top(where_idx + nextra);
                 nextra
@@ -965,7 +967,9 @@ pub(crate) fn get_varargs(
     //      L->top.p = where + nextra;  /* next instruction will need top */
     //    }
     let wanted: i32 = if wanted < 0 {
+        state.set_top(state.call_info[ci_idx.as_usize()].top);
         state.check_stack(nextra)?;
+        state.gc_pre_collect_clear();
         state.gc().check_step();
         // TODO(port): `where_idx + nextra as i32` may overflow if nextra
         // is very large; checked add in Phase B.

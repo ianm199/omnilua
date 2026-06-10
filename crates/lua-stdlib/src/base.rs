@@ -441,6 +441,10 @@ pub(crate) fn rawset_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// In Rust we model this with an explicit early-return to the pushfail path
 /// using a boolean flag, avoiding labeled blocks.
 pub(crate) fn collectgarbage_fn(state: &mut LuaState) -> Result<usize, LuaError> {
+    // Explicit collections bypass the checkpoint wrappers, so the dead
+    // stack slices must be cleared here before any collect dispatch
+    // (C parity: traversethread's atomic clear; see #140 / GC_ROOTS.md).
+    state.gc_clear_dead_stack_tails();
     // The option set is version-gated. 5.4/5.3 expose `setpause`/`setstepmul`;
     // 5.5 removed both and added `param` (lbaselib.c). The version that owns
     // the running state decides which list/mapping applies.

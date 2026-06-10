@@ -19,7 +19,6 @@
 use crate::state::{FinalizerObject, GlobalState, LuaState};
 use crate::string::{LuaStringImpl, LuaUserDataImpl};
 use lua_gc::{Marker, Trace};
-use lua_types::{LuaClosure, LuaValue};
 
 /// Phase-B internal richer LuaString. The byte buffer is a Rust `Rc<[u8]>`
 /// (not GC-managed); no fields to mark.
@@ -65,45 +64,16 @@ impl Trace for LuaState {
     }
 
     fn trace(&self, m: &mut Marker) {
-        // and the open-upvalue list. Trace frame-bounded live ranges instead of
-        // every slot up to `ci.top`: that reserved tail can contain stale values
-        // from previous calls. Lua locals that sit above the transient `top` are
-        // added explicitly from debug local metadata.
-        let trace_debug_locals = self.cached_thread_id == self.global.borrow().current_thread_id;
-        let mut ci_idx = Some(self.ci);
-        while let Some(idx) = ci_idx {
-            let ci = &self.call_info[idx.as_usize()];
-            let start = ci.func.0 as usize;
-            let end_idx = if idx == self.ci {
-                self.top.0 as usize
-            } else if let Some(next) = ci.next {
-                self.call_info[next.as_usize()].func.0 as usize
-            } else {
-                self.top.0 as usize
-            };
-            let end = end_idx.min(self.stack.len());
-            if start < end {
-                for slot in &self.stack[start..end] {
-                    slot.val.trace(m);
-                }
-            }
-            if trace_debug_locals && ci.is_lua() {
-                if let Some(slot) = self.stack.get(ci.func.0 as usize) {
-                    if let LuaValue::Function(LuaClosure::Lua(cl)) = &slot.val {
-                        let pc = ci.saved_pc().saturating_sub(1) as i32;
-                        let base = ci.func.0 as usize + 1;
-                        let mut n = 1i32;
-                        while crate::func::get_local_name(&cl.proto, n, pc).is_some() {
-                            let idx = base + (n as usize - 1);
-                            if let Some(local_slot) = self.stack.get(idx) {
-                                local_slot.val.trace(m);
-                            }
-                            n += 1;
-                        }
-                    }
-                }
-            }
-            ci_idx = ci.previous;
+        // C's traversethread (lgc.c) walks [stack .. top) and relies on two
+        // companion invariants this port mirrors via `gc_trace_bound` (the
+        // savestate half — widen to ci.top only for a Lua current frame)
+        // and `clear_dead_stack_tail` (the atomic-clear half, run before
+        // every collect). Every slot below the bound is therefore
+        // valid-or-nil; the old frame-bounded range walk and the saved_pc
+        // debug-local heuristic (#140 bug B's two faces) are gone.
+        let bound = self.gc_trace_bound();
+        for slot in &self.stack[..bound] {
+            slot.val.trace(m);
         }
 
         for uv in self.openupval.iter() {

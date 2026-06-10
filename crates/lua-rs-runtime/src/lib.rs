@@ -932,6 +932,7 @@ impl Lua {
             let table = state.new_table();
             let raw = RawLuaValue::Table(table);
             let key = state.external_root_value(raw);
+            state.gc_pre_collect_clear();
             state.gc().check_step();
             RootedValue {
                 lua: self.clone(),
@@ -949,6 +950,7 @@ impl Lua {
             let string = state.new_string(bytes)?;
             let raw = RawLuaValue::Str(string);
             let key = state.external_root_value(raw);
+            state.gc_pre_collect_clear();
             state.gc().check_step();
             Ok::<_, LuaError>(RootedValue {
                 lua: self.clone(),
@@ -1036,6 +1038,7 @@ impl Lua {
                 })))
             });
             let key = state.external_root_value(raw);
+            state.gc_pre_collect_clear();
             state.gc().check_step();
             RootedValue {
                 lua: self.clone(),

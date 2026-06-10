@@ -3529,6 +3529,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         t.raw_set(state, LuaValue::Str(n_key), LuaValue::Int(nextra as i64))?;
                         state.set_at(ra, LuaValue::Table(t));
                         state.set_ci_savedpc(ci, pc);
+                        state.set_top(ra + 1);
                         state.gc_cond_step();
                         if state.hookmask != 0 {
                             trap = state.ci_trap(ci);

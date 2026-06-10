@@ -40,7 +40,7 @@ stacks; no `unsafe` additions.
 |---|---|---|---|---|
 | 1 | Dead-key tombstones: nil'd table entries left dereferenceable freed keys | FIXED `9c5125c` | `canary_p_deadkey_tombstone` (11 lines, deterministic) | READ 1 in `TableNode::key_is_short_str`, freed by sweep, alloc'd by lexer `intern_str` |
 | 2 | Coroutine traceback reads swept `LuaLClosure` (#140 bug A) | FIXED `0677646` | was: release db.wrap exit 139 every run; now `canary_q_coro_traceback_root` under stress+quarantine | Mechanism: debug-API thread borrows (`traceback`/`getinfo`/`getlocal`/`setlocal`) held the target's RefCell across allocations; `trace_reachable_threads` silently skipped the borrowed thread (the §1 try_borrow suspect, confirmed by the P0.b assert). Fix: `RootedThreadBorrow` snapshot guard |
-| 3 | Root tracer derefs stale slots fed from the FRAME-RANGE walk (#140 bug B) | OPEN | stress+quarantine on db.lua / db.wrap / coroutine.lua (battery config 2, deterministic panic) | quarantine panic in `Gc::as_box` ← `LuaValue::trace` ← `LuaState::trace` `trace_impls.rs:87` — the per-frame range walk itself traces stale slots, NOT just the debug-local heuristic #140 guessed. Strengthens option (d) |
+| 3 | Root tracer derefs stale slots fed from the FRAME-RANGE walk (#140 bug B) | FIXED (P2 option (d)) | battery config 2 (stress+quarantine db/coroutine/db.wrap): deterministic panic at parent (`9807995` battery run 20260610T203110Z), clean after (run 20260610T2057+) | Mechanism: we ported C's Protect top-raises without C's atomic dead-slice clear, so the marker walked garbage. Fix: trace `[0..top)`, clear dead slice before every collect, site-local savestate fixups. Heuristic + range walk deleted |
 | 4 | Weak prune skipped erased entries — dead key never tombstoned (`equal_key` derefs swept long-string key) | FIXED `1a04425` | `canary_r_weak_erased_deadkey`; was: gc.lua under quarantine | Found by the battery's first run. C parity: `clearbykeys`/`clearbyvalues` unconditionally `clearkey` empty entries; our `prune_weak_dead_with_value` skipped value-nil nodes |
 
 Named suspects from the code audit (2026-06-10, this spec's revision):
@@ -280,6 +280,32 @@ Spike deliverables: Ir delta for (d)'s checkpoint stores + once-per-cycle
 clear vs (b)'s clear-on-pop; A/B on call-heavy rows; written decision in
 this spec.
 
+**DECISION (2026-06-10): option (d), as-implemented shape.** Trace is
+exactly C's `[0 .. top)` (`gc_trace_bound`), the dead slice
+`[top .. stack.len())` is nil'd before every collect
+(`clear_dead_stack_tail` for self at the checkpoint wrappers +
+`gc_pre_collect_clear` at the 15 direct `check_step` sites + all
+borrowable registered threads), and checkpoints whose C original runs
+under `Protect` get the site-local `savestate` top fixup
+(`get_varargs` both branches, VarArgPack arm). The debug-local heuristic
+and the frame-bounded range walk are DELETED.
+
+Two variants were tried and rejected with data:
+- *Bound widening to `max(top, current ci.top)` globally*: over-retains
+  every suspended frame's reserved slice forever; the generational pacer
+  thrashes (db.lua's line-hook section went from seconds to 120s+
+  timeout, profile 100% inside `minor_collect`).
+- *Widening only for Lua current frames*: still over-retains
+  (`v51_gc_on_userdata_registered_by_setmetatable_fires` showed stale
+  argument copies surviving an explicit `collectgarbage()` — finalizers
+  did not fire).
+
+Perf (interleaved A/B vs `9807995`, 8 pairs, M3 Max, 2026-06-10):
+binarytrees 0.987 improved, fibonacci 0.971 improved, gc_pressure 0.982
+improved (RSS 0.887), call_return_shapes/closure_ops/coroutine_pingpong/
+method_calls inconclusive (medians 0.99–1.02). Zero regressed; no
+tracked line items needed.
+
 ### P3 — fix bug A (coroutine traceback)
 
 With P0's battery + P1's coroutine rows: reproduce bug 2 in a dedicated
@@ -358,12 +384,16 @@ numbers.
       rooting-battery`, CI `--quarantine-only` gate), documented
       (`harness/CLAUDE.md`, `crates/lua-gc/CLAUDE.md`); release-profile
       suite in PR gate (`make test` → `conformance-release`, 44/44 green)
-- [ ] `ANALYSES/GC_ROOTS.md` complete with per-row canaries
-- [ ] P2 strategy decision recorded with spike numbers
+- [x] `ANALYSES/GC_ROOTS.md` complete (per-row canary column; rows 1/2
+      now fixed per P2 decision)
+- [x] P2 strategy decision recorded with spike numbers (§3 P2 DECISION)
 - [x] Bug A fixed: canary_q (fails on parent, passes at fix) + release
       db.wrap green ×10 (`0677646`); ASAN confirmation rides the next
       battery `--asan` run
-- [ ] Bug B fixed: canary + stress+ASAN clean on db.lua
+- [x] Bug B fixed: battery config 2 (stress+quarantine db/coroutine/
+      db.wrap) is the dedicated regression oracle — deterministic panic
+      at parent `9807995`, clean after; ASAN confirmation rides the next
+      `--asan` run
 - [ ] Full suite + canaries clean under stress+ASAN, both modes, both profiles
 - [ ] Perf gates green (or tracked regressed-minor) on exactness changes
 - [ ] R2 landed; fresh matrices; release shipped per RELEASING.md

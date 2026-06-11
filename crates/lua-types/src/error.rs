@@ -148,6 +148,33 @@ impl LuaError {
             _ => LuaValue::Nil,
         }
     }
+
+    /// Human-readable error payload for embedders.
+    ///
+    /// Lua errors can carry any Lua value. When the payload is a byte string,
+    /// this returns it using lossy UTF-8 conversion; other payloads fall back to
+    /// the Lua type name so host integrations do not have to parse `Debug`.
+    pub fn message_lossy(&self) -> String {
+        match self {
+            LuaError::Runtime(v) | LuaError::Syntax(v) => lua_value_message_lossy(v),
+            LuaError::Memory => "not enough memory".to_string(),
+            LuaError::Error => "error in error handling".to_string(),
+            LuaError::Yield => "attempt to yield across a C-call boundary".to_string(),
+            LuaError::File => "file error".to_string(),
+            LuaError::Gc => "garbage collector error".to_string(),
+        }
+    }
+}
+
+fn lua_value_message_lossy(value: &LuaValue) -> String {
+    match value {
+        LuaValue::Str(s) => String::from_utf8_lossy(s.as_bytes()).into_owned(),
+        LuaValue::Nil => "nil".to_string(),
+        LuaValue::Bool(v) => v.to_string(),
+        LuaValue::Int(v) => v.to_string(),
+        LuaValue::Float(v) => v.to_string(),
+        other => format!("{} error", other.type_name()),
+    }
 }
 
 impl fmt::Display for LuaError {

@@ -22,8 +22,15 @@ Status checklist (tick only with evidence paths):
 - [ ] T2-B2: per-resume panic-hook machinery diet (design-gated; see below)
 - [x] T2-A: pretailcall `clear_stack_range` verdict recorded: KEEP +
       document (see T2-A section; full analysis 2026-06-11)
-- [ ] T2-C: frame re-entry / `prep_call_info` diet landed (`call_return_shapes`
-      improves)
+- [x] T2-C: frame re-entry / `prep_call_info` diet RESOLVED-NEGATIVE with
+      evidence (2026-06-11): A1 hoist/cold-split and A2 partial-update both
+      REGRESS call_return_shapes 1.02-1.03x (revert-validated back to 0.999);
+      A3 Option::expect already compiles to a shared cold symbol. The frame
+      pole is structural in the CallInfoFrame discriminant branch → T2-C2.
+      Surviving docs commit: PR #148.
+- [ ] T2-C2: CallInfoFrame flatten, Option A (safe flat struct, branch-free
+      accessors) — APPROVED 2026-06-11; Option B (union, 64 B) gated behind
+      Option A results + unsafe-budget decision
 - [ ] T2-D: `finish_get` method-lookup diet landed (`method_calls` improves)
 - [x] T3: #113 retitled to the RSS target with measured size table
       (issue #113 comment 2026-06-11, candidate ladder + done condition posted)
@@ -226,6 +233,35 @@ and shrink the per-call CallInfoFrame write to the fields C writes. This is
 deep VM surgery on the hottest loop: Opus drafts, Fable reviews the design
 diff before it merges. Expected: the 15.6% FRAME_SETUP region compresses;
 target call_return_shapes ≤ 1.55x.
+
+### T2-C2 — CallInfoFrame flatten, Option A (approved)
+
+T2-C's A/B data proved the FRAME_SETUP pole is the `CallInfoFrame` enum's
+discriminant branch (state.rs ~565-582): every hot accessor (`saved_pc`,
+`set_saved_pc`, `nextra_args`, `ci_trap`, `set_trap`) matches the tag before
+touching a field, and source-level tricks around it regress. The fix is to
+delete the branch: replace the 2-variant enum with a plain struct whose
+fields are always present (`savedpc`, `nextraargs`, `k`, `old_errfunc`,
+`ctx` — 32 B payload, CallInfo stays 72 B), and fold `trap` into a new
+`CIST_TRAP` callstatus bit (bits 14/15 free; C stores trap in callstatus
+too). All accessors become plain field reads / one-mask bit ops. Zero new
+unsafe.
+
+Sign-off conditions (Fable, 2026-06-11):
+- Every accessor that was variant-guarded carries a `debug_assert!` on the
+  frame kind (`CIST_C` bit), replacing the enum's wrong-variant panic
+  tripwire at zero release cost.
+- ~22 `CallInfoFrame::` sites change: state.rs accessors/constructors
+  (:599-:743, :2913, :5297, :5470), do_.rs (:685-688, :1100-1101, :1399),
+  tagmethods.rs (:857, :957), api.rs (:1819, :1890, :1898).
+- savedpc write-before-reentry ordering is byte-identical; db.lua +
+  errors.lua official tests are the line-attribution canaries.
+- Arbiter for sub-1% wall deltas: `harness/bench/instr-count.sh` (Ir is
+  load-immune); judge wall on interleaved A/B min-ratio past the ±1% floor.
+- Option B (repr(C) union overlay, CallInfo 64 B, lua-vm unsafe budget
+  0 → ≥6) is NOT approved yet: escalate only if Option A's wall win lands
+  and the 8 B/frame RSS is independently wanted (then it joins the #113
+  diet ladder).
 
 ### T2-D — `finish_get` method-lookup diet (after T2-C)
 

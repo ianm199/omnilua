@@ -42,7 +42,29 @@ Status checklist (tick only with evidence paths):
       no control-isolated wall win, and the 8 B/frame RSS is not
       independently requested. Reopen via the #113 diet ladder or with a
       Linux perf-stat branch-miss measurement.
-- [ ] T2-D: `finish_get` method-lookup diet landed (`method_calls` improves)
+- [x] T2-D: `finish_get` method-lookup diet RESOLVED-NEGATIVE with Ir evidence
+      (2026-06-11): the diet (hoist the loop-invariant `__index` interned-name
+      read out of the per-hop loop; fold `table_metatable` + `fast_tm_table`
+      into one `index_tm_with_name`) moves Ir the WRONG way on the primary
+      target. Deterministic callgrind rs Ir/iter vs origin/main b23eec8:
+      method_calls **+3.0 (+0.22%, regressed)**, metatable_index_chain
+      −16.0 (−0.96%, improved), table_field_index / fibonacci flat (never
+      enter `finish_get`). The hoist pays off only for multi-hop chains; for
+      the 1-hop `Klass.__index = Klass` method-dispatch shape (the named
+      target) the loop runs once, so hoisting saves nothing and adds cross-
+      loop liveness for `index_name`. A no-hoist fold (name read lazily in
+      the table branch) zeroes both deltas (+1.0 / +4.0 Ir/iter — noise),
+      confirming the win was entirely the hoist and the cost entirely
+      method_calls. Root cause is structural: `GcRef`/`LuaValue` are `Copy`,
+      so the loop's `.clone()`s are bitwise copies, not refcount traffic, and
+      the metatable read is a `Cell::get`; there is no "borrow gymnastics /
+      clone overhead" to remove — the spec's premise (clone/borrow waste)
+      does not hold for this `Copy` value representation. The genuine work
+      (borrow metatable → hash-walk `__index` → borrow index table →
+      hash-walk key) is what C pays too. Wall A/B (8-loop, 4-round,
+      min-ratio) corroborated noise: method_calls 1.0083, metatable_chain
+      1.0299, table_field 1.0030, all layout-entangled per the T2-C lesson.
+      VERDICT: dropped, no code change; branch tip == origin/main.
 - [x] T3: #113 retitled to the RSS target with measured size table
       (issue #113 comment 2026-06-11, candidate ladder + done condition posted)
 
@@ -274,16 +296,35 @@ Sign-off conditions (Fable, 2026-06-11):
   and the 8 B/frame RSS is independently wanted (then it joins the #113
   diet ladder).
 
-### T2-D — `finish_get` method-lookup diet (after T2-C)
+### T2-D — `finish_get` method-lookup diet (after T2-C) — RESOLVED-NEGATIVE
 
 Anchor: vm.rs:1009-1056 (`finish_get` — MAX_TAG_LOOP frame, metatable borrow
 traffic, `clone()`s to drop borrows), table.rs:1119 (`get_str_value`). C pays
-the same algorithm via a tighter `luaV_finishget`. Direction: specialize the
-one-level `__index`-is-a-table hop (the overwhelmingly common method-dispatch
-shape) to a borrow-free fast path before entering the generic loop. No
-semantic change: metamethod chain depth, error wording, and `__index`
-function/table dispatch order must be byte-identical. Target: method_calls
-≤ 1.85x.
+the same algorithm via a tighter `luaV_finishget`. Direction tried: hoist the
+loop-invariant `__index` interned-name read out of the per-hop loop and fold
+the per-hop `table_metatable` + `fast_tm_table` pair into one
+`index_tm_with_name`, preserving the loop-iteration-per-hop structure so chain
+depth, error wording, and function/table dispatch order stay byte-identical.
+
+Outcome (2026-06-11, see checklist entry for the full Ir table): the diet
+moves the named target the WRONG way — method_calls **+0.22% Ir**
+(deterministic callgrind), while only the multi-hop metatable_index_chain
+improves (−0.96%). The premise in the original direction — that the loop
+wastes work on borrows and `clone()`s — does not hold: `GcRef`/`LuaValue` are
+`Copy` (lua-types/src/gc.rs:163, value.rs:12), so the loop's clones are
+bitwise copies and the metatable read is a `Cell::get`; the irreducible cost
+is the two hash-walks (metatable `__index`, then the index table's key) that C
+pays identically. No borrow-free fast path can remove the borrows of the two
+tables it must actually read. Per the spec's own arbiter rule (Ir must go DOWN
+on method_calls or the change is dropped), the change is **dropped** — branch
+`perf/finish-get-diet` carries only this docs note; tip == origin/main.
+
+Harness lesson: when a perf direction is premised on "remove clone/borrow
+overhead," first confirm the value representation is NOT `Copy`. For lua-rs's
+`Copy` value enum, `.clone()` is free and the optimizer already elides the
+redundant copies — the diet has nothing to remove. The Ir arbiter is what
+made this droppable cleanly where wall (all four workloads +0.3–3.0%,
+layout-entangled per T2-C) could not have settled it.
 
 ## Track 3 — #113 re-scope to RSS (issue hygiene, no code)
 

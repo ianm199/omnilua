@@ -4,6 +4,56 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **vm** (#139): Lua 5.1 order comparisons on mixed-type operands now raise
+  `attempt to compare X with Y` before any metamethod lookup, matching
+  reference 5.1.5 — `__lt`/`__le` are consulted only for same-Lua-type
+  operands in 5.1 (Int/Float share the number tag); 5.2+ behavior is
+  unchanged. One version gate at the cold `call_order_tm` choke point covers
+  the register and immediate (LtI/LeI/GtI/GeI) compare paths with zero
+  dispatch-loop cost.
+
+### Changed
+
+- **coroutine** (T2-B2): the per-resume panic-hook install/restore dance
+  (3–4 heap allocations plus four global hook-lock operations per resume,
+  there only to silence `LuaThreadClose` unwinds) is replaced by an
+  install-once chaining hook gated on a thread-local suppress counter.
+  coroutine_pingpong wall −32% (interleaved A/B min-ratio 0.674, Ir flat —
+  the win is removed lock/alloc latency, not instructions); the stock matrix
+  row is now 1.35x vs reference where the 2026-06-10 matrix recorded 2.00x
+  even with PGO. Embedder note: install custom panic hooks before the first
+  resume; later hooks displace the chain (documented on
+  `ensure_chaining_panic_hook`).
+- **vm** (T2-C2): `CallInfoFrame` flattened from a 2-variant tagged enum to a
+  branch-free always-present-fields struct, and the per-frame hook trap moved
+  to callstatus bit `CIST_TRAP`, matching C's layout discipline. CallInfo
+  stays 72 bytes (now enforced by a compile-time assertion), every accessor
+  is a plain field read with a `debug_assert!` frame-kind tripwire, zero new
+  unsafe. call_return_shapes −8.6% / method_calls −4.4% wall on interleaved
+  A/B with exactly flat Ir (the wall component is layout-entangled on
+  macOS/arm64; the structural win is the deleted discriminant branch).
+- **coroutine** (T2-B): the four remaining per-resume `Vec` buffers (resume
+  args, results, parent open-upvalue slots, cross-thread flush) are pooled on
+  `GlobalState` following the snapshot-pool pattern. Wall-neutral on pingpong
+  (the dominant snapshot pole was already pooled in `04cd144`); removes
+  allocator traffic for arg/result-heavy resume shapes.
+
+### Docs
+
+- `docs/ISSUE_BURNDOWN_SPEC.md` — plan-of-record for the 2026-06-11
+  #139/#134/#113 sweep, every verdict evidence-backed: pretailcall
+  `clear_stack_range` KEEP (rooting safety; the divergence from C is now
+  documented at the callsite), T2-C frame micro-optimizations and T2-D
+  `finish_get` diet both RESOLVED-NEGATIVE by the instruction-count arbiter
+  (the latter because `GcRef`/`LuaValue` are `Copy` — there was no clone
+  overhead to remove), and the `CallInfoFrame` union (64 B CallInfo, unsafe
+  budget raise) explicitly NOT escalated. #113 retitled to the RSS
+  object-diet backlog with a measured size table.
+
 ## [0.0.33] - 2026-06-10
 
 ### Fixed

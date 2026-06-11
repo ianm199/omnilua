@@ -8,8 +8,11 @@ post-v0.0.33).
 
 Status checklist (tick only with evidence paths):
 
-- [ ] T1: #139 fix landed — V51 mixed-type order comparisons raise without
+- [x] T1: #139 fix landed — V51 mixed-type order comparisons raise without
       consulting `__lt`/`__le`; oracle parity on 5.1 AND 5.2–5.5 unchanged
+      (commit 1ee624c: check.sh 57/54/23/7/10 pass across 5.1–5.5,
+      multiversion_oracle 165 pass, run_official_all 44/44, 10-case
+      byte-for-byte ref matrix vs /tmp/lua-refs/bin/lua5.1.5)
 - [ ] T2-B: coroutine resume/yield allocator-traffic diet landed
       (`coroutine_pingpong` improves, canaries + official coroutine tests green)
 - [ ] T2-A: pretailcall `clear_stack_range` verdict recorded (keep / remove /
@@ -17,7 +20,8 @@ Status checklist (tick only with evidence paths):
 - [ ] T2-C: frame re-entry / `prep_call_info` diet landed (`call_return_shapes`
       improves)
 - [ ] T2-D: `finish_get` method-lookup diet landed (`method_calls` improves)
-- [ ] T3: #113 retitled to the RSS target with measured size table
+- [x] T3: #113 retitled to the RSS target with measured size table
+      (issue #113 comment 2026-06-11, candidate ladder + done condition posted)
 
 ## Roles and routing
 

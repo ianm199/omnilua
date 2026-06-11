@@ -1503,9 +1503,6 @@ impl Heap {
         let raw: *mut GcBox<T> = Box::into_raw(boxed);
         let ptr: NonNull<GcBox<T>> = NonNull::new(raw).expect("Box::into_raw is non-null");
         let dyn_ptr: NonNull<GcBox<dyn Trace>> = ptr;
-        let identity = ptr.as_ptr() as *const () as usize;
-        let token = self.next_token();
-        self.allocation_tokens.borrow_mut().insert(identity, token);
         self.head.set(Some(dyn_ptr));
         self.bytes.set(self.bytes.get() + size);
         self.objects.set(self.objects.get() + 1);
@@ -1894,12 +1891,42 @@ impl Heap {
         count
     }
 
-    /// Return the current heap token for a live allocation identity.
+    /// Return the current heap token for an allocation identity, or `None` when
+    /// the identity was never registered or has since been swept.
     ///
-    /// Weak handles use this before sweep to capture their target allocation
-    /// without dereferencing stale pointers later.
+    /// Registration is lazy: tokens are minted at weak-handle creation
+    /// ([`register_allocation_token`](Self::register_allocation_token)), not at
+    /// allocation, so an object that was never weak-referenced reports `None`
+    /// here even while live.
     pub fn allocation_token(&self, identity: usize) -> Option<usize> {
         self.allocation_tokens.borrow().get(&identity).copied()
+    }
+
+    /// Register `identity` in the weak-handle validation table, returning its
+    /// token (get-or-insert against the monotonic counter).
+    ///
+    /// This is the lazy half of weak-handle validation. The hot allocation path
+    /// no longer touches `allocation_tokens`; instead a token is minted the
+    /// first time an object is downgraded to a weak handle, which is the only
+    /// moment the token is ever consumed.
+    ///
+    /// Correctness: every valid weak handle calls this at creation while holding
+    /// a strong reference, so the object is provably live at registration. A
+    /// later [`contains_allocation`](Self::contains_allocation) returning false
+    /// for an absent identity therefore means "swept" exactly as the eager
+    /// scheme did — sweep removes the entry when it frees the box. The monotonic
+    /// counter never reissues a token, so when the allocator reuses an address
+    /// (a freed identity re-registered by a fresh object) the new token differs
+    /// from any stale handle's, preventing address reuse from resurrecting a
+    /// dead handle. Objects that are never weak-referenced never enter the map.
+    pub fn register_allocation_token(&self, identity: usize) -> usize {
+        let mut tokens = self.allocation_tokens.borrow_mut();
+        if let Some(token) = tokens.get(&identity) {
+            return *token;
+        }
+        let token = self.next_token();
+        tokens.insert(identity, token);
+        token
     }
 
     /// Return true when `identity` still names the same heap allocation.
@@ -3192,16 +3219,53 @@ mod tests {
             marker_calls: Cell::new(0),
         });
         let id = obj.identity();
-        let token = heap
-            .allocation_token(id)
-            .expect("heap allocation should get a token");
 
+        assert_eq!(
+            heap.allocation_token(id),
+            None,
+            "lazy registration: a freshly allocated box has no token until it is downgraded"
+        );
+
+        let token = heap.register_allocation_token(id);
+        assert_eq!(
+            heap.register_allocation_token(id),
+            token,
+            "registration is get-or-insert: re-registering a live identity returns the same token"
+        );
+        assert_eq!(heap.allocation_token(id), Some(token));
         assert!(heap.contains_allocation(id, token));
         assert!(!heap.contains_allocation(id, token + 1));
 
         heap.full_collect(&OneRoot(None));
         assert_eq!(heap.allocation_token(id), None);
         assert!(!heap.contains_allocation(id, token));
+    }
+
+    #[test]
+    fn registering_after_sweep_yields_a_distinct_token_on_address_reuse() {
+        let heap = Heap::new();
+        heap.unpause();
+        let first = heap.allocate(Cell0 {
+            next: Cell::new(None),
+            marker_calls: Cell::new(0),
+        });
+        let id = first.identity();
+        let first_token = heap.register_allocation_token(id);
+
+        heap.full_collect(&OneRoot(None));
+        assert_eq!(
+            heap.allocation_token(id),
+            None,
+            "sweep removes the token for the dead identity"
+        );
+
+        let second_token = heap.register_allocation_token(id);
+        assert_ne!(
+            first_token, second_token,
+            "monotonic tokens keep address reuse from resurrecting a stale weak handle"
+        );
+        assert!(!heap.contains_allocation(id, first_token));
+        assert!(heap.contains_allocation(id, second_token));
     }
 
     #[test]
@@ -3213,6 +3277,7 @@ mod tests {
             marker_calls: Cell::new(0),
         });
         let old_id = old_dead.identity();
+        heap.register_allocation_token(old_id);
 
         let outcome = heap.incremental_run_until_state_with_post_mark(
             &OneRoot(None),
@@ -3228,6 +3293,7 @@ mod tests {
             marker_calls: Cell::new(0),
         });
         let new_id = new_during_sweep.identity();
+        heap.register_allocation_token(new_id);
 
         loop {
             let outcome = heap.incremental_step_with_post_mark(

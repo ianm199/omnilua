@@ -6498,6 +6498,11 @@ mod tests {
             .expect("short string should intern");
         let id = string.identity();
         assert!(state.global().interned_lt.contains_key(&payload[..]));
+        assert_eq!(
+            state.global().heap.register_allocation_token(id),
+            state.global().heap.register_allocation_token(id),
+            "token registration is get-or-insert while the string is provably live"
+        );
         assert!(state.global().heap.allocation_token(id).is_some());
 
         state.gc().full_collect();
@@ -6518,6 +6523,7 @@ mod tests {
             .intern_str(payload)
             .expect("short string should intern");
         let id = string.identity();
+        state.global().heap.register_allocation_token(id);
         let key = state.external_root_value(LuaValue::Str(string));
 
         state.gc().full_collect();

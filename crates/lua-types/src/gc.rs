@@ -78,9 +78,9 @@ impl<T: Trace + 'static> GcRef<T> {
     pub fn downgrade(&self) -> GcWeak<T> {
         let identity = self.identity();
         let tracked = lua_gc::with_current_heap(|heap| {
-            heap.and_then(|heap| {
-                heap.allocation_token(identity)
-                    .map(|token| (HeapRef::from_heap(heap), token))
+            heap.map(|heap| {
+                let token = heap.register_allocation_token(identity);
+                (HeapRef::from_heap(heap), token)
             })
         });
         let (heap, allocation_token) = match tracked {

@@ -741,6 +741,24 @@ pub(crate) fn call_order_tm(
     p2: &LuaValue,
     event: TagMethod,
 ) -> Result<bool, LuaError> {
+    // PORT NOTE (#139): In 5.1, `luaV_lessthan`/`luaV_lessequal` check
+    // `ttype(l) != ttype(r)` FIRST and raise `luaG_ordererror` before any TM
+    // lookup, so the `__lt`/`__le` metamethod is consulted ONLY for same-Lua-type
+    // operands. 5.2+ removed that guard and consults the TM for mixed types too.
+    // Both-number and both-string operands are resolved by fast paths and never
+    // reach this choke point, so a single gate here on the Lua type tag (Int and
+    // Float share the `Number` tag via `base_type`, matching C's `ttype`)
+    // reproduces 5.1's check order. This is a cold path: a direct `lua_version`
+    // read is correct, mirroring the `__le`-from-`__lt` derivation gate below.
+    {
+        use crate::state::LuaValueExt;
+        if state.global().lua_version == lua_types::LuaVersion::V51
+            && p1.base_type() != p2.base_type()
+        {
+            return Err(crate::debug::order_error(state, p1, p2));
+        }
+    }
+
     //      return !l_isfalse(s2v(L->top.p));
     //
     // PORT NOTE: In C, `L->top.p` is used as a scratch slot (written by
@@ -1030,4 +1048,9 @@ pub(crate) fn get_varargs(
 //         uses get_str_bytes (infallible) and obj_type_name wraps it with
 //         Ok(...), so no OOM propagation risk remains.
 //     (8) luaC_fix in init() is stubbed as gc().fix_object() — no-op Phase A-C.
+//     (9) #139: call_order_tm gates V51 mixed-Lua-type order comparisons to raise
+//         luaG_ordererror before any TM lookup, matching 5.1's `ttype(l) !=
+//         ttype(r)` guard. 5.2+ keep consulting the TM for mixed types. The check
+//         is on the Lua type tag (base_type), so Int/Float (both `Number`) and the
+//         two userdata kinds compare as C's `ttype` does.
 // ──────────────────────────────────────────────────────────────────────────────

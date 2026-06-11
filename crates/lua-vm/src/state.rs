@@ -1844,6 +1844,27 @@ pub struct GlobalState {
     /// they root nothing.
     pub snapshot_stack_pool: Vec<Vec<LuaValue>>,
     pub snapshot_upval_pool: Vec<Vec<GcRef<UpVal>>>,
+
+    /// Capacity pool for the transient value buffers a single `aux_resume`
+    /// builds — the argument list copied off the parent stack on entry and the
+    /// result list copied off the child stack on return. Each was a fresh
+    /// `Vec<LuaValue>` allocated and freed per resume. Callers pop a buffer,
+    /// fill it, drain it back to empty, then park it here; pool depth is
+    /// bounded by the maximum resume-nesting depth. Parked buffers are always
+    /// empty, so they root nothing.
+    pub resume_value_pool: Vec<Vec<LuaValue>>,
+
+    /// Capacity pool for the open-upvalue slot list `aux_resume` snapshots on
+    /// entry (parent thread id + stack index per open upvalue). This buffer
+    /// spans the child resume — it is read again on return to flush
+    /// cross-thread upvalues back — so it follows the same pop/park discipline
+    /// as the snapshot pools. The pairs are plain `Copy` data and root nothing.
+    pub resume_upval_slot_pool: Vec<Vec<(u64, StackIdx)>>,
+
+    /// Capacity pool for the upvalue-flush buffer `aux_resume` builds on return
+    /// (stack index + mutated value per cross-thread upvalue). Popped, filled,
+    /// drained back to the parent stack, then parked empty.
+    pub resume_flush_pool: Vec<Vec<(StackIdx, LuaValue)>>,
 }
 
 /// `LUA_MASKCOUNT` (`1 << LUA_HOOKCOUNT`) — the count-hook event mask the
@@ -5951,6 +5972,9 @@ pub fn new_state() -> Option<LuaState> {
         suspended_parent_open_upvals: Vec::new(),
         snapshot_stack_pool: Vec::new(),
         snapshot_upval_pool: Vec::new(),
+        resume_value_pool: Vec::new(),
+        resume_upval_slot_pool: Vec::new(),
+        resume_flush_pool: Vec::new(),
     };
 
     let global_rc = Rc::new(RefCell::new(global));

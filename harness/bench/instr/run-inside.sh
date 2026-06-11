@@ -19,12 +19,21 @@ set -euo pipefail
 
 WORKLOADS="$1"
 BRANCH_SIM="${2:-no}"
+# $3 = cargo feature list (T4 ablation branch only; empty on main reproduces the
+# original default build byte-for-byte).
+FEATURES="${3:-}"
 
 export CARGO_TARGET_DIR=/cache/target
 export CARGO_HOME=/cache/cargo
 
-echo "[inside] building lua-rs (release, linux)" >&2
-cargo build --release --manifest-path /src/Cargo.toml -p lua-cli -q
+FEATURE_ARGS=()
+if [ -n "$FEATURES" ]; then
+    FEATURE_ARGS=(--features "$FEATURES")
+    echo "[inside] building lua-rs (release, linux) with features: $FEATURES" >&2
+else
+    echo "[inside] building lua-rs (release, linux)" >&2
+fi
+cargo build --release --manifest-path /src/Cargo.toml -p lua-cli -q "${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}"
 RS_BIN="$CARGO_TARGET_DIR/release/lua-rs"
 
 if ! /cache/luaref/src/lua -v >/dev/null 2>&1; then

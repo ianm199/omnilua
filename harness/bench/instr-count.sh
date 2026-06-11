@@ -50,12 +50,19 @@ WORKLOADS="startup_empty"
 LABEL="instr"
 EXTRA_DIR=""
 BRANCH_SIM="no"
+# `--features` is a NEVER-MERGES addition from the T4 safety-tax ablation branch
+# (ablation/unchecked-stack). It forwards a cargo feature list into the
+# in-container `cargo build -p lua-cli` so the ablated builds can be Ir-measured
+# against the default build on the same toolchain. On main this flag does not
+# exist; the default value "" reproduces byte-identical behavior to before.
+FEATURES=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --workloads)  WORKLOADS="startup_empty,$2"; shift 2 ;;
         --label)      LABEL="$2";                   shift 2 ;;
         --dir)        EXTRA_DIR="$2";               shift 2 ;;
         --branch-sim) BRANCH_SIM="yes";             shift 1 ;;
+        --features)   FEATURES="$2";                shift 2 ;;
         -h|--help)
             sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# //; s/^#//'
             exit 0 ;;
@@ -111,7 +118,7 @@ docker run --rm \
     -v "$ROOT":/src:ro \
     -v "$VOL":/cache \
     ${EXTRA_MOUNT[@]+"${EXTRA_MOUNT[@]}"} \
-    "$IMG" bash /src/harness/bench/instr/run-inside.sh "$WORKLOADS" "$BRANCH_SIM" >> "$TSV"
+    "$IMG" bash /src/harness/bench/instr/run-inside.sh "$WORKLOADS" "$BRANCH_SIM" "$FEATURES" >> "$TSV"
 
 echo "==> $TSV" >&2
 column -t -s$'\t' "$TSV"

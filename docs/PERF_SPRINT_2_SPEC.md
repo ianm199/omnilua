@@ -34,10 +34,12 @@ Status checklist (tick only with evidence paths):
       36/0, quarantine clean on coroutine/locals/closure, workspace 0 fail,
       wasm check green. UpValState deleted from the public API (0.0.x).
       #113 progress comment: pending below.
-- [ ] T2 setter family: FRESH profile first; Ir down on ≥2 of
-      {table_setfield_same, table_seti_same, global_settabup_same,
-      table_settable_string_key}, no control regression, canaries +
-      quarantine green
+- [x] T2 setter family — RESOLVED-NEGATIVE (no in-scope Ir win exists;
+      verdict-ledger entry below). FRESH branch-sim profile on 5727ee4
+      established the gap is structural safety/representation tax, not
+      removable instruction-removal under the packet's no-unsafe / no-layout
+      constraints. Two candidate changes built, gated green, measured, and
+      reverted per drop-if-neutral. Branch `perf/setter-family-diet`.
 - [x] T3a GC/alloc design memo written: `docs/GC_ALLOC_DESIGN_MEMO.md`
       (supervisor-authored, dhat absolutes @ 5727ee4: concat_chain 13.9M
       blocks/38 B avg is the standout anomaly; binarytrees peak 36 MB live).
@@ -70,3 +72,85 @@ not restated here. Two local notes:
 
 (append per-packet outcomes here as they land — kept verdicts AND honest
 negatives, with evidence paths)
+
+### T2 setter family — RESOLVED-NEGATIVE (2026-06-11, branch `perf/setter-family-diet`)
+
+**Verdict: no in-scope instruction-removal win exists on the four target rows.**
+Two candidate changes were implemented, gated green (oracle 165/165), measured
+with the deterministic Ir + branch-sim arbiters, and reverted per drop-if-neutral.
+The setter-family gap is structural safety/representation tax that the packet's
+constraints (zero new `unsafe`, no `LuaValue`/table layout change — the latter is
+an explicit STOP condition) put out of reach. The right owners are T4 (safety-tax
+ablation, never-merges) and T3 (representation).
+
+Baseline (frozen `/tmp/lua-rs-s2-t2-base`, sha 5727ee4, same-source rebuild
+`e4797e3`, protocol-valid). Per-iteration budgets, `--branch-sim`
+(`harness/bench/results/20260611T181830Z-5727ee4-instr.tsv`):
+
+| row | C Ir/it | rs Ir/it | Ir ratio | C Bc/it | rs Bc/it | rs Bcm/it |
+|---|---|---|---|---|---|---|
+| table_setfield_same | 77 | 183 | 2.38 | 9 | 30 | 0 |
+| table_seti_same | 61 | 154 | 2.52 | 8 | 22 | 0 |
+| global_settabup_same | 77 | 189 | 2.45 | 9–12 | 31–32 | 0 |
+| table_settable_string_key | 93 | 199 | 2.14 | 11 | 32 | 0 |
+
+**Classification (per MEASUREMENT_PROTOCOL §model):** instruction-removal, NOT
+CPI. Bcm ≈ 0/iter on every row (branches predict perfectly) — the gap is wasted
+*work* (~100 extra Ir, ~21 extra conditional branches per write vs C), not stalls.
+So `instr-count.sh` Ir is the arbiter, with Bc as a layout-immune cross-check
+(a removed branch shows in Bc regardless of code placement; Ir alone is hostage
+to the ±2–3% whole-binary layout floor — a call-free control once moved 12% wall
+on layout, and here fibonacci/mandelbrot, which share no setter code, swung
+±1–2.4% Ir between builds).
+
+Where the ~21 extra branches/write live, and why each is out of scope:
+1. `RefCell<TableInner>::borrow_mut()` per write (C has no borrow flag) —
+   removable only via `unsafe` (forbidden) or a layout change (T3).
+2. Bounds-checked `Vec`/stack accessors: `try_update_int`'s array store does an
+   `alimit` semantic check AND a `Vec` index bounds check (`alimit ≤ array.len()`
+   is a runtime invariant LLVM cannot prove, so the second check stays);
+   `get_at`/`set_at` likewise. This is exactly the T4 ablation target — never
+   merges.
+3. `LuaValue::is_collectable()` is a multi-variant `matches!` (discriminants
+   {4,5,6,7,9}) → ~2 conditional branches, vs C's `iscollectable` single
+   `rawtt(v) & BIT_ISCOLLECTABLE` bit-test (0 branches). Closing it needs a
+   `LuaValue` representation change (collectable bit / variant reorder) — T3
+   territory and the packet's STOP condition.
+4. `Result<(),LuaValue>` plumbing through the `try_update_* → raw_set_* → match`
+   layers (C returns a raw `TValue*`). Inlines partially; the residual
+   miss-arm match is a branch C folds into a pointer comparison.
+
+Candidate changes tested and dropped:
+
+- **C1 node-walk single-match** (`TableNode::short_str_key()` collapsing
+  `key_is_short_str()` + `key_string()` — two enum-tag reads → one, matching C's
+  `keyisshrstr(n) ? keystrval(n) : NULL`). Real but tiny: **−1 Bc/iter** on the
+  two string rows (setfield 30→29, settable 32→31; table_seti_same int path
+  unchanged at 22, as predicted — confirms the −1 is the removed string-walk
+  match), Bcm flat. Ir effect (+2/iter) is below the layout floor → fails the
+  mechanical bar (Ir down on ≥2 rows). Reverted. (A legitimate ~3-line
+  simplification + 2 dead-accessor deletions if landed as non-perf cleanup.)
+- **C2 C-faithful fastget→finishfastset restructure** of OP_SETFIELD +
+  OP_SETTABUP: try an in-place overwrite first (a new `try_overwrite_short_str`
+  with C's `!isempty(slot)` semantics — a present key with a *nil* value is a
+  MISS so `__newindex` still fires; verified byte-identical to lua5.4.7 on the
+  nil-slot `__newindex` edge case), checking `has_metatable` only on the miss.
+  Removes `has_metatable` from the hit path — but the added `!isempty` check
+  trades 1:1 for it. **Bc/iter IDENTICAL to baseline on all four rows
+  (30/22/32/32)** → net-zero branch change, confirmed by the layout-immune
+  arbiter; Ir swings were pure layout noise (fibonacci −2.4% in the same build,
+  shares no setter code). Reverted.
+
+Load-bearing discovery: **our no-metatable setter fast path is already at
+branch-parity with C's fast path** — we skip C's `isempty` probe (safe without a
+metatable, both outcomes just store) in exchange for the `has_metatable` branch.
+Restructuring to mirror C's exact shape is therefore a wash. The remaining ratio
+is not setter-logic; it is the safety/representation tax T4 measures and T3
+addresses.
+
+Evidence TSVs (`harness/bench/results/`):
+`20260611T175932Z-e4797e3-t2-baseline.tsv` (Ir baseline),
+`20260611T181830Z-5727ee4-instr.tsv` (branch-sim baseline),
+`20260611T182125Z-…` (C1 branch-sim), `20260611T182748Z-…` (C2 branch-sim).
+Gates on each candidate: `cargo test -p lua-types` + `-p lua-vm` green,
+multiversion_oracle 165/165. No control regression observed beyond layout noise.

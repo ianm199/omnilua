@@ -572,7 +572,11 @@ pub struct CallInfo {
 /// footprint unchanged: the payload stays 32 B and `CallInfo` stays 72 B. The
 /// approved design (Option A) is conditioned on not growing `CallInfo`; if a
 /// future field change breaks this, the build fails here rather than silently
-/// regressing per-frame RSS.
+/// regressing per-frame RSS. The byte counts are 64-bit-specific (the payload
+/// holds a fn pointer and two `isize`s), so the guard is gated off 32-bit
+/// targets — on wasm32 the struct is naturally smaller and there is no C
+/// layout-parity claim to enforce.
+#[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(core::mem::size_of::<CallInfoFrame>() == 32);
     assert!(core::mem::size_of::<CallInfo>() == 72);

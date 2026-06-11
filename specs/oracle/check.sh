@@ -209,6 +209,12 @@ if [ "$ver" = "5.1" ]; then
   # Setting __gc on a table metatable does not call it on collection.
   run "__gc table inert"    'local flag={f=false}; do local t=setmetatable({},{__gc=function() flag.f=true end}); t=nil end; collectgarbage(); collectgarbage(); print(tostring(flag.f))'
 
+  # Metamethod flip (#139): order comparisons on mixed Lua types raise BEFORE the
+  # __lt/__le metamethod is consulted (5.2+ consult the TM for mixed types). The
+  # TM fires only when both operands share a Lua type.
+  run "__lt mixed raises"   'local t=setmetatable({},{__lt=function() return true end}); print(pcall(function() return t<2 end))'
+  run "__le mixed raises"   'local t=setmetatable({},{__le=function() return true end}); print(pcall(function() return t<=2 end))'
+
   # Stdlib roster (5.1): fenv globals present, _ENV/bit32/utf8 absent,
   # unpack/loadstring globals, legacy table/math names, no math.type.
   run "getfenv present"     'print(type(getfenv))'

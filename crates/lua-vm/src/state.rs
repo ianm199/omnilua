@@ -2638,9 +2638,17 @@ impl LuaState {
 
     /// Clear stack slots in `[start, end)` without changing `top`.
     ///
-    /// Internal call setup reserves space up to `ci.top`; while GC tracing is
-    /// conservative over that range, the unused tail must not retain stale
-    /// collectable values from previous frames.
+    /// Under the exact-rooting model (abe2b52) the collector traces only the
+    /// live window `[0, top)` and, per collect, nils the dead tail above `top`
+    /// up to the high-water mark before tracing — so a reserved-but-unused tail
+    /// is normally cleared by the collector itself, not by callers. This helper
+    /// exists for the call-setup paths that raise `ci.top` above the live `top`
+    /// (e.g. a tail call reserving its callee frame): on those paths the gap
+    /// `[live_top, new_ci_top)` can be reached by the per-collect dead-tail
+    /// clear and the trace within a single collect off the same raised top, so
+    /// it must not retain stale collectable `GcRef`s left by a previous frame —
+    /// retaining them is the #140 use-after-free class. Callers clear the gap
+    /// here so the raised top is GC-safe before any allocation can collect.
     pub fn clear_stack_range(&mut self, start: StackIdx, end: StackIdx) {
         if end.0 <= start.0 {
             return;

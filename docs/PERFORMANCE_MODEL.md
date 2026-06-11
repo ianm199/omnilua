@@ -788,3 +788,53 @@ make conformance
 - Generated profile and result artifacts are ignored, so durable reports must
   cite exact local paths or promote selected summaries into committed docs.
 
+
+## Safety-tax ablation (sprint-2 T4, 2026-06-11) — the "when to stop" number
+
+Measured on the never-merged branch `ablation/unchecked-stack` (pushed for
+reproducibility; two cargo features: `perf-ablation-unchecked-stack` = stack
+accessors unchecked, `perf-ablation-unchecked-table` = table fast-path RefCell
++ node/array bounds unchecked). All four build configs validated not-wrong-code
+(oracle 165, official calls/nextvar, canaries) before measuring. Evidence TSVs:
+`harness/bench/results/20260611T*-t4-*.tsv`.
+
+Ir delta vs default build (deterministic cachegrind), and the Ir ratio vs C
+that REMAINS after full ablation:
+
+| row | axis A (stack) | axis B (table) | A+B | Ir ratio before → after |
+|---|---:|---:|---:|---|
+| table_setfield_same | −7.7% | −7.7% | −9.8% | 2.38 → 2.14 |
+| table_seti_same | −9.7% | −10.4% | −12.3% | 2.52 → 2.21 |
+| global_settabup_same | −6.4% | −8.5% | −14.3% | 2.45 → 1.88 |
+| table_settable_string_key | −8.5% | −10.1% | −10.6% | 2.14 → 1.91 |
+| call_return_shapes | −11.9% | −2.1% | −9.0% | 2.39 → 2.18 |
+| method_calls | −10.0% | −9.1% | −15.5% | 2.43 → 2.06 |
+| fibonacci | −8.7% | −2.1% | −5.7% | 2.54 → 2.39 |
+| binarytrees | −4.0% | −2.8% | −4.9% | 2.18 → 2.07 |
+
+Branch-sim cross-check (base Bc/write reproduces the T2 ledger to the digit):
+full ablation removes 4–6 of the ~21 extra conditional branches per setter
+write vs C (−16..−19% of total Bc; method_calls −19.8%). Bcm ≈ 0 before AND
+after — every one of these branches predicts perfectly.
+
+Wall (quiet interleaved A/B, base vs A+B): **neutral to NEGATIVE** —
+table_seti_same +23%, fibonacci +10% SLOWER ablated, method_calls −6.5%.
+Perfectly-predicted checks are near-free on a wide out-of-order core; removing
+them mostly perturbs code layout.
+
+### Conclusions (decision-grade)
+
+1. The nameable safety tax (bounds checks + RefCell guards) is **5–15.5% of
+   retired instructions** and **~0% of reliable wall time** on this hardware.
+   There is no meaningful unsafe-shaped wall win available. The unsafe budget
+   stays where it is.
+2. After deleting ALL of it, every row still executes **≥1.9× C's
+   instructions**. The dominant residual is representation/idiom: 16-byte
+   tagged-enum values vs C's union+tag (multi-compare `is_collectable` vs one
+   bit test), `Result` plumbing vs longjmp, enum-discriminant dispatch. Closing
+   that is a representation redesign (e.g. NaN-boxing), not a packet.
+3. Tail-row wall packets therefore have a measured, low ceiling; the parity
+   threshold (≤1.5×, met at 1.47 overall) stands as the stopping line. Future
+   perf effort goes to RSS (the #113 ladder, where T1/T3b delivered −8–12%
+   peak-live) or to deliberate representation decisions — not to more
+   hot-path grinding.

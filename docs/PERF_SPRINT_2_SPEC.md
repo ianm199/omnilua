@@ -49,11 +49,24 @@ Status checklist (tick only with evidence paths):
       candidate-9 table parts stays on the #113 ladder behind T2; R5
       GcHeader sub-40 diet REJECTED (hot-field packing already measured
       +4% Ir; remaining 32 B is two fat pointers); R6 pacer tuning deferred.
-- [ ] T3b memo's top-ranked bounded step implemented + full battery
-- [ ] T4 safety-tax ablation measured on branch `ablation/unchecked-stack`
-      (NEVER merged); matrix delta written into `docs/PERFORMANCE_MODEL.md`
-- [ ] CLOSE: CHANGELOG entries, closing full compare.sh --runs 5 matrix in
-      the bench ledger, board row moved to Recently Completed
+- [x] T3b lazy weak-token registration KEPT (PR #162, commit 13d9e52): Ir
+      −2.59/−3.69/−2.94/−2.63% on gc_pressure/concat_chain/binarytrees/
+      table_hash_pressure with fibonacci control at −0.000%; heap-diff peak
+      live −12.4%/−10.0%; all weak-table canaries + quarantine green; new
+      address-reuse token test. Memo R1 sizing confirmed.
+- [x] T4 safety-tax ablation MEASURED on branch `ablation/unchecked-stack`
+      (pushed unmerged for reproducibility; never merges). Two-axis
+      attribution + branch-sim cross-check + quiet wall A/B written into
+      `docs/PERFORMANCE_MODEL.md` §"Safety-tax ablation": safety checks =
+      5–15.5% of Ir, ~0% of reliable wall (Bcm≈0 — perfectly predicted;
+      ablated builds were wall-NEUTRAL-to-SLOWER), and Ir ratios remain
+      ≥1.9x C after FULL ablation → the residual gap is representation/
+      idiom, not safety. Evidence: results/20260611T*-t4-*.tsv (6 runs).
+- [x] CLOSE: CHANGELOG Unreleased entries added; closing matrix
+      20260611T200946Z-2a10e04 (overall 1.47; binarytrees 1.74→1.58,
+      gc_pressure 1.98→1.81, concat_chain 2.02→1.82, closure_ops RSS
+      4.18→2.98, table_hash_pressure RSS 2.14→1.86) committed to the bench
+      ledger; board row moved to Recently Completed 2026-06-11.
 
 ## Protocol
 

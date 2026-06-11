@@ -6,6 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (perf sprint 2, 2026-06-11 — `docs/PERF_SPRINT_2_SPEC.md` is the evidence ledger)
+
+- **gc/types** (T1, #113 rung 1): deleted the `UpVal` `RefCell<UpValState>`
+  mirror — the Cell-tagged fields are the single source of truth
+  (`CLOSED_TAG` sentinel as discriminant). UpVal 64→32 B, GcBox<UpVal>
+  104→72 B; closure_ops process RSS −8.3%, heap bytes −7.9% with allocation
+  count unchanged (the delta equals 100k upvalues × 32 B exactly).
+- **gc** (T3b): lazy weak-token registration — the allocation hot path no
+  longer inserts into the weak-handle validation table; tokens are minted at
+  `GcRef::downgrade`, the only place they were ever consumed. Ir −2.6 to
+  −3.7% on gc_pressure/concat_chain/binarytrees/table_hash_pressure (control
+  exactly flat), peak live bytes −12.4%/−10.0% on the live-set rows.
+- **bench** (T0): `instr-count.sh --branch-sim` (deterministic Bc/Bcm — the
+  CPI arbiter; also corrected the header: the tool is cachegrind, not
+  callgrind), `heap-diff.sh` (dhat alloc deltas between two commits),
+  agent-safe `profile-hotspots.sh` (detached-watchdog fd fix), bash-3.2
+  `set -u` fix. New `docs/MEASUREMENT_PROTOCOL.md` codifies the wall=Ir×CPI
+  model and the frozen-baseline/interleave/arbiter discipline.
+
+### Measured, recorded, deliberately not merged (sprint 2)
+
+- **T2 setter family RESOLVED-NEGATIVE**: per-write branch counts (Bcm≈0)
+  prove the 2x setter gap is safety/representation tax, not removable logic;
+  our no-metatable fast path is already at branch-parity with C.
+- **T4 safety-tax ablation** (branch `ablation/unchecked-stack`, never
+  merges): removing ALL stack/table bounds checks and RefCell guards =
+  5–15.5% of instructions, ~0% of reliable wall (perfectly predicted
+  branches), and Ir ratios remain ≥1.9x C — the residual gap is
+  representation/idiom. Recorded in `docs/PERFORMANCE_MODEL.md`; the unsafe
+  budget stays at zero. `docs/GC_ALLOC_DESIGN_MEMO.md` ranks the remaining
+  allocator levers (R2 concat string churn: 13.9M blocks/run, is next).
+
 ### Fixed
 
 - **vm** (#139): Lua 5.1 order comparisons on mixed-type operands now raise

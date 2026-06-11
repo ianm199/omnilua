@@ -735,6 +735,19 @@ fn precall_c(
 /// Returns the result count for C functions, or `-1` to signal the VM that a
 /// Lua function should continue executing.
 ///
+/// # Divergence from C: `clear_stack_range(live_top, new_ci_top)` (KEEP verdict, 2026-06-11)
+///
+/// C's `luaD_pretailcall` leaves the reserved tail of the reused frame dirty;
+/// we clear it. This divergence is deliberate and kept. The `ci_top`-raising
+/// slow paths (`OP_LT`/`OP_LE` order-metamethod dispatch) run the per-collect
+/// dead-tail clear and the GC trace off the *same* raised top within one
+/// collect, so an uncleared `[live_top, new_ci_top)` gap would be traced —
+/// stale `GcRef`s left there by a previous frame are the #140
+/// use-after-free class. Removing the clear requires the targeted canary
+/// (collect inside an order-TM called from a fresh tail-called frame with a
+/// polluted reserved tail) plus the quarantine/ASAN battery described in
+/// `docs/ISSUE_BURNDOWN_SPEC.md` §T2-A; the measured win is within noise, so
+/// the cost/benefit says keep.
 pub(crate) fn pretailcall(
     state: &mut LuaState,
     ci_idx: CallInfoIdx,

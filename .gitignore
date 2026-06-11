@@ -54,3 +54,4 @@ harness/impl/official/*.out
 harness/.perf-experiment
 harness/impl/stop-build.err
 harness/evidence/rooting-battery/
+harness/canaries/gc/results.tsv

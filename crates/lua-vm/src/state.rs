@@ -434,6 +434,15 @@ pub(crate) const CIST_RECST: u32 = 10;
 // yield unwinds the stack. Bits 10-12 are CIST_RECST, so this is bit 13 (as C).
 pub(crate) const CIST_LEQ: u16 = 1 << 13;
 
+/// Per-frame hook trap flag, folded out of `CallInfoFrame` into a free
+/// callstatus bit by T2-C2. C 5.4 stores trap in `ci->u.l.trap` (a Lua-only
+/// union field); we instead store it in callstatus bit 14 so reading it costs
+/// one mask with no enum-discriminant branch. Bit 14 is free (LEQ=13 is the
+/// top used bit; RECST occupies 10-12). Only Lua frames are ever trapped
+/// (`set_traps` guards on `is_lua()`), and the bit is cleared whenever a
+/// CallInfo slot is repurposed for a new call (see `prep_call_info`).
+pub(crate) const CIST_TRAP: u16 = 1 << 14;
+
 // macros.tsv: LUA_NUMTYPES → const LUA_NUMTYPES: usize = 9
 const LUA_NUMTYPES: usize = 9;
 
@@ -559,26 +568,49 @@ pub struct CallInfo {
     pub call_metamethods: u8,
 }
 
+/// Compile-time guard that the T2-C2 `CallInfoFrame` flatten kept the per-frame
+/// footprint unchanged: the payload stays 32 B and `CallInfo` stays 72 B. The
+/// approved design (Option A) is conditioned on not growing `CallInfo`; if a
+/// future field change breaks this, the build fails here rather than silently
+/// regressing per-frame RSS.
+const _: () = {
+    assert!(core::mem::size_of::<CallInfoFrame>() == 32);
+    assert!(core::mem::size_of::<CallInfo>() == 72);
+};
+
 /// Payload of `CallInfo.u`.
 ///
+/// C 5.4 declares this as an anonymous union with a Lua-frame member (`l`)
+/// and a C-frame member (`c`); which member is live is implied by the
+/// `CIST_C` callstatus bit. T2-C2 flattened the previous 2-variant Rust enum
+/// into this branch-free struct: all fields are always present, so the hot
+/// accessors (`saved_pc`, `set_saved_pc`, `nextra_args`) are plain field
+/// reads with no discriminant test. The C-frame fields (`k`, `old_errfunc`,
+/// `ctx`) are only meaningful on C frames; the Lua-frame fields (`savedpc`,
+/// `nextraargs`) only on Lua frames. Accessors carry `debug_assert!`s on the
+/// frame kind that replace the old enum's wrong-variant panic tripwire at
+/// zero release cost. The `trap` flag that used to live in the Lua variant
+/// now lives in callstatus bit `CIST_TRAP`.
+///
+/// Layout: `u32 + i32 + Option<fn> + isize + isize` = 32 B (8-byte aligned),
+/// identical to the previous enum payload, so `CallInfo` stays 72 B.
 #[derive(Clone, Copy)]
-pub enum CallInfoFrame {
-    Lua {
-        // types.tsv: CallInfo.u.l.savedpc → u32
-        savedpc: u32,
-        // types.tsv: CallInfo.u.l.trap → bool
-        trap: bool,
-        // types.tsv: CallInfo.u.l.nextraargs → i32
-        nextraargs: i32,
-    },
-    C {
-        // types.tsv: CallInfo.u.c.k → Option<lua_KFunction>
-        k: Option<LuaKFunction>,
-        // types.tsv: CallInfo.u.c.old_errfunc → isize
-        old_errfunc: isize,
-        // types.tsv: CallInfo.u.c.ctx → isize
-        ctx: isize,
-    },
+pub struct CallInfoFrame {
+    /// Lua-frame: index of the next bytecode instruction. C: `u.l.savedpc`.
+    /// types.tsv: CallInfo.u.l.savedpc → u32
+    pub savedpc: u32,
+    /// Lua-frame: count of extra varargs collected at entry. C: `u.l.nextraargs`.
+    /// types.tsv: CallInfo.u.l.nextraargs → i32
+    pub nextraargs: i32,
+    /// C-frame: continuation function for a yieldable C call. C: `u.c.k`.
+    /// types.tsv: CallInfo.u.c.k → Option<lua_KFunction>
+    pub k: Option<LuaKFunction>,
+    /// C-frame: saved `errfunc` to restore on pcall recovery. C: `u.c.old_errfunc`.
+    /// types.tsv: CallInfo.u.c.old_errfunc → isize
+    pub old_errfunc: isize,
+    /// C-frame: continuation context. C: `u.c.ctx`.
+    /// types.tsv: CallInfo.u.c.ctx → isize
+    pub ctx: isize,
 }
 
 /// Continuation function for yieldable C calls.  C: `lua_KFunction`.
@@ -595,21 +627,32 @@ pub struct CallInfoExtra {
 }
 
 impl CallInfoFrame {
-    /// Default C-call frame (no continuation, zero context).
+    /// Default C-call frame: no continuation, zero context. The Lua-frame
+    /// fields are benignly zeroed so any latent read on a misclassified frame
+    /// reads the same value the old C variant produced.
     pub fn c_default() -> Self {
-        CallInfoFrame::C {
+        CallInfoFrame {
+            savedpc: 0,
+            nextraargs: 0,
             k: None,
             old_errfunc: 0,
             ctx: 0,
         }
     }
 
-    /// Default Lua-call frame (pc=0, no trap, no extra args).
+    /// Default Lua-call frame: pc=0, no extra args. The C-frame fields are
+    /// benignly zeroed to exactly the values `c_default` produced, so a Lua
+    /// frame that is later reclassified or read as a C frame sees identical
+    /// defaults to the pre-flatten enum (which carried no C fields). The
+    /// `trap` flag now lives in callstatus bit `CIST_TRAP`, cleared by the
+    /// `callstatus` write in `prep_call_info`, not here.
     pub fn lua_default() -> Self {
-        CallInfoFrame::Lua {
+        CallInfoFrame {
             savedpc: 0,
-            trap: false,
             nextraargs: 0,
+            k: None,
+            old_errfunc: 0,
+            ctx: 0,
         }
     }
 }
@@ -646,27 +689,28 @@ impl CallInfo {
     pub fn is_vararg_func(&self) -> bool {
         false
     }
+    /// Index of the next bytecode instruction on this Lua frame.
+    ///
+    /// `debug_assert!` guards that the frame is a Lua frame, restoring the
+    /// wrong-variant tripwire the pre-flatten enum gave for free.
     pub fn saved_pc(&self) -> u32 {
-        if let CallInfoFrame::Lua { savedpc, .. } = self.u {
-            savedpc
-        } else {
-            0
-        }
+        debug_assert!(self.is_lua(), "saved_pc on a C frame");
+        self.u.savedpc
     }
+    /// Write the next-instruction index on this Lua frame.
     pub fn set_saved_pc(&mut self, pc: u32) {
-        if let CallInfoFrame::Lua {
-            ref mut savedpc, ..
-        } = self.u
-        {
-            *savedpc = pc;
-        }
+        debug_assert!(self.is_lua(), "set_saved_pc on a C frame");
+        self.u.savedpc = pc;
     }
+    /// Count of extra varargs collected at entry on this Lua frame.
     pub fn nextra_args(&self) -> i32 {
-        if let CallInfoFrame::Lua { nextraargs, .. } = self.u {
-            nextraargs
-        } else {
-            0
-        }
+        debug_assert!(self.is_lua(), "nextra_args on a C frame");
+        self.u.nextraargs
+    }
+    /// Write the extra-vararg count on this Lua frame.
+    pub fn set_nextra_args(&mut self, n: i32) {
+        debug_assert!(self.is_lua(), "set_nextra_args on a C frame");
+        self.u.nextraargs = n;
     }
     pub fn transfer_ftransfer(&self) -> u16 {
         self.u2.ftransfer
@@ -674,10 +718,27 @@ impl CallInfo {
     pub fn transfer_ntransfer(&self) -> u16 {
         self.u2.ntransfer
     }
+    /// Set or clear the per-frame hook trap, stored in callstatus bit
+    /// `CIST_TRAP` (T2-C2 moved it out of the `CallInfoFrame` payload). Only
+    /// Lua frames are ever trapped: `set_traps` guards on `is_lua()` before
+    /// calling here, and `trace_call`/`trace_exec` operate on the current Lua
+    /// frame. The `debug_assert!` preserves that invariant. Reusing a slot for
+    /// a new call clears the bit via the `callstatus = mask` write in
+    /// `prep_call_info`, exactly as the old full-variant store reset `trap`.
     pub fn set_trap(&mut self, t: bool) {
-        if let CallInfoFrame::Lua { ref mut trap, .. } = self.u {
-            *trap = t;
+        debug_assert!(self.is_lua(), "set_trap on a C frame");
+        if t {
+            self.callstatus |= CIST_TRAP;
+        } else {
+            self.callstatus &= !CIST_TRAP;
         }
+    }
+    /// Read the per-frame hook trap from callstatus bit `CIST_TRAP`. One mask,
+    /// no enum-discriminant branch — this is the hot read in the OP_CALL /
+    /// OP_RETURN `updatetrap` paths.
+    #[inline(always)]
+    pub fn trap(&self) -> bool {
+        (self.callstatus & CIST_TRAP) != 0
     }
     /// Read the 3-bit recover-status field packed into bits 10-12 of callstatus.
     ///
@@ -698,56 +759,42 @@ impl CallInfo {
     pub fn set_oah(&mut self, allow: bool) {
         self.callstatus = (self.callstatus & !CIST_OAH) | (if allow { CIST_OAH } else { 0 });
     }
+    /// Saved `errfunc` to restore on pcall recovery (C-call frame).
+    ///
+    /// `debug_assert!` guards that the frame is a C frame, restoring the
+    /// wrong-variant tripwire the pre-flatten enum gave for free.
     pub fn u_c_old_errfunc(&self) -> isize {
-        if let CallInfoFrame::C { old_errfunc, .. } = self.u {
-            old_errfunc
-        } else {
-            0
-        }
+        debug_assert!(!self.is_lua(), "u_c_old_errfunc on a Lua frame");
+        self.u.old_errfunc
     }
+    /// Continuation context on a C-call frame.
     pub fn u_c_ctx(&self) -> isize {
-        if let CallInfoFrame::C { ctx, .. } = self.u {
-            ctx
-        } else {
-            0
-        }
+        debug_assert!(!self.is_lua(), "u_c_ctx on a Lua frame");
+        self.u.ctx
     }
+    /// Continuation function on a C-call frame.
     pub fn u_c_k(&self) -> Option<LuaKFunction> {
-        if let CallInfoFrame::C { k, .. } = self.u {
-            k
-        } else {
-            None
-        }
+        debug_assert!(!self.is_lua(), "u_c_k on a Lua frame");
+        self.u.k
     }
     /// Set continuation function on a C-call frame.
     ///
-    /// Panics if invoked on a Lua frame (callers must check `is_lua()` first).
+    /// `debug_assert!` guards that the frame is a C frame (callers reach here
+    /// from `lua_callk`/`lua_pcallk`, where `L->ci` is the calling C builtin's
+    /// frame).
     pub fn set_u_c_k(&mut self, k: Option<LuaKFunction>) {
-        if let CallInfoFrame::C {
-            k: ref mut slot, ..
-        } = self.u
-        {
-            *slot = k;
-        }
+        debug_assert!(!self.is_lua(), "set_u_c_k on a Lua frame");
+        self.u.k = k;
     }
     /// Set continuation context on a C-call frame.
     pub fn set_u_c_ctx(&mut self, ctx: isize) {
-        if let CallInfoFrame::C {
-            ctx: ref mut slot, ..
-        } = self.u
-        {
-            *slot = ctx;
-        }
+        debug_assert!(!self.is_lua(), "set_u_c_ctx on a Lua frame");
+        self.u.ctx = ctx;
     }
     /// Set saved old_errfunc on a C-call frame.
     pub fn set_u_c_old_errfunc(&mut self, old_errfunc: isize) {
-        if let CallInfoFrame::C {
-            old_errfunc: ref mut slot,
-            ..
-        } = self.u
-        {
-            *slot = old_errfunc;
-        }
+        debug_assert!(!self.is_lua(), "set_u_c_old_errfunc on a Lua frame");
+        self.u.old_errfunc = old_errfunc;
     }
     /// Set the `u2.funcidx` field, used by yieldable pcall for error recovery.
     ///
@@ -2901,13 +2948,13 @@ impl LuaState {
     pub fn ci_top(&self, idx: CallInfoIdx) -> StackIdx {
         self.call_info[idx.as_usize()].top
     }
+    /// Hot-loop trap read: `(callstatus & CIST_TRAP) != 0`, one mask with no
+    /// enum-discriminant branch. A C frame never has `CIST_TRAP` set, so this
+    /// returns `false` for C frames identically to the pre-flatten fallback,
+    /// without needing a frame-kind branch — that is the whole point of T2-C2.
     #[inline(always)]
     pub fn ci_trap(&mut self, idx: CallInfoIdx) -> bool {
-        if let CallInfoFrame::Lua { trap, .. } = self.call_info[idx.as_usize()].u {
-            trap
-        } else {
-            false
-        }
+        self.call_info[idx.as_usize()].trap()
     }
     #[inline(always)]
     pub fn ci_savedpc(&self, idx: CallInfoIdx) -> u32 {
@@ -6905,6 +6952,12 @@ mod tests {
 //   todos:         44
 //   port_notes:    34
 //   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
+//   t2c2:          CallInfoFrame flattened from a 2-variant enum to a
+//                  branch-free struct (all fields always present, still 32 B,
+//                  CallInfo still 72 B, zero new unsafe). The hook `trap` flag
+//                  moved out of the Lua variant into callstatus bit CIST_TRAP
+//                  (bit 14). Variant-guarded accessors became plain field
+//                  reads/writes with debug_assert! frame-kind tripwires.
 //   notes:         Logic faithfully follows lstate.c. Key structural changes:
 //                  (1) LX/LG C layout wrappers dropped; GlobalState is Rc<RefCell<>>.
 //                  (2) CallInfo linked list → Vec<CallInfo> with CallInfoIdx indices;

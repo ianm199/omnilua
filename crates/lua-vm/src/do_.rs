@@ -664,6 +664,16 @@ pub(crate) fn poscall(
 /// Advances to the next `CallInfo` slot, allocating a new one if required.
 /// Sets `state.ci` to the new frame and fills its fields.
 ///
+/// Trap-reset semantics (T2-C2): the hook trap flag is now callstatus bit
+/// `CIST_TRAP`, not a `CallInfoFrame` payload field. The `ci.callstatus = mask`
+/// write below fully overwrites callstatus, and every caller passes a mask of
+/// `0` or `CIST_C` (never `CIST_TRAP`), so reusing a slot always clears the
+/// trap — byte-for-byte the same reset the pre-flatten `ci.u = *_default()`
+/// store performed when it rewrote the whole `Lua { trap, .. }` variant. The
+/// `CallInfoFrame::lua_default()` write still runs to scrub stale payload
+/// fields (`savedpc`/`nextraargs` on a reused Lua slot, `k`/`ctx`/`old_errfunc`
+/// on a reused C slot); both default constructors are now identical, so a
+/// single write covers either frame kind.
 #[inline(always)]
 fn prep_call_info(
     state: &mut LuaState,
@@ -672,6 +682,10 @@ fn prep_call_info(
     mask: u16,
     top_idx: StackIdx,
 ) -> Result<CallInfoIdx, LuaError> {
+    debug_assert!(
+        mask & crate::state::CIST_TRAP == 0,
+        "prep_call_info must not be handed a pre-set trap bit"
+    );
     // next_ci → L->ci->next ? L->ci->next : luaE_extendCI(L)
     let ci_idx = state.next_ci()?;
     state.ci = ci_idx;
@@ -682,11 +696,7 @@ fn prep_call_info(
         ci.callstatus = mask;
         ci.call_metamethods = 0;
         ci.top = top_idx;
-        ci.u = if (mask & crate::state::CIST_C) != 0 {
-            crate::state::CallInfoFrame::c_default()
-        } else {
-            crate::state::CallInfoFrame::lua_default()
-        };
+        ci.u = crate::state::CallInfoFrame::lua_default();
     }
     Ok(ci_idx)
 }
@@ -1382,17 +1392,10 @@ pub fn lua_yieldk(
         debug_assert!(k.is_none(), "hooks cannot continue after yielding");
         // Fall through — hook yields return 0 to luaD_hook.
     } else {
-        // TODO(phase-b): mutate u_c.k/u_c.ctx fields directly inside CallInfoFrame::C.
-        if let crate::state::CallInfoFrame::C {
-            k: ref mut frame_k,
-            ctx: ref mut frame_ctx,
-            ..
-        } = state.get_ci_mut(ci_idx).u
-        {
-            *frame_k = k;
-            if k.is_some() {
-                *frame_ctx = ctx;
-            }
+        let ci = state.get_ci_mut(ci_idx);
+        ci.set_u_c_k(k);
+        if k.is_some() {
+            ci.set_u_c_ctx(ctx);
         }
         // In Rust: return Err to propagate the yield signal up the call stack.
         return Err(LuaError::Yield);
@@ -1641,6 +1644,12 @@ pub(crate) fn protected_parser(
 //   todos:         23
 //   port_notes:    13
 //   unsafe_blocks: 0
+//   t2c2:          prep_call_info no longer branches on CIST_C to pick a
+//                  CallInfoFrame variant (both default constructors are now
+//                  identical); the ci.callstatus = mask write clears the new
+//                  CIST_TRAP bit on every slot reuse, preserving the old
+//                  per-reuse trap reset. The lua_yieldk u.c.k/ctx write uses
+//                  the set_u_c_* accessors (former phase-b TODO resolved).
 //   notes:         Core call/stack/error machinery translated faithfully.
 //                  setjmp/longjmp → Result<T,LuaError> throughout.
 //                  relstack/correctstack omitted (StackIdx already offset-based).

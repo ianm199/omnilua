@@ -852,14 +852,7 @@ pub(crate) fn adjust_varargs(
     let ci_func: StackIdx = state.call_info[ci_idx.as_usize()].func;
     let actual = (state.top_idx().0 as i32) - (ci_func.0 as i32) - 1;
     let nextra = actual - nfixparams;
-    // TODO(phase-b): nextraargs lives inside CallInfoFrame::Lua; needs proper
-    // pattern-match write through state.call_info[..].u.
-    if let crate::state::CallInfoFrame::Lua {
-        ref mut nextraargs, ..
-    } = state.call_info[ci_idx.as_usize()].u
-    {
-        *nextraargs = nextra;
-    }
+    state.call_info[ci_idx.as_usize()].set_nextra_args(nextra);
 
     let maxstacksize = proto.maxstacksize as i32;
     state.check_stack(maxstacksize + 1)?;
@@ -954,13 +947,7 @@ pub(crate) fn get_varargs(
             return Ok(());
         }
     }
-    let nextra: i32 = if let crate::state::CallInfoFrame::Lua { nextraargs, .. } =
-        state.call_info[ci_idx.as_usize()].u
-    {
-        nextraargs
-    } else {
-        0
-    };
+    let nextra: i32 = state.call_info[ci_idx.as_usize()].nextra_args();
 
     //      wanted = nextra;  /* get all extra arguments available */
     //      checkstackGCp(L, nextra, where);  /* ensure stack space */
@@ -1010,6 +997,10 @@ pub(crate) fn get_varargs(
 //   todos:         10
 //   port_notes:    7
 //   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
+//   t2c2:          the two nextraargs sites that pattern-matched
+//                  CallInfoFrame::Lua now use the set_nextra_args / nextra_args
+//                  accessors on the flattened CallInfoFrame struct (former
+//                  phase-b TODO resolved).
 //   notes:
 //     Logic translation is faithful; the main uncertainties are:
 //     (1) GcRef<LuaTable> accessor pattern (.metatable() / .borrow().metatable)

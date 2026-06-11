@@ -1049,6 +1049,7 @@ impl TableInner {
         }
     }
 
+    #[cfg(not(feature = "perf-ablation-unchecked-table"))]
     #[inline(always)]
     fn try_update_short_str(
         &mut self,
@@ -1076,6 +1077,40 @@ impl TableInner {
         }
     }
 
+    /// T4 ablation: same node-chain walk with the node Vec bounds checks elided
+    /// via `get_unchecked_mut`. The key-match / chain-end comparisons that
+    /// SELECT the slot are retained — they are table semantics, not Vec bounds.
+    #[cfg(feature = "perf-ablation-unchecked-table")]
+    #[inline(always)]
+    fn try_update_short_str(
+        &mut self,
+        key: &GcRef<LuaString>,
+        value: LuaValue,
+    ) -> Result<(), LuaValue> {
+        debug_assert!(key.is_short());
+        if self.is_dummy() {
+            return Err(value);
+        }
+        let mut n = self.hashpow2_idx(key.hash());
+        loop {
+            // SAFETY: ablation-only — index validity is the production bound's job; this build never ships
+            let node = unsafe { self.node.get_unchecked_mut(n) };
+            if node.key_is_short_str() {
+                let ks = node.key_string();
+                if lua_string_content_eq(ks, key) {
+                    node.value = value;
+                    return Ok(());
+                }
+            }
+            let nx = node.next;
+            if nx == 0 {
+                return Err(value);
+            }
+            n = (n as isize + nx as isize) as usize;
+        }
+    }
+
+    #[cfg(not(feature = "perf-ablation-unchecked-table"))]
     #[inline(always)]
     fn try_update_int(&mut self, key: i64, value: LuaValue) -> Result<(), LuaValue> {
         let alimit = self.alimit as u64;
@@ -1108,6 +1143,52 @@ impl TableInner {
         Err(value)
     }
 
+    /// T4 ablation: same logic, with the array-store and node-walk Vec bounds
+    /// checks elided via `get_unchecked`/`get_unchecked_mut`. The `alimit` and
+    /// mask comparisons that SELECT the array path are retained — they are the
+    /// table semantics, not a Vec bound (`alimit <= array.len()` is the runtime
+    /// invariant LLVM cannot prove, which is exactly the second check T2 named).
+    #[cfg(feature = "perf-ablation-unchecked-table")]
+    #[inline(always)]
+    fn try_update_int(&mut self, key: i64, value: LuaValue) -> Result<(), LuaValue> {
+        let alimit = self.alimit as u64;
+        let uk = key as u64;
+        if uk.wrapping_sub(1) < alimit {
+            // SAFETY: ablation-only — index validity is the production bound's job; this build never ships
+            unsafe {
+                *self.array.get_unchecked_mut((key - 1) as usize) = value;
+            }
+            return Ok(());
+        }
+        if !self.is_real_asize() && alimit > 0 {
+            let masked = (uk.wrapping_sub(1)) & !(alimit.wrapping_sub(1));
+            if masked < alimit {
+                // SAFETY: ablation-only — index validity is the production bound's job; this build never ships
+                unsafe {
+                    *self.array.get_unchecked_mut((key - 1) as usize) = value;
+                }
+                return Ok(());
+            }
+        }
+        if !self.is_dummy() {
+            let mut n = self.hash_idx_for_int(key);
+            loop {
+                // SAFETY: ablation-only — index validity is the production bound's job; this build never ships
+                let node = unsafe { self.node.get_unchecked_mut(n) };
+                if node.key_is_int() && node.key_int() == key {
+                    node.value = value;
+                    return Ok(());
+                }
+                let nx = node.next;
+                if nx == 0 {
+                    break;
+                }
+                n = (n as isize + nx as isize) as usize;
+            }
+        }
+        Err(value)
+    }
+
     /// Read a short-string key directly to a [`LuaValue`], mirroring the
     /// shape of [`Self::get_int_value`]: a single hash-chain walk that
     /// produces the slot's value without constructing an intermediate
@@ -1115,6 +1196,7 @@ impl TableInner {
     /// equality wins almost every comparison; the byte-equality fallback
     /// handles the rare cross-interning-table path. Callers must ensure
     /// `key.is_short()` before dispatching here.
+    #[cfg(not(feature = "perf-ablation-unchecked-table"))]
     #[inline]
     fn get_str_value(&self, key: &GcRef<LuaString>) -> LuaValue {
         debug_assert!(key.is_short());
@@ -1130,6 +1212,34 @@ impl TableInner {
                 }
             }
             let nx = self.node[n].next;
+            if nx == 0 {
+                return LuaValue::Nil;
+            }
+            n = (n as isize + nx as isize) as usize;
+        }
+    }
+
+    /// T4 ablation: same string-key hash walk with the node Vec bounds checks
+    /// elided via `get_unchecked`. The key-match / chain-end comparisons that
+    /// SELECT the slot are retained — they are table semantics, not Vec bounds.
+    #[cfg(feature = "perf-ablation-unchecked-table")]
+    #[inline]
+    fn get_str_value(&self, key: &GcRef<LuaString>) -> LuaValue {
+        debug_assert!(key.is_short());
+        if self.is_dummy() {
+            return LuaValue::Nil;
+        }
+        let mut n = self.hashpow2_idx(key.hash());
+        loop {
+            // SAFETY: ablation-only — index validity is the production bound's job; this build never ships
+            let node = unsafe { self.node.get_unchecked(n) };
+            if node.key_is_short_str() {
+                let ks = node.key_string();
+                if lua_string_content_eq(ks, key) {
+                    return node.value.clone();
+                }
+            }
+            let nx = node.next;
             if nx == 0 {
                 return LuaValue::Nil;
             }
@@ -1521,9 +1631,24 @@ impl LuaTable {
     /// and most table-field keys are short) takes the folded hash-walk
     /// in [`TableInner::get_str_value`]; long strings still go through
     /// the slot indirection.
+    #[cfg(not(feature = "perf-ablation-unchecked-table"))]
     #[inline(always)]
     pub fn get_short_str(&self, k: &GcRef<LuaString>) -> LuaValue {
         let inner = self.inner.borrow();
+        if k.is_short() {
+            inner.get_str_value(k)
+        } else {
+            let slot = inner.get_str_slot(k);
+            inner.slot_value(slot)
+        }
+    }
+    /// T4 ablation: drops the `RefCell` borrow-flag write/check on the
+    /// string-key getter fast path via `as_ptr()`.
+    #[cfg(feature = "perf-ablation-unchecked-table")]
+    #[inline(always)]
+    pub fn get_short_str(&self, k: &GcRef<LuaString>) -> LuaValue {
+        // SAFETY: ablation-only — the RefCell borrow flag is the production bound's job; this build never ships
+        let inner = unsafe { &*self.inner.as_ptr() };
         if k.is_short() {
             inner.get_str_value(k)
         } else {
@@ -1599,6 +1724,7 @@ impl LuaTable {
     /// Update an existing short-string slot without routing through the
     /// generic cold setter. Returns the value to the caller when the key is
     /// absent so the insertion/rehash path can account buffer growth.
+    #[cfg(not(feature = "perf-ablation-unchecked-table"))]
     #[inline(always)]
     pub fn try_update_short_str(&self, k: &GcRef<LuaString>, v: LuaValue) -> Result<(), LuaValue> {
         if !k.is_short() {
@@ -1607,13 +1733,35 @@ impl LuaTable {
         let mut inner = self.inner.borrow_mut();
         inner.try_update_short_str(k, v)
     }
+    /// T4 ablation: drops the `RefCell` borrow-flag write/check on the
+    /// short-string setter fast path via `as_ptr()`.
+    #[cfg(feature = "perf-ablation-unchecked-table")]
+    #[inline(always)]
+    pub fn try_update_short_str(&self, k: &GcRef<LuaString>, v: LuaValue) -> Result<(), LuaValue> {
+        if !k.is_short() {
+            return Err(v);
+        }
+        // SAFETY: ablation-only — the RefCell borrow flag is the production bound's job; this build never ships
+        let inner = unsafe { &mut *self.inner.as_ptr() };
+        inner.try_update_short_str(k, v)
+    }
 
     /// Update an existing integer slot without buffer accounting. This covers
     /// the stable `SETI` hot path; absent keys still fall back to the normal
     /// set path so array growth and hash insertion remain accounted.
+    #[cfg(not(feature = "perf-ablation-unchecked-table"))]
     #[inline(always)]
     pub fn try_update_int(&self, k: i64, v: LuaValue) -> Result<(), LuaValue> {
         let mut inner = self.inner.borrow_mut();
+        inner.try_update_int(k, v)
+    }
+    /// T4 ablation: drops the `RefCell` borrow-flag write/check on the integer
+    /// setter fast path via `as_ptr()`.
+    #[cfg(feature = "perf-ablation-unchecked-table")]
+    #[inline(always)]
+    pub fn try_update_int(&self, k: i64, v: LuaValue) -> Result<(), LuaValue> {
+        // SAFETY: ablation-only — the RefCell borrow flag is the production bound's job; this build never ships
+        let inner = unsafe { &mut *self.inner.as_ptr() };
         inner.try_update_int(k, v)
     }
 

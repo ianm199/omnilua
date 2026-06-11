@@ -8,8 +8,23 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[lints]
-workspace = true
+# NEVER-MERGES ablation branch `ablation/unchecked-stack` (perf sprint 2 T4):
+# the workspace lint is `unsafe_code = "forbid"`, which `#[cfg(feature)]`-gated
+# `unsafe` blocks cannot escape via an inner attribute. This local override
+# relaxes it to `allow` so the `perf-ablation-unchecked-table` feature can hold
+# its measurement-only `unsafe` blocks. The DEFAULT build (no features) contains
+# ZERO `unsafe` — every block is `#[cfg(feature = "perf-ablation-unchecked-table")]`
+# gated — so the production safety guarantee is unchanged on default builds. This
+# Cargo.toml change must NEVER reach main.
+[lints.rust]
+unsafe_code = "allow"
+
+[features]
+# Measurement-only (T4 safety-tax ablation): replaces the RefCell<TableInner>
+# borrow on the setter/getter fast path and the array/node Vec index checks in
+# `try_update_int` / `try_update_short_str` / `get_str_value` with unchecked
+# pointer/index ops. NEVER merges; default build does not enable it.
+perf-ablation-unchecked-table = []
 
 [dependencies]
 lua-gc.workspace = true

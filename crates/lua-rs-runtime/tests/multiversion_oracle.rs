@@ -1204,6 +1204,75 @@ fn issue78_le_derived_from_lt() {
     }
 }
 
+/// #139 (correctness): in 5.1 an order comparison (`<`/`<=`/`>`/`>=`) whose two
+/// operands have different Lua types raises `attempt to compare X with Y` BEFORE
+/// any metamethod lookup — the `__lt`/`__le` TM is consulted only for same-type
+/// operands. 5.2+ removed that guard and consults the TM for mixed types. Int and
+/// Float share the `number` type, so the gate is on the Lua type tag, not the
+/// numeric subkind. Verified against /tmp/lua-refs/bin/lua5.1.5.
+#[test]
+fn v51_mixed_type_order_errors_not_metamethod() {
+    let lt = "local t = setmetatable({}, {__lt = function() return true end}); ";
+    let le = "local t = setmetatable({}, {__le = function() return true end}); ";
+    // Constant operands take the immediate opcode path (OP_LtI/LeI/GtI/GeI),
+    // covering both normal and inverted (Gt/Ge) reconstructions. The operand
+    // order in the message must match the source order, both directions.
+    err_contains(
+        LuaVersion::V51,
+        &format!("{lt}return t < 2"),
+        "attempt to compare table with number",
+    );
+    err_contains(
+        LuaVersion::V51,
+        &format!("{lt}return 2 < t"),
+        "attempt to compare number with table",
+    );
+    err_contains(
+        LuaVersion::V51,
+        &format!("{le}return t <= 2"),
+        "attempt to compare table with number",
+    );
+    err_contains(
+        LuaVersion::V51,
+        &format!("{le}return 2 <= t"),
+        "attempt to compare number with table",
+    );
+    err_contains(
+        LuaVersion::V51,
+        &format!("{lt}return t < 'x'"),
+        "attempt to compare table with string",
+    );
+    err_contains(
+        LuaVersion::V51,
+        &format!("{lt}return 'x' < t"),
+        "attempt to compare string with table",
+    );
+    // Non-constant operand takes the register OP_LT path, not the immediate one.
+    err_contains(
+        LuaVersion::V51,
+        &format!("{lt}local n = 2; return t < n"),
+        "attempt to compare table with number",
+    );
+
+    // Non-regression: same-Lua-type operands still consult the TM on 5.1.
+    eq(
+        LuaVersion::V51,
+        "local m = {__lt = function() return true end}; \
+         local a = setmetatable({}, m); local b = setmetatable({}, m); return a < b",
+        "true",
+    );
+
+    // Non-regression: 5.2+ consult the TM for mixed types (the gate is V51-only).
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(v, &format!("{lt}return t < 2"), "true");
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // #79 error-message fidelity (R-D/E/F/G). Shared-core: must match every
 // version reference (5.3/5.4/5.5). Sub-item (d) — the `[C]: in ?` traceback

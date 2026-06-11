@@ -178,19 +178,17 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
         return -1;
     }
     let first_arg_idx = top_before - narg + 1;
-    let args: Vec<LuaValue> = (first_arg_idx..=top_before)
-        .map(|i| state.value_at(i))
-        .collect();
+    let mut args = pop_resume_value_buf(state);
+    args.extend((first_arg_idx..=top_before).map(|i| state.value_at(i)));
     lua_vm::api::set_top(state, (top_before - narg) as i32).ok();
 
-    let parent_open_upval_slots: Vec<(u64, lua_vm::state::StackIdx)> = state
-        .openupval
-        .iter()
-        .filter_map(|uv| match &*uv.slot() {
+    let mut parent_open_upval_slots = pop_resume_slot_buf(state);
+    parent_open_upval_slots.extend(state.openupval.iter().filter_map(|uv| {
+        match &*uv.slot() {
             lua_types::UpValState::Open { thread_id, idx } => Some((*thread_id as u64, *idx)),
             lua_types::UpValState::Closed(_) => None,
-        })
-        .collect();
+        }
+    }));
     {
         let mut g = state.global_mut();
         for (tid, idx) in &parent_open_upval_slots {
@@ -211,6 +209,8 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
                     g.cross_thread_upvals.remove(&(*tid, *idx));
                 }
                 drop(g);
+                return_resume_slot_buf(state, parent_open_upval_slots);
+                return_resume_value_buf(state, args);
                 push_lit_or_nil(state, b"cannot resume non-suspended coroutine");
                 return -1;
             }
@@ -223,12 +223,15 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
                 g.cross_thread_upvals.remove(&(*tid, *idx));
             }
             drop(g);
+            return_resume_slot_buf(state, parent_open_upval_slots);
+            return_resume_value_buf(state, args);
             push_lit_or_nil(state, b"too many arguments to resume");
             return -1;
         }
-        for v in args {
+        for v in args.drain(..) {
             co_state.push(v);
         }
+        return_resume_value_buf(state, args);
         co_state.global_mut().current_thread_id = co_id;
         let mut nres: i32 = 0;
         let previous_hook = Arc::new(Mutex::new(Some(std::panic::take_hook())));
@@ -268,9 +271,8 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
             1
         };
         let start = co_top - count;
-        let vals: Vec<LuaValue> = (start..co_top)
-            .map(|i| co_state.get_at(lua_vm::state::StackIdx(i as u32)))
-            .collect();
+        let mut vals = pop_resume_value_buf(state);
+        vals.extend((start..co_top).map(|i| co_state.get_at(lua_vm::state::StackIdx(i as u32))));
         let new_co_top = if status == LuaStatus::Ok || status == LuaStatus::Yield {
             (co_top - count).max(ci_func + 1)
         } else {
@@ -284,35 +286,41 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
     pop_parent_gc_snapshot(state);
 
     {
+        let mut flush = pop_resume_flush_buf(state);
         let mut g = state.global_mut();
-        let mut flush: Vec<(lua_vm::state::StackIdx, LuaValue)> = Vec::new();
         for (tid, idx) in &parent_open_upval_slots {
             if let Some(v) = g.cross_thread_upvals.remove(&(*tid, *idx)) {
                 flush.push((*idx, v));
             }
         }
         drop(g);
-        for (idx, v) in flush {
+        for (idx, v) in flush.drain(..) {
             state.set_at(idx, v);
         }
+        return_resume_flush_buf(state, flush);
     }
+    return_resume_slot_buf(state, parent_open_upval_slots);
 
+    let mut results_or_err = results_or_err;
     match status {
         LuaStatus::Ok | LuaStatus::Yield => {
             if state.check_stack(results_or_err.len() as i32 + 1).is_err() {
+                return_resume_value_buf(state, results_or_err);
                 push_lit_or_nil(state, b"too many results to resume");
                 return -1;
             }
             let n = results_or_err.len();
-            for v in results_or_err {
+            for v in results_or_err.drain(..) {
                 state.push(v);
             }
+            return_resume_value_buf(state, results_or_err);
             n as i32
         }
         _ => {
-            for v in results_or_err {
+            for v in results_or_err.drain(..) {
                 state.push(v);
             }
+            return_resume_value_buf(state, results_or_err);
             -1
         }
     }
@@ -344,6 +352,49 @@ fn pop_parent_gc_snapshot(state: &mut LuaState) {
         v.clear();
         g.snapshot_stack_pool.push(v);
     }
+}
+
+/// Borrow an empty open-upvalue slot buffer from the resume pool, or a fresh
+/// one if the pool is empty (first resume at this nesting depth). The returned
+/// buffer must be parked with [`return_resume_slot_buf`] on every exit path so
+/// the capacity is retained instead of freed.
+fn pop_resume_slot_buf(state: &mut LuaState) -> Vec<(u64, lua_vm::state::StackIdx)> {
+    state.global_mut().resume_upval_slot_pool.pop().unwrap_or_default()
+}
+
+/// Park a (drained) open-upvalue slot buffer back in the resume pool, clearing
+/// it first so the pooled buffer is always empty and roots nothing.
+fn return_resume_slot_buf(state: &mut LuaState, mut buf: Vec<(u64, lua_vm::state::StackIdx)>) {
+    buf.clear();
+    state.global_mut().resume_upval_slot_pool.push(buf);
+}
+
+/// Borrow an empty `LuaValue` buffer from the resume pool for an argument or
+/// result list, or a fresh one if the pool is empty (first use at this nesting
+/// depth). Park with [`return_resume_value_buf`] once the buffer is drained.
+fn pop_resume_value_buf(state: &mut LuaState) -> Vec<LuaValue> {
+    state.global_mut().resume_value_pool.pop().unwrap_or_default()
+}
+
+/// Park a (drained) `LuaValue` buffer back in the resume pool, clearing it so
+/// the pooled buffer is always empty and roots nothing.
+fn return_resume_value_buf(state: &mut LuaState, mut buf: Vec<LuaValue>) {
+    buf.clear();
+    state.global_mut().resume_value_pool.push(buf);
+}
+
+/// Borrow an empty cross-thread upvalue flush buffer from the resume pool, or a
+/// fresh one if the pool is empty. Park with [`return_resume_flush_buf`] once
+/// the buffer has been drained back onto the parent stack.
+fn pop_resume_flush_buf(state: &mut LuaState) -> Vec<(lua_vm::state::StackIdx, LuaValue)> {
+    state.global_mut().resume_flush_pool.pop().unwrap_or_default()
+}
+
+/// Park a (drained) flush buffer back in the resume pool, clearing it so the
+/// pooled buffer is always empty and roots nothing.
+fn return_resume_flush_buf(state: &mut LuaState, mut buf: Vec<(lua_vm::state::StackIdx, LuaValue)>) {
+    buf.clear();
+    state.global_mut().resume_flush_pool.push(buf);
 }
 
 /// RAII borrow of another thread's `LuaState` that keeps the thread's stack
@@ -711,14 +762,13 @@ fn close_suspended_or_dead(
     let parent_thread_id = state.global().current_thread_id;
     let caller_c_calls = state.c_calls();
 
-    let parent_open_upval_slots: Vec<(u64, lua_vm::state::StackIdx)> = state
-        .openupval
-        .iter()
-        .filter_map(|uv| match &*uv.slot() {
+    let mut parent_open_upval_slots = pop_resume_slot_buf(state);
+    parent_open_upval_slots.extend(state.openupval.iter().filter_map(|uv| {
+        match &*uv.slot() {
             lua_types::UpValState::Open { thread_id, idx } => Some((*thread_id as u64, *idx)),
             lua_types::UpValState::Closed(_) => None,
-        })
-        .collect();
+        }
+    }));
     {
         let mut g = state.global_mut();
         for (tid, idx) in &parent_open_upval_slots {
@@ -755,18 +805,20 @@ fn close_suspended_or_dead(
     pop_parent_gc_snapshot(state);
 
     {
+        let mut flush = pop_resume_flush_buf(state);
         let mut g = state.global_mut();
-        let mut flush: Vec<(lua_vm::state::StackIdx, LuaValue)> = Vec::new();
         for (tid, idx) in &parent_open_upval_slots {
             if let Some(v) = g.cross_thread_upvals.remove(&(*tid, *idx)) {
                 flush.push((*idx, v));
             }
         }
         drop(g);
-        for (idx, v) in flush {
+        for (idx, v) in flush.drain(..) {
             state.set_at(idx, v);
         }
+        return_resume_flush_buf(state, flush);
     }
+    return_resume_slot_buf(state, parent_open_upval_slots);
 
     if status == LuaStatus::Ok as i32 {
         state.push(LuaValue::Bool(true));

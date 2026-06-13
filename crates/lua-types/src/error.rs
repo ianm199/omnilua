@@ -15,6 +15,49 @@ pub struct LuaExit(pub i32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LuaThreadClose(pub LuaStatus);
 
+/// Unwind marker for the T5b table-set error prototype (branch
+/// `proto/unwind-errors-tableset`, never merged).
+///
+/// The hot table set/get path raises errors by `raise_set_error(e)` — which
+/// stashes the `LuaError` in [`take_pending_set_error`]'s thread-local and then
+/// `panic_any(LuaSetError)` — instead of returning `Err(e)`, so the success
+/// path threads no `Result`. It is caught and converted back to
+/// `Err(LuaError)` at the single protected-call boundary
+/// (`lua_vm::do_::raw_run_protected`), making the conversion invisible to every
+/// pcall / coroutine-resume / close caller.
+///
+/// **The payload is a zero-size marker, not the `LuaError` itself.**
+/// `std::panic::panic_any` requires `Any + Send`, but a `LuaError::Runtime`
+/// carries a `LuaValue` of GC pointers (`GcRef` / `Rc<[u8]>`) that are
+/// deliberately **not `Send`** in this single-threaded VM. So the error value
+/// rides a thread-local (the Rust analog of C's `longjmp` leaving the error
+/// object on `L`'s stack) and only control transfer rides the panic. This is a
+/// primary T5b finding: a full conversion cannot put the error value in the
+/// panic payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LuaSetError;
+
+thread_local! {
+    static PENDING_SET_ERROR: std::cell::RefCell<Option<LuaError>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Stash `err` in the thread-local and unwind with the [`LuaSetError`] marker.
+/// The matching `take_pending_set_error` at the catch boundary recovers it.
+/// T5b prototype, never merged.
+pub fn raise_set_error(err: LuaError) -> ! {
+    PENDING_SET_ERROR.with(|slot| *slot.borrow_mut() = Some(err));
+    std::panic::panic_any(LuaSetError)
+}
+
+/// Recover the `LuaError` stashed by the most recent [`raise_set_error`] on
+/// this thread. Returns [`LuaError::Error`] if somehow absent (a `LuaSetError`
+/// unwind with no stash is a prototype bug, surfaced as a generic error rather
+/// than a second panic). T5b prototype, never merged.
+pub fn take_pending_set_error() -> LuaError {
+    PENDING_SET_ERROR.with(|slot| slot.borrow_mut().take().unwrap_or(LuaError::Error))
+}
+
 /// The Lua error type. Carries a `LuaValue` payload because Lua errors can
 /// be any value (typically a string).
 #[derive(Debug, Clone)]

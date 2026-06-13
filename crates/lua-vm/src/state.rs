@@ -972,6 +972,16 @@ pub trait LuaTableRefExt {
         _k: GcRef<LuaString>,
         _v: LuaValue,
     ) -> Result<(), LuaError>;
+    /// T5b unwind-prototype variants of the three `raw_set*` setters: identical
+    /// work and GC barriers, but the success path returns `()` instead of
+    /// `Ok(())` and the rare error raises by `panic_any(LuaSetError)` instead
+    /// of `Err`. The hot table-set opcode handlers call these so no `Result` is
+    /// constructed or `?`-checked on the success path; the panic is caught and
+    /// reconstructed as a normal Lua error at `do_::raw_run_protected`. Branch
+    /// `proto/unwind-errors-tableset`, never merged.
+    fn raw_set_unwind(&self, _state: &mut LuaState, _k: LuaValue, _v: LuaValue);
+    fn raw_set_int_unwind(&self, _state: &mut LuaState, _k: i64, _v: LuaValue);
+    fn raw_set_short_str_unwind(&self, _state: &mut LuaState, _k: GcRef<LuaString>, _v: LuaValue);
     fn invalidate_tm_cache(&self);
     fn resize(&self, _state: &mut LuaState, _na: usize, _nh: usize) -> Result<(), LuaError>;
     fn next(&self, _k: LuaValue) -> Result<Option<(LuaValue, LuaValue)>, LuaError>;
@@ -1061,6 +1071,44 @@ impl LuaTableRefExt for GcRef<LuaTable> {
                     account_table_buffer_delta(self, before);
                 }
                 result
+            }
+        }
+    }
+    #[inline(always)]
+    fn raw_set_unwind(&self, state: &mut LuaState, k: LuaValue, v: LuaValue) {
+        match k {
+            LuaValue::Int(i) => self.raw_set_int_unwind(state, i, v),
+            LuaValue::Str(s) if s.is_short() => self.raw_set_short_str_unwind(state, s, v),
+            k => {
+                if k.is_collectable() {
+                    state.gc_table_barrier_back(self, &k);
+                }
+                let before = (**self).buffer_bytes();
+                (**self).set_generic_unwind(k, v);
+                account_table_buffer_delta(self, before);
+            }
+        }
+    }
+    #[inline(always)]
+    fn raw_set_int_unwind(&self, _state: &mut LuaState, k: i64, v: LuaValue) {
+        match (**self).try_update_int(k, v) {
+            Ok(()) => {}
+            Err(v) => {
+                let before = (**self).buffer_bytes();
+                (**self).set_int_unwind(k, v);
+                account_table_buffer_delta(self, before);
+            }
+        }
+    }
+    #[inline(always)]
+    fn raw_set_short_str_unwind(&self, state: &mut LuaState, k: GcRef<LuaString>, v: LuaValue) {
+        match (**self).try_update_short_str(&k, v) {
+            Ok(()) => {}
+            Err(v) => {
+                state.gc_table_barrier_back(self, &LuaValue::Str(k));
+                let before = (**self).buffer_bytes();
+                (**self).set_generic_unwind(LuaValue::Str(k), v);
+                account_table_buffer_delta(self, before);
             }
         }
     }
@@ -3654,6 +3702,56 @@ impl LuaState {
             Ok(None)
         } else {
             Ok(Some(v))
+        }
+    }
+    /// T5b unwind-prototype variant of [`Self::fast_get`]. The fast-get layer
+    /// is **infallible** — every arm of the `Result` form returns `Ok` — so the
+    /// `Result` wrapper is pure tax that the caller `?`-unwraps on the GET hot
+    /// path. This drops it (returns `Option` directly); a non-table receiver or
+    /// an empty slot still returns `None`, sending the caller to the cold
+    /// `finish_get` metamethod path that owns the only real GET error. Branch
+    /// `proto/unwind-errors-tableset`, never merged.
+    #[inline(always)]
+    pub fn fast_get_unwind(&mut self, t: &LuaValue, k: &LuaValue) -> Option<LuaValue> {
+        let LuaValue::Table(tbl) = t else {
+            return None;
+        };
+        let v = tbl.get(k);
+        if matches!(v, LuaValue::Nil) {
+            None
+        } else {
+            Some(v)
+        }
+    }
+    /// T5b unwind-prototype variant of [`Self::fast_get_int`]. See
+    /// [`Self::fast_get_unwind`].
+    #[inline(always)]
+    pub fn fast_get_int_unwind(&mut self, t: &LuaValue, k: i64) -> Option<LuaValue> {
+        let LuaValue::Table(tbl) = t else {
+            return None;
+        };
+        let v = tbl.get_int(k);
+        if matches!(v, LuaValue::Nil) {
+            None
+        } else {
+            Some(v)
+        }
+    }
+    /// T5b unwind-prototype variant of [`Self::fast_get_short_str`]. See
+    /// [`Self::fast_get_unwind`].
+    #[inline(always)]
+    pub fn fast_get_short_str_unwind(&mut self, t: &LuaValue, k: &LuaValue) -> Option<LuaValue> {
+        let LuaValue::Table(tbl) = t else {
+            return None;
+        };
+        let LuaValue::Str(s) = k else {
+            return None;
+        };
+        let v = tbl.get_short_str(s);
+        if matches!(v, LuaValue::Nil) {
+            None
+        } else {
+            Some(v)
         }
     }
     #[inline(always)]

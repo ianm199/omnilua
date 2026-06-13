@@ -26,7 +26,7 @@ pub mod version;
 
 // ── Top-level re-exports (most consumers use these flat names) ──────────
 pub use closure::{LuaClosure, LuaLClosure};
-pub use error::{LuaError, LuaExit, LuaThreadClose};
+pub use error::{LuaError, LuaExit, LuaSetError, LuaThreadClose};
 pub use filehandle::LuaFileHandle;
 pub use gc::GcRef;
 pub use proto::{AbsLineInfo, LocalVar, LuaProto, UpvalDesc};

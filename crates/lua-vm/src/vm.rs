@@ -2043,7 +2043,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let k_idx = i.arg_c() as usize;
                         let upval = state.upvalue_get(&cl, b);
                         let key = constants[k_idx];
-                        match state.fast_get_short_str(&upval, &key)? {
+                        match state.fast_get_short_str_unwind(&upval, &key) {
                             Some(v) => state.set_at(ra, v),
                             None => {
                                 state.set_ci_savedpc(ci, pc);
@@ -2069,9 +2069,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let rb_v = state.get_at(rb_idx);
                         let rc_v = state.get_at(base + i.arg_c());
                         let fast_result = if let LuaValue::Int(n) = &rc_v {
-                            state.fast_get_int(&rb_v, *n)?
+                            state.fast_get_int_unwind(&rb_v, *n)
                         } else {
-                            state.fast_get(&rb_v, &rc_v)?
+                            state.fast_get_unwind(&rb_v, &rc_v)
                         };
                         match fast_result {
                             Some(v) => state.set_at(ra, v),
@@ -2091,7 +2091,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let rb_idx = base + i.arg_b();
                         let rb_v = state.get_at(rb_idx);
                         let c = i.arg_c() as i64;
-                        match state.fast_get_int(&rb_v, c)? {
+                        match state.fast_get_int_unwind(&rb_v, c) {
                             Some(v) => state.set_at(ra, v),
                             None => {
                                 let key = LuaValue::Int(c);
@@ -2109,7 +2109,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let rb_v = state.get_at(rb_idx);
                         let k_idx = i.arg_c() as usize;
                         let key = constants[k_idx];
-                        match state.fast_get_short_str(&rb_v, &key)? {
+                        match state.fast_get_short_str_unwind(&rb_v, &key) {
                             Some(v) => state.set_at(ra, v),
                             None => {
                                 state.set_ci_savedpc(ci, pc);
@@ -2136,9 +2136,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                                     state.gc_table_barrier_back(&tbl, &rc_v);
                                 }
                                 if let LuaValue::Str(s) = key {
-                                    tbl.raw_set_short_str(state, s, rc_v)?;
+                                    tbl.raw_set_short_str_unwind(state, s, rc_v);
                                 } else {
-                                    tbl.raw_set(state, key, rc_v)?;
+                                    tbl.raw_set_unwind(state, key, rc_v);
                                 }
                                 continue 'dispatch;
                             }
@@ -2148,9 +2148,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                                 state.gc_value_barrier_back(&upval, &rc_v);
                                 if let LuaValue::Table(tbl) = upval {
                                     if let LuaValue::Str(s) = key {
-                                        tbl.raw_set_short_str(state, s, rc_v)?;
+                                        tbl.raw_set_short_str_unwind(state, s, rc_v);
                                     } else {
-                                        tbl.raw_set(state, key, rc_v)?;
+                                        tbl.raw_set_unwind(state, key, rc_v);
                                     }
                                 } else {
                                     state.table_raw_set(&upval, key, rc_v)?;
@@ -2188,11 +2188,11 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                                     state.gc_table_barrier_back(&tbl, &rc_v);
                                 }
                                 match rb_v {
-                                    LuaValue::Int(n) => tbl.raw_set_int(state, n, rc_v)?,
+                                    LuaValue::Int(n) => tbl.raw_set_int_unwind(state, n, rc_v),
                                     LuaValue::Str(s) if s.is_short() => {
-                                        tbl.raw_set_short_str(state, s, rc_v)?
+                                        tbl.raw_set_short_str_unwind(state, s, rc_v)
                                     }
-                                    _ => tbl.raw_set(state, rb_v, rc_v)?,
+                                    _ => tbl.raw_set_unwind(state, rb_v, rc_v),
                                 }
                             } else {
                                 let fast = if let LuaValue::Int(n) = &rb_v {
@@ -2203,11 +2203,11 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                                 if fast.is_some() {
                                     state.gc_value_barrier_back(&ra_v, &rc_v);
                                     match rb_v {
-                                        LuaValue::Int(n) => tbl.raw_set_int(state, n, rc_v)?,
+                                        LuaValue::Int(n) => tbl.raw_set_int_unwind(state, n, rc_v),
                                         LuaValue::Str(s) if s.is_short() => {
-                                            tbl.raw_set_short_str(state, s, rc_v)?
+                                            tbl.raw_set_short_str_unwind(state, s, rc_v)
                                         }
-                                        _ => tbl.raw_set(state, rb_v, rc_v)?,
+                                        _ => tbl.raw_set_unwind(state, rb_v, rc_v),
                                     }
                                 } else {
                                     state.set_ci_savedpc(ci, pc);
@@ -2238,12 +2238,12 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                                 if rc_v.is_collectable() {
                                     state.gc_table_barrier_back(&tbl, &rc_v);
                                 }
-                                tbl.raw_set_int(state, c, rc_v)?;
+                                tbl.raw_set_int_unwind(state, c, rc_v);
                             } else {
                                 let fast = state.fast_get_int(&ra_v, c)?;
                                 if fast.is_some() {
                                     state.gc_value_barrier_back(&ra_v, &rc_v);
-                                    tbl.raw_set_int(state, c, rc_v)?;
+                                    tbl.raw_set_int_unwind(state, c, rc_v);
                                 } else {
                                     state.set_ci_savedpc(ci, pc);
                                     state.set_top(state.ci_top(ci));
@@ -2291,18 +2291,18 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                                     state.gc_table_barrier_back(&tbl, &rc_v);
                                 }
                                 if let LuaValue::Str(s) = key {
-                                    tbl.raw_set_short_str(state, s, rc_v)?;
+                                    tbl.raw_set_short_str_unwind(state, s, rc_v);
                                 } else {
-                                    tbl.raw_set(state, key, rc_v)?;
+                                    tbl.raw_set_unwind(state, key, rc_v);
                                 }
                             } else {
                                 match state.fast_get_short_str(&ra_v, &key)? {
                                     Some(_) => {
                                         state.gc_value_barrier_back(&ra_v, &rc_v);
                                         if let LuaValue::Str(s) = key {
-                                            tbl.raw_set_short_str(state, s, rc_v)?;
+                                            tbl.raw_set_short_str_unwind(state, s, rc_v);
                                         } else {
-                                            tbl.raw_set(state, key, rc_v)?;
+                                            tbl.raw_set_unwind(state, key, rc_v);
                                         }
                                     }
                                     None => {
@@ -2371,7 +2371,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             state.get_at(base + i.arg_c())
                         };
                         state.set_at(ra + 1, rb_v.clone());
-                        match state.fast_get_short_str(&rb_v, &key)? {
+                        match state.fast_get_short_str_unwind(&rb_v, &key) {
                             Some(v) => state.set_at(ra, v),
                             None => {
                                 state.set_ci_savedpc(ci, pc);

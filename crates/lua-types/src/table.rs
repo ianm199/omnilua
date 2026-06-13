@@ -1643,6 +1643,30 @@ impl LuaTable {
         inner.try_raw_set_int_fast(k, v)
     }
 
+    /// T5b unwind-prototype variant of [`Self::try_raw_set_int`]: identical
+    /// work, but raises the rare allocation-cap error by
+    /// `panic_any(LuaSetError(e))` instead of returning `Err`, so the caller's
+    /// hot success path threads no `Result`. The panic is caught and converted
+    /// back to a normal Lua error at `lua_vm::do_::raw_run_protected`. Branch
+    /// `proto/unwind-errors-tableset`, never merged.
+    #[inline]
+    pub fn set_int_unwind(&self, k: i64, v: LuaValue) {
+        let mut inner = self.inner.borrow_mut();
+        if let Err(e) = inner.try_raw_set_int_fast(k, v) {
+            crate::error::raise_set_error(e);
+        }
+    }
+
+    /// T5b unwind-prototype variant of the generic raw-set: panics with
+    /// [`crate::error::LuaSetError`] on a nil/NaN key or allocation-cap error
+    /// instead of returning `Err`. See [`Self::set_int_unwind`].
+    #[inline]
+    pub fn set_generic_unwind(&self, k: LuaValue, v: LuaValue) {
+        if let Err(e) = self.try_raw_set(k, v) {
+            crate::error::raise_set_error(e);
+        }
+    }
+
     /// Resize the table to new array and hash sizes (sizing hint from
     /// the bytecode's `OP_NEWTABLE`).
     pub fn resize(&self, new_asize: u32, new_hsize: u32) -> Result<(), LuaError> {

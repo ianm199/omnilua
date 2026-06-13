@@ -204,10 +204,66 @@ where
     F: FnOnce(&mut LuaState) -> Result<(), LuaError>,
 {
     let old_n_ccalls = state.n_ccalls;
-    // PORT NOTE: setjmp/longjmp replaced by Result; f(state) propagates errors naturally.
-    let result = f(state);
+    let result = run_protected_unwind(state, f);
     state.n_ccalls = old_n_ccalls;
     result
+}
+
+/// T5b unwind-error prototype catch boundary (branch
+/// `proto/unwind-errors-tableset`, never merged).
+///
+/// The hot table set/get path raises errors by `panic_any(LuaSetError(e))`
+/// rather than returning `Err(e)`, so its success path threads no `Result`.
+/// This single chokepoint — already the one protected frame every pcall /
+/// coroutine-resume / close call routes through — catches that panic with
+/// `catch_unwind` and reconstructs the identical `Err(LuaError)` the rest of
+/// the pipeline already expects, so nothing downstream changes. Any other
+/// panic payload (`LuaThreadClose`, `LuaExit`, a genuine Rust bug) is
+/// re-raised unchanged. `AssertUnwindSafe` is sound here because the only
+/// observable state on the panic path is the Lua stack, which the existing
+/// `pcall` / `resume_coroutine` error arms already unwind and repair from the
+/// returned `Err`, exactly as for a Result-propagated error.
+#[inline(always)]
+fn run_protected_unwind<F>(state: &mut LuaState, f: F) -> Result<(), LuaError>
+where
+    F: FnOnce(&mut LuaState) -> Result<(), LuaError>,
+{
+    ensure_set_error_panic_hook();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(state)));
+    match outcome {
+        Ok(result) => result,
+        Err(payload) => {
+            if payload.is::<lua_types::error::LuaSetError>() {
+                Err(lua_types::error::take_pending_set_error())
+            } else {
+                std::panic::resume_unwind(payload)
+            }
+        }
+    }
+}
+
+/// One-shot install guard for the prototype's `LuaSetError` suppression hook.
+static SET_ERROR_HOOK_INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Install — once per process — a chaining panic hook that suppresses the
+/// default panic printer for a [`lua_types::error::LuaSetError`] payload, since
+/// that payload is control flow caught at [`run_protected_unwind`], not a Rust
+/// fault. Mirrors the coroutine library's `LuaThreadClose` chaining hook; every
+/// other payload is delegated to the previously installed hook so genuine
+/// panics still print. T5b prototype, never merged.
+fn ensure_set_error_panic_hook() {
+    SET_ERROR_HOOK_INSTALLED.get_or_init(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if info
+                .payload()
+                .downcast_ref::<lua_types::error::LuaSetError>()
+                .is_none()
+            {
+                previous(info);
+            }
+        }));
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

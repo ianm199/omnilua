@@ -51,7 +51,8 @@ what memory safety costs — see
 - **Benchmarks.** The omniLua/reference-C wall and RSS ratios are tracked
   per-commit on the
   [bench dashboard](https://ianm199.github.io/omnilua/harness/bench/history/).
-  ~1.3× geomean of reference C wall time.
+  ~1.45× geomean of reference-C wall time on the stock release build (~1.3×
+  with PGO).
 - **Safety tax.** The bounds-checks-and-`RefCell`-guards ablation costs ~0% of
   reliable wall time — the residual gap to C is representation, not safety. The
   unsafe budget stays at zero outside the GC, the dynamic-library loader, and
@@ -94,14 +95,15 @@ lua.load(untrusted_source).exec().ok();
 sandbox.reset(); // refill the budget before re-running
 ```
 
-Full API on [docs.rs](https://docs.rs/omnilua). Worked Bevy 0.18 integration:
-[bevy-lua-rs-starter](https://github.com/ianm199/bevy-lua-rs-starter)
-([live demo](https://ianm199.github.io/bevy-lua-rs-starter/)).
+Full API on [docs.rs](https://docs.rs/omnilua). In-repo Bevy demo — a Lua
+script drives a Bevy entity each frame, and the whole thing compiles to
+`wasm32-unknown-unknown` (the thing a C-backed binding can't do):
+[`examples/bevy/`](examples/bevy/).
 
 ## Honesty
 
-~1.3× geomean of reference C wall time — competitive, not faster, and not
-LuaJIT. If you need LuaJIT speed or a decades-mature binding, use `mlua`. Native
+~1.45× geomean of reference-C wall time on a stock release build (~1.3× with
+PGO) — competitive, not faster, and not LuaJIT. If you need LuaJIT speed or a decades-mature binding, use `mlua`. Native
 C rocks are not supported in LuaRocks yet (pure-Lua rocks are). The 5.4 backend
 is production-ready; the other versions are the newer surfaces (see the table).
 

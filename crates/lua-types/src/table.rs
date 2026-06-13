@@ -281,11 +281,19 @@ pub struct TableInner {
     pub flags: TableFlags,
     pub lsizenode: u8,
     pub alimit: u32,
-    pub array: Vec<LuaValue>,
-    pub node: Vec<TableNode>,
+    /// Array part. A boxed slice — no capacity field — because it only ever
+    /// changes size at a resize/rehash boundary, never via incremental
+    /// `push`, mirroring C's raw `TValue *array` whose length lives in
+    /// `alimit`. Growth and shrink rebuild a fresh box in
+    /// [`TableInner::resize`].
+    pub array: Box<[LuaValue]>,
+    /// Hash part. A boxed slice for the same reason as `array`: every node
+    /// vector is built whole in [`TableInner::set_node_vector`] and swapped
+    /// in, mirroring C's `Node *node` sized by `lsizenode`.
+    pub node: Box<[TableNode]>,
     /// Free-slot search cursor for `get_free_pos`; [`NO_LASTFREE`] means the
     /// table has no allocated hash part (`isdummy` in C). Stored as a `u32`
-    /// sentinel rather than `Option<usize>` to keep the struct at 64 bytes
+    /// sentinel rather than `Option<usize>` to keep the struct compact
     /// (W2.3 representation diet); hash parts are capped well below 2^32.
     pub lastfree: u32,
 }
@@ -293,14 +301,26 @@ pub struct TableInner {
 /// Sentinel for [`TableInner::lastfree`]: no allocated hash part.
 pub const NO_LASTFREE: u32 = u32::MAX;
 
+/// Pins the size of [`TableInner`] on 64-bit targets. The array and node
+/// parts are `Box<[T]>` (16 B: pointer + length) rather than `Vec<T>`
+/// (24 B: pointer + length + capacity), which is faithful to C's raw
+/// `TValue *array` / `Node *node` whose lengths live in `alimit` /
+/// `lsizenode` — the parts only ever resize at a rehash boundary, never by
+/// incremental push. Dropping the two `Vec` capacity words removes 16 B per
+/// table box (candidate 9 / `docs/GC_ALLOC_DESIGN_MEMO.md` §R4): 64 B → 48 B.
+/// Gated off 32-bit because the byte count is a 64-bit-layout claim
+/// (`docs/MEASUREMENT_PROTOCOL.md`: the wasm/32-bit lesson).
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<TableInner>() == 48);
+
 impl TableInner {
     fn new() -> Self {
         TableInner {
             flags: TableFlags(0x7F),
             lsizenode: 0,
             alimit: 0,
-            array: Vec::new(),
-            node: Vec::new(),
+            array: Box::default(),
+            node: Box::default(),
             lastfree: NO_LASTFREE,
         }
     }
@@ -680,9 +700,30 @@ impl TableInner {
         totaluse
     }
 
+    /// Rebuild the array part to exactly `new_size` slots, preserving the
+    /// live prefix and `Nil`-filling any growth tail.
+    ///
+    /// This is the array-part analogue of [`Self::set_node_vector`]: with a
+    /// boxed slice there is no in-place `truncate`/`resize_with`, so every
+    /// size change allocates a fresh box, moves the survivors (the prefix
+    /// `[0, min(old_len, new_size))`) into it by value — no clone — and
+    /// swaps it in. On grow the appended tail is `Nil`; on shrink the
+    /// dropped suffix is freed with the old box. The caller owns the
+    /// `alimit` bookkeeping and any re-insertion of displaced keys, exactly
+    /// as with the prior `Vec` code.
+    fn set_array_size(&mut self, new_size: usize) {
+        let old = std::mem::take(&mut self.array);
+        let keep = old.len().min(new_size);
+        let mut survivors = old.into_vec();
+        survivors.truncate(keep);
+        survivors.reserve_exact(new_size - keep);
+        survivors.resize_with(new_size, || LuaValue::Nil);
+        self.array = survivors.into_boxed_slice();
+    }
+
     fn set_node_vector(&mut self, size: u32) -> Result<(), LuaError> {
         if size == 0 {
-            self.node = Vec::new();
+            self.node = Box::default();
             self.lsizenode = 0;
             self.lastfree = NO_LASTFREE;
         } else {
@@ -691,11 +732,8 @@ impl TableInner {
                 return Err(LuaError::runtime(format_args!("table overflow")));
             }
             let actual_size = 1u32 << lsize;
-            let mut nodes = Vec::with_capacity(actual_size as usize);
-            for _ in 0..actual_size {
-                nodes.push(TableNode::empty());
-            }
-            self.node = nodes;
+            let nodes: Vec<TableNode> = (0..actual_size).map(|_| TableNode::empty()).collect();
+            self.node = nodes.into_boxed_slice();
             self.lsizenode = lsize as u8;
             self.lastfree = actual_size;
         }
@@ -725,7 +763,7 @@ impl TableInner {
                 .filter(|&i| !matches!(self.array[i], LuaValue::Nil))
                 .map(|i| ((i + 1) as i64, self.array[i].clone()))
                 .collect();
-            self.array.truncate(new_asize as usize);
+            self.set_array_size(new_asize as usize);
             self.alimit = new_asize;
 
             std::mem::swap(&mut self.node, &mut new_hash_node);
@@ -742,7 +780,7 @@ impl TableInner {
             std::mem::swap(&mut self.lastfree, &mut new_hash_lastfree);
         }
 
-        self.array.resize_with(new_asize as usize, || LuaValue::Nil);
+        self.set_array_size(new_asize as usize);
 
         std::mem::swap(&mut self.node, &mut new_hash_node);
         std::mem::swap(&mut self.lsizenode, &mut new_hash_lsize);
@@ -1474,13 +1512,15 @@ impl LuaTable {
     }
 
     /// Bytes of heap-allocated buffer backing this table's array and node
-    /// parts, measured by *capacity* (the bytes actually reserved from the
-    /// allocator, not just the populated prefix). Read-only; used by the GC
-    /// pacer-accounting path to charge these buffers against the heap.
+    /// parts. The array and node parts are boxed slices, so their length is
+    /// exactly the number of slots reserved from the allocator (`cap == len`);
+    /// `len()` is therefore the precise reserved-byte count. Read-only; used
+    /// by the GC pacer-accounting path to charge these buffers against the
+    /// heap.
     pub fn buffer_bytes(&self) -> usize {
         let inner = self.inner.borrow();
-        inner.array.capacity() * std::mem::size_of::<LuaValue>()
-            + inner.node.capacity() * std::mem::size_of::<TableNode>()
+        inner.array.len() * std::mem::size_of::<LuaValue>()
+            + inner.node.len() * std::mem::size_of::<TableNode>()
     }
 
     /// Read a key. Returns `LuaValue::Nil` if absent or if `k` is nil.

@@ -157,3 +157,29 @@ string_ops 1.57→1.28, sort_seeded 1.07→0.68).
 is only NaN-boxing / unsafe (excluded by direction) and the multi-day,
 correctness-critical incremental-pacer rewrite (assess-only). No further safe
 perf grind exists to pull.
+
+## CORRECTION (2026-06-13, cold-machine re-measure): T5a tag-layout REVERTED
+
+The overnight status above reported the T5a `LuaValue` tag-layout reorder (#177)
+as a clean win. **That was wrong.** A cold-machine matrix + direct
+binary-vs-binary A/B showed T5a is a net-negative TRADEOFF:
+
+- It hurts arithmetic ~10-15% wall: numeric_mixed pre 3.91s → with-T5a 4.33s →
+  reverted 3.93s; compare_immediates 8.29 → 9.54 → 8.37. (bitwise_mixed,
+  fibonacci, mandelbrot regressed similarly in the matrix.)
+- It helps tables/methods ~4-6%: metatable_index_chain 1.80 → 1.69 → 1.82;
+  method_calls gains, but stays better-than-baseline without T5a (the table/RSS
+  packets carry it).
+
+Arithmetic is pervasive and the regression is larger, so T5a is reverted
+(commit reverting 5e0a45f). All OTHER overnight work stands (concat, the three
+`Box` RSS diets, intern-shrink — clean wins).
+
+**Why the Ir arbiter missed it — the methodology gap:** T5a passed its gate
+because its arbiter was instruction count, and Ir *fell* (numeric_mixed −2.7%).
+But the regression is **CPI/code-layout** — the discriminant reorder reshuffled
+the arithmetic type-dispatch codegen so the same (fewer) instructions run
+slower. Deterministic Ir is blind to this. For any change that affects codegen
+LAYOUT (enum-variant reorders, struct field reorders, repr changes), a
+cold-machine WALL check is mandatory — Ir alone is insufficient. This is the
+one class where the Ir arbiter must not be trusted on its own.

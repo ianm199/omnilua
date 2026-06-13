@@ -71,6 +71,20 @@ wall with Ir exactly flat. T2-B2 was a latency win: pingpong −32% wall, Ir
   claims unless gated (`#[cfg(target_pointer_width = "64")]`), and this broke
   main's CI once (fixed in PR #153).
 
+
+## The Ir arbiter's blind spot: CPI / code layout (added 2026-06-13)
+
+Deterministic instruction count (Ir) is the arbiter for instruction-removal and
+the cross-check for branch wins — but it is BLIND to CPI/code-layout effects.
+A change can reduce Ir yet run SLOWER because it reshuffled codegen (i-cache,
+branch alignment, type-dispatch layout). This bit us: the T5a `LuaValue`
+discriminant reorder cut Ir on arithmetic rows ~2.7% but regressed their WALL
+~10-15% (reverted). RULE: any change that alters codegen LAYOUT — enum-variant
+reorders, struct field order, `repr`, anything that moves the discriminant or
+shifts hot-path branch targets — REQUIRES a cold-machine wall A/B, not just Ir.
+Ir-down is necessary but NOT sufficient for these. Pure logic changes that don't
+move layout can still trust Ir.
+
 ## Tool index
 
 - `harness/bench/instr-count.sh` — deterministic Ir (callgrind, container);

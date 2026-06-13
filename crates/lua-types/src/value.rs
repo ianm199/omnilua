@@ -9,53 +9,19 @@ use std::ffi::c_void;
 pub use crate::table::LuaTable;
 
 /// The dynamically-typed Lua value. Replaces C's `TValue`.
-///
-/// The variants are **declared in an order** (not `#[repr(u8)]` — see below)
-/// such that the five GC-managed variants form one contiguous block at the end
-/// (`Str` … `Thread`), with the scalars — including `LightUserData`, which
-/// carries a raw pointer but is *not* GC-managed — declared first. This mirrors
-/// C-Lua's `BIT_ISCOLLECTABLE` design, where `iscollectable(v)` is a single
-/// range/bit test rather than a per-variant match: with this order the
-/// name-based `is_collectable()` lowers to one fused niche-decode + range
-/// compare. The pre-T5a order put `LightUserData` *between* `UserData` and
-/// `Thread`, splitting the collectable set `{4,5,6,7,9}` and forcing the
-/// predicate to lower to a bitmask-constant test (a `mov #752 / lsr / and`) —
-/// the extra per-write work `PERF_SPRINT_2_SPEC §T2` fingered.
-///
-/// **Why declaration order and not `#[repr(u8)]` + `= N`:** an explicit
-/// primitive `repr` forces a dedicated tag byte, which defeats the niche
-/// packing that keeps this enum at 16 bytes (the largest payload, `LuaClosure`,
-/// is itself 16 bytes with no spare niche, so a forced tag pushes the whole
-/// value to 24 bytes — verified, and caught by the `size_of == 16` assertion
-/// below). Declaration order gives the identical contiguous-discriminant
-/// codegen win at zero size cost, which is the only thing that moves the
-/// counters. The order is an internal implementation detail; no observable
-/// behaviour depends on it — every consumer pattern-matches on variant *names*,
-/// the wire/bytecode constant tags are a separate explicit table (`undump.rs`),
-/// and `type_tag`/`type_name` map names to `LuaType` independently.
 #[derive(Debug, Clone, Copy)]
 pub enum LuaValue {
     Nil,
     Bool(bool),
     Int(i64),
     Float(f64),
-    LightUserData(*mut c_void),
     Str(GcRef<LuaString>),
     Table(GcRef<LuaTable>),
     Function(LuaClosure),
     UserData(GcRef<LuaUserData>),
+    LightUserData(*mut c_void),
     Thread(GcRef<LuaThread>),
 }
-
-/// `LuaValue` must stay 16 bytes (8-byte payload, tag niche-packed into the
-/// largest variant's spare bits). The T5a collectable-range reorder must not
-/// grow it; this assertion is what caught that a forced `#[repr(u8)]` tag byte
-/// would have bloated it to 24. Gated to 64-bit because the payload sizes
-/// (`GcRef`, `i64`, `f64`, `*mut c_void`) are pointer/word sized — on `wasm32`
-/// the same enum is smaller, and an unconditional `== 16` assert would (and
-/// once did, PR #153) break the `wasm32-unknown-unknown` CI gate.
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<LuaValue>() == 16);
 
 impl LuaValue {
     pub fn type_tag(&self) -> crate::LuaType {
@@ -98,15 +64,6 @@ impl LuaValue {
     pub fn is_truthy(&self) -> bool {
         !self.is_falsy()
     }
-    /// Whether the value carries a GC-managed payload (C-Lua `iscollectable`).
-    ///
-    /// The variants `Str`/`Table`/`Function`/`UserData`/`Thread` are declared
-    /// as the contiguous tail of the enum (see the type doc and the
-    /// `collectable_variants_are_a_contiguous_range` test), so this name-based
-    /// `matches!` lowers to a single fused niche-decode + range compare instead
-    /// of the bitmask-constant test (`mov #752 / lsr / and`) the old split
-    /// ordering `{4,5,6,7,9}` forced. The match arms are written in declaration
-    /// order to keep that lowering legible.
     pub fn is_collectable(&self) -> bool {
         matches!(
             self,
@@ -214,60 +171,6 @@ impl LuaThread {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Declaration-order index of the first collectable variant (`Str`).
-    /// Scalars sit below it; collectables form the contiguous tail at or above
-    /// it. This is the property that lets `is_collectable()` lower to one range
-    /// compare instead of a bitmask test.
-    const FIRST_COLLECTABLE: u8 = 5;
-
-    /// Name-based view of each variant's declaration-order index, used only to
-    /// pin the T5a layout invariant without an `unsafe` tag read.
-    fn order_index(v: &LuaValue) -> u8 {
-        match v {
-            LuaValue::Nil => 0,
-            LuaValue::Bool(_) => 1,
-            LuaValue::Int(_) => 2,
-            LuaValue::Float(_) => 3,
-            LuaValue::LightUserData(_) => 4,
-            LuaValue::Str(_) => 5,
-            LuaValue::Table(_) => 6,
-            LuaValue::Function(_) => 7,
-            LuaValue::UserData(_) => 8,
-            LuaValue::Thread(_) => 9,
-        }
-    }
-
-    /// The five collectable variants must occupy the contiguous tail
-    /// `[FIRST_COLLECTABLE, 9]` and every scalar must fall below it, with
-    /// `is_collectable()` agreeing exactly with that split. Any reorder that
-    /// splits the collectable block (the pre-T5a state) would silently restore
-    /// the bitmask lowering, so guard it mechanically. `LightUserData` is the
-    /// trap: it carries a raw pointer but is a scalar, and the pre-T5a order
-    /// wedged it between two collectables.
-    #[test]
-    fn collectable_variants_are_a_contiguous_range() {
-        let scalars = [
-            LuaValue::Nil,
-            LuaValue::Bool(true),
-            LuaValue::Int(0),
-            LuaValue::Float(0.0),
-            LuaValue::LightUserData(std::ptr::null_mut()),
-        ];
-        for v in &scalars {
-            assert!(
-                order_index(v) < FIRST_COLLECTABLE,
-                "scalar must sit below the collectable range"
-            );
-            assert!(!v.is_collectable(), "scalar must not be collectable");
-        }
-        assert_eq!(scalars.len() as u8, FIRST_COLLECTABLE);
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:        src/lobject.h (TValue, Value union, tags)
@@ -278,9 +181,5 @@ mod tests {
 //   unsafe_blocks: 0
 //   notes:         Canonical LuaValue tagged enum. C uses a {value, tag} struct with a
 //                  union of (gco/number/bool/light-userdata); we use a Rust enum
-//                  with each variant carrying its payload directly. The variant
-//                  discriminants are assigned explicitly (#[repr(u8)]) so the five
-//                  collectable variants form the contiguous range [5, 9]; this
-//                  lets is_collectable() lower to one range compare, matching C's
-//                  BIT_ISCOLLECTABLE single-bit test (T5a, repr rung 1).
+//                  with each variant carrying its payload directly.
 // ──────────────────────────────────────────────────────────────────────────────

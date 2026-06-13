@@ -18,6 +18,9 @@ members = [
     "crates/lua-wasm",
     "crates/lua-wasm-smoke",
 ]
+exclude = [
+    "examples/bevy",
+]
 
 [workspace.package]
 version = "0.1.0"

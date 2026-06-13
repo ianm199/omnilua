@@ -1,0 +1,30 @@
+[package]
+name = "omnilua-bevy-demo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "omniLua + Bevy wedge demo: Lua scripting that follows your game to the browser."
+
+# An empty `[workspace]` table makes this its OWN workspace root, fully
+# isolated from the core omniLua workspace one level up. Combined with the
+# `exclude = ["examples/bevy"]` entry in the root Cargo.toml, the heavy Bevy
+# dependency graph never enters core CI or `cargo metadata`.
+[workspace]
+
+[[bin]]
+name = "omnilua-bevy-demo"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to Bevy 0.16 (resolves to 0.16.1). 0.16 is a settled stable line with
+# a mature wasm-bindgen/trunk browser path; the 0.18 line is newer but churns
+# harder. `default-features = false` selects the headless MinimalPlugins graph
+# (ECS + time + transform + math + app, ~125 crates, no GPU/winit), which is
+# all the native smoke test needs. The README documents the extra features the
+# windowed/wasm build turns on.
+bevy = { version = "0.16", default-features = false }
+
+# The embedding crate under test, by path. This is the whole point: the demo
+# depends on the same `omnilua` users get from crates.io, exercised exactly as
+# a real embedder would.
+omnilua = { path = "../../crates/lua-rs-runtime" }

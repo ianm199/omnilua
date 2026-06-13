@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>omniLua + Bevy in the browser</title>
+    <link data-trunk rel="rust" data-bin="omnilua-bevy-demo" data-wasm-opt="z" />
+    <style>
+      body { margin: 0; background: #0b0d12; color: #cdd6f4; font-family: system-ui, sans-serif; }
+      canvas { display: block; margin: 0 auto; }
+      .banner { padding: 12px 16px; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="banner">
+      omniLua + Bevy — the same <code>assets/game.lua</code> drives this in the
+      browser, interpreted by pure-Rust omniLua compiled to wasm.
+    </div>
+  </body>
+</html>

@@ -65,3 +65,26 @@ README that says "renamed to omnilua — see https://github.com/ianm199/omnilua"
 These are README-only courtesy releases; they ship no code and are entirely the
 user's call to trigger. They are deliberately out of scope for the 0.1.0 release
 workflow above.
+
+**Mechanics.** The live workspace no longer contains crates named
+`lua-rs-runtime` or `lua-cli` — they were renamed to `omnilua` / `omnilua-cli`,
+so the pointer releases **cannot** be cut from `main`. The crates.io and npm
+registries currently hold the old names at **0.0.33**, so the pointer version is
+**0.0.34**. Do this only **after** the 0.1.0 publish has landed (so the redirect
+points at a home that already exists):
+
+1. From a throwaway scratch checkout of the last old-name commit (the commit
+   immediately before the rebrand renamed the manifests), or a minimal stub crate
+   that keeps the old `name` and `version = "0.0.34"`:
+   - replace the crate's `README.md` with a one-line redirect:
+     `# lua-rs-runtime → renamed to omnilua — see https://github.com/ianm199/omnilua`
+     (and the equivalent for `lua-cli` / `lua-rs-wasm`);
+   - leave the code as-is (or stub it to a single `compile_error!`-free no-op —
+     these are pointer releases, not functional ones);
+   - ensure the manifest still carries `name = "lua-rs-runtime"` (resp. `lua-cli`)
+     and `version = "0.0.34"`, with `description`/`license` intact.
+2. `cargo publish -p lua-rs-runtime` then `cargo publish -p lua-cli` (crates.io),
+   and for npm: bump `packages/.../package.json` `name` back to `lua-rs-wasm`,
+   `version` to `0.0.34`, then `npm publish --access public`.
+3. Verify each old name now shows 0.0.34 with the redirect README on its registry
+   page. Discard the scratch checkout — none of this lands on `main`.

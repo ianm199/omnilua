@@ -1,5 +1,0 @@
-/Users/ianmclaughlin/PycharmProjects/rustExperiments/lua-rs-port/target/debug/lua-rs: ...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:42: FAIL: new finalizer object did not start new
-stack traceback:
-	[C]: in function 'assert'
-	...1wn34z0rz8lrg9w0sjc0000gp/T//lua-rs-gc-canary.XXXXXX.lua:42: in main chunk
-	[C]: in ?

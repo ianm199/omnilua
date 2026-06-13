@@ -1,7 +1,7 @@
 [package]
 name = "lua-vm"
 version.workspace = true
-description.workspace = true
+description = "omniLua's bytecode virtual machine and interpreter loop — internal crate; depend on `omnilua`."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

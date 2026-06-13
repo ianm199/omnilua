@@ -1,7 +1,7 @@
 [package]
 name = "lua-wasm"
 version.workspace = true
-description = "Bare wasm32 embedding artifact for lua-rs."
+description = "Bare wasm32-unknown-unknown embedding artifact for omniLua."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

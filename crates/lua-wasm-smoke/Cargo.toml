@@ -1,7 +1,7 @@
 [package]
 name = "lua-wasm-smoke"
 version.workspace = true
-description = "Bare wasm32 smoke harness for lua-rs."
+description = "Bare wasm32-unknown-unknown smoke harness for omniLua."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

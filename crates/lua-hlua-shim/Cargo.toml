@@ -1,7 +1,7 @@
 [package]
 name = "lua-rs-hlua-shim"
 version.workspace = true
-description = "Drop-in replacement for the `hlua` 0.4 embedding API, backed by the pure-Rust lua-rs VM. Lets hlua-based consumers (authoscope, sn0int) run on lua-rs behind a feature flag."
+description = "Drop-in replacement for the `hlua` 0.4 embedding API, backed by the pure-Rust omniLua VM. Lets hlua-based consumers (authoscope, sn0int) run on omniLua behind a feature flag."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

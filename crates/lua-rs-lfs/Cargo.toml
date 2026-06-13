@@ -1,7 +1,7 @@
 [package]
 name = "lua-rs-lfs"
 version.workspace = true
-description.workspace = true
+description = "omniLua's LuaFileSystem (lfs) module — internal crate; depend on `omnilua`."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

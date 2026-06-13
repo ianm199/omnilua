@@ -167,3 +167,67 @@ Evidence TSVs (`harness/bench/results/`):
 `20260611T182125Z-…` (C1 branch-sim), `20260611T182748Z-…` (C2 branch-sim).
 Gates on each candidate: `cargo test -p lua-types` + `-p lua-vm` green,
 multiversion_oracle 165/165. No control regression observed beyond layout noise.
+
+### T5a — repr rung 1: `LuaValue` collectable-range reorder — KEPT (2026-06-13, branch `overnight/repr-tag-layout`)
+
+**Verdict: the discriminant reorder closes T2's `is_collectable` lever — KEEP.**
+This is the direct follow-on to T2's finding #3 (`is_collectable()` is a
+multi-variant `matches!` over the split collectable set `{4,5,6,7,9}`, lowering
+to a bitmask-constant test vs C's single `BIT_ISCOLLECTABLE` bit-test). The fix:
+reorder the `LuaValue` variants so the five GC-managed variants (`Str`/`Table`/
+`Function`/`UserData`/`Thread`) form a contiguous tail, moving the scalar
+`LightUserData` up out of the middle of that block. With contiguous
+discriminants the name-based `is_collectable()` lowers to one fused niche-decode
++ range compare (`sub`/`cmp`/`ccmp`/`cset`, 6 insns) instead of the prior
+`…/mov #752/lsr/and` bitmask test (11 insns) — verified in standalone codegen.
+
+**Crucially NOT `#[repr(u8)]` + explicit `= N`** (which the rung-1 brief
+suggested): a primitive `repr` forces a dedicated tag byte, defeating the niche
+packing that keeps `LuaValue` at 16 bytes — it bloats to **24 bytes** (the
+largest payload `LuaClosure` is itself 16 B with no spare niche). The
+`const _: () = assert!(size_of::<LuaValue>() == 16)` (64-bit-gated) caught this.
+**Declaration order gives the identical codegen win at zero size cost**, so the
+landed change is a pure variant reorder under the default repr. Zero new
+`unsafe`; the contiguity invariant is pinned by a unit test
+(`collectable_variants_are_a_contiguous_range`).
+
+Baseline frozen at `origin/main` (ccb8a3a):
+`harness/bench/results/20260613T043832Z-ccb8a3a-t5a-base.tsv`; candidate
+`20260613T044607Z-ccb8a3a-t5a-cand.tsv`. Per-iteration budgets, `--branch-sim`:
+
+| row | Ir/it base→cand | Bc/it base→cand | total Ir Δ | total Bcm Δ |
+|---|---|---|---|---|
+| table_setfield_same | 183 → **182** (−1) | 30 → 30 (flat) | −0.55% | −2.27% |
+| table_seti_same | 154 → **147** (−7) | 22 → 22 (flat) | −4.54% | −2.48% |
+| method_calls | 1370.84 → **1358.83** (−12.0) | 202.13 → **201.13** (−1) | −0.88% | −33.2% |
+| gc_pressure (control-ish) | n/a (no iter count) | — | −0.22% | −1.84% |
+| fibonacci (control) | n/a | Bc +190 on 11.7e9 = **0.000%** | −1.54% (layout) | +100% (layout) |
+
+**Classification:** instruction-removal (Ir), confirmed layout-immune on
+targets. The per-iteration budgets land on exact integers — these are real
+deleted instructions, not the ±2-3% whole-binary layout floor. Setter rows lose
+Ir with Bc/it flat (the bitmask `mov/lsr/and` work removed without changing
+branch count); `method_calls` additionally loses **−1 Bc/call** — a genuinely
+removed conditional branch on the upvalue-barrier `is_collectable` (the
+layout-immune smoking gun). The fibonacci control's −1.54% Ir is the known
+layout floor (it shares no `is_collectable` code; its Bc is exactly flat at
++190/11.7e9, so no control branch logic moved — not a real win, not a
+regression; its Bcm doubling is a relayout artifact of the predictor model, for
+which Bc not Bcm is the trustworthy axis). Expected-small win (1-4.5% Ir on
+targets), in the predicted direction → KEPT.
+
+Reach of the lever (every callsite the reorder optimizes, from a workspace
+sweep): 5 per-write setter-path callsites (`vm.rs` OP_SET* barriers + `state.rs`
+`raw_set`), 3 upvalue/method-dispatch barriers (`vm.rs` OP_SETUPVAL +
+`state.rs` `upvalue_set`), 3 cold GC-barrier guards. The setter and method
+workloads exercise exactly these.
+
+Gates (full correctness battery — value representation is correctness-critical):
+`cargo test -p lua-types`/`-p lua-vm`/`-p lua-stdlib` green; multiversion_oracle
+**165/165**; GC canaries **all PASS** (incremental + generational, 0 FAIL);
+gc.lua + nextvar.lua + events.lua **PASS plain AND under
+`LUA_RS_GC_QUARANTINE=1`** (GC marking reads the value tags — proves the reorder
+didn't break collectable detection in sweep); `cargo test --workspace` 0 fail;
+`cargo check -p lua-vm --target wasm32-unknown-unknown` green (size assert
+correctly 64-bit-gated); `specs/oracle/check.sh 5.1` 57/0 (the type-tag-sensitive
+version). `size_of::<LuaValue>()` unchanged at 16 B.

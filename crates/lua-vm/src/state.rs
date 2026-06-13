@@ -155,6 +155,14 @@ impl InternedStringMap {
         self.count == 0
     }
 
+    /// Number of hash buckets currently allocated (the power-of-two table
+    /// size, C's `strt.size`). Exposed for the shrink-policy test, which
+    /// asserts the array grows under a flood and shrinks back toward 64 once
+    /// the interned strings are collected.
+    pub fn bucket_count(&self) -> usize {
+        self.buckets.len()
+    }
+
     #[inline]
     pub fn find(&self, bytes: &[u8], hash: u32) -> Option<GcRef<LuaString>> {
         let bucket = &self.buckets[hash as usize & self.mask()];
@@ -184,6 +192,27 @@ impl InternedStringMap {
             for s in bucket {
                 self.buckets[s.hash() as usize & m].push(s);
             }
+        }
+    }
+
+    /// C's `luaS_resize` shrink path, driven by `lgc.c:checkSizes`
+    /// (`if (g->strt.nuse < g->strt.size / 4) luaS_resize(L, size/2)`).
+    /// Shrinks the bucket array when the live load factor falls below 25%
+    /// (`count * 4 < buckets.len()`), down to `next_power_of_two(count)`
+    /// floored at the initial 64 (C's `MINSTRTABSIZE`). The 4× gap is
+    /// hysteresis: a table at load factor just under 1.0 will not thrash,
+    /// since the next grow-then-shrink cycle needs the population to drop
+    /// fourfold first. Rehashing only relocates the surviving
+    /// `GcRef<LuaString>` entries by their cached `hash()`; it never derefs a
+    /// string, so it is safe to call from the post-mark/sweep GC hook AFTER
+    /// all dead entries have been removed (only live refs remain).
+    pub fn shrink_if_sparse(&mut self) {
+        if self.count * 4 >= self.buckets.len() {
+            return;
+        }
+        let target = self.count.next_power_of_two().max(64);
+        if target < self.buckets.len() {
+            self.resize(target);
         }
     }
 
@@ -4535,11 +4564,22 @@ fn record_dead_interned_strings(
     }
 }
 
-/// Sweep-phase half: O(dead) bucket removals by cached hash + identity.
+/// Sweep-phase half: O(dead) bucket removals by cached hash + identity,
+/// then a single batch-end shrink check.
+///
+/// The shrink check runs ONCE per collection here — after every dead entry
+/// for this cycle has been removed, so only live `GcRef<LuaString>`s remain
+/// to rehash — and deliberately NOT inside `remove()`. A per-removal shrink
+/// would rehash O(live) entries on each of the O(dead) removals, turning the
+/// batch into O(live²); deferring to batch end keeps removal O(dead) and adds
+/// one bounded load-factor check per GC cycle. This mirrors C, where
+/// `luaS_remove` only unlinks and the shrink lives in `checkSizes`, called
+/// once per `singlestep`/`fullgc` cycle.
 fn remove_dead_interned_strings(global: &mut GlobalState, dead_pairs: Vec<(u32, usize)>) {
     for (hash, id) in dead_pairs {
         global.interned_lt.remove(hash, id);
     }
+    global.interned_lt.shrink_if_sparse();
 }
 
 impl<'a> GcHandle<'a> {
@@ -6304,6 +6344,70 @@ mod tests {
         state.gc().full_collect();
         assert_eq!(state.global().heap.allgc_count(), 0);
         assert!(state.global().external_roots.is_empty());
+    }
+
+    #[test]
+    fn interned_string_table_grows_then_shrinks_on_collection() {
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+
+        let initial_buckets = state.global().interned_lt.bucket_count();
+        assert_eq!(
+            initial_buckets, 64,
+            "the intern table starts at C's MINSTRTABSIZE-equivalent of 64"
+        );
+        let baseline_live = state.global().interned_lt.len();
+
+        let mut anchors: Vec<GcRef<LuaString>> = Vec::with_capacity(2000);
+        for i in 0..2000usize {
+            let key = format!("intern-shrink-probe-{i:08}");
+            let s = state
+                .intern_str(key.as_bytes())
+                .expect("short string interns");
+            anchors.push(s);
+        }
+
+        let grown_buckets = state.global().interned_lt.bucket_count();
+        assert_eq!(
+            state.global().interned_lt.len(),
+            baseline_live + 2000,
+            "all 2000 distinct short strings are interned and live alongside \
+             the runtime's own rooted strings"
+        );
+        assert!(
+            grown_buckets >= 2048,
+            "interning 2000 strings must force several bucket doublings past \
+             the initial 64 (saw {grown_buckets})"
+        );
+
+        drop(anchors);
+        state.gc().full_collect();
+
+        let shrunk_buckets = state.global().interned_lt.bucket_count();
+        let surviving_live = state.global().interned_lt.len();
+        assert!(
+            surviving_live <= baseline_live,
+            "every probe string is unreachable and must be swept out of the \
+             intern table, leaving at most the runtime's own strings (baseline \
+             {baseline_live}, surviving {surviving_live})"
+        );
+        assert!(
+            surviving_live < 2000,
+            "the 2000 probe strings must not survive collection (surviving \
+             {surviving_live})"
+        );
+        assert_eq!(
+            shrunk_buckets, 64,
+            "the batch-end shrink check must reclaim the stale buckets back to \
+             the 64-bucket floor (saw {shrunk_buckets}, grew to {grown_buckets})"
+        );
+        assert!(
+            shrunk_buckets < grown_buckets,
+            "shrink must strictly reduce the bucket array"
+        );
     }
 
     #[test]

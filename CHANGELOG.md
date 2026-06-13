@@ -4,6 +4,36 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-13
+
+### Fixed
+
+- **GC use-after-sweep on error values escaping into Rust-held errors
+  (#189).** A Lua error raised uncaught through `Lua::scope`, `Chunk::eval`,
+  `Chunk::exec`, or `Function::call` carries its error *value* (the string from
+  `error('boom')`, the table from `error({code=403})`) in the returned error.
+  The value's only Lua-stack root was popped when the protected call's frame
+  unwound, leaving it referenced solely by the Rust-side error — which the
+  collector does not trace — so any collection before the embedder read the
+  message swept it (a use-after-sweep, deterministically caught under
+  `LUA_RS_GC_QUARANTINE`). The public boundaries now pin the error value in the
+  external root set the moment they capture it, and release it when the error is
+  dropped. The value is *preserved* as a real Lua value, so re-raising it
+  through `pcall`/`xpcall` still returns the original table, exactly as before.
+
+### Changed (breaking)
+
+- **`omnilua::Error` is now a struct, not a type alias for `LuaError`.** It
+  wraps the inner `LuaError` plus the GC root anchor described above. It is a
+  drop-in replacement for nearly all uses: it `Deref`s to `LuaError` (so
+  `message_lossy()`, `to_status()`, `into_value()`, and `Display` forward
+  unchanged), implements `From<LuaError>` (so `?` and internally-constructed
+  errors keep working), and implements `std::error::Error`. Code that
+  pattern-matched a returned error against `LuaError::Runtime(..)` /
+  `LuaError::Syntax(..)` should now match on `err.as_lua_error()` (or `kind()`).
+  `lua_types::LuaError` remains re-exported as `omnilua::LuaError` and is
+  unchanged.
+
 ## [0.1.0] - 2026-06-13
 
 ### Changed (rebrand to omniLua, 0.1.0)

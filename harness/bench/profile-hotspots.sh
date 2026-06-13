@@ -12,7 +12,7 @@
 # Prereq: build with frame pointers + debug info, or symbols will be wrong:
 #   CARGO_PROFILE_RELEASE_DEBUG=true \
 #   RUSTFLAGS="-C force-frame-pointers=yes" \
-#     cargo build --release -p lua-cli
+#     cargo build --release -p omnilua-cli
 #
 # Usage:
 #   bash harness/bench/profile-hotspots.sh fibonacci
@@ -29,7 +29,7 @@ cd "$ROOT"
 
 WORKLOAD="${1:?usage: $0 <workload-name> [seconds]}"
 SAMPLE_SECONDS="${2:-${SAMPLE_SECONDS:-6}}"
-RS_BIN="$ROOT/target/release/lua-rs"
+RS_BIN="$ROOT/target/release/omnilua"
 WORKLOAD_FILE="$ROOT/harness/bench/workloads/${WORKLOAD}.lua"
 PROFILE_LUA_EVAL="${PROFILE_LUA_EVAL:-}"
 PROFILE_REPEAT="${PROFILE_REPEAT:-1}"
@@ -39,7 +39,7 @@ case "$PROFILE_REPEAT" in
     0)           echo "[err] PROFILE_REPEAT must be >= 1" >&2; exit 2 ;;
 esac
 
-[ -x "$RS_BIN" ] || { echo "[err] release binary missing: $RS_BIN — run cargo build --release -p lua-cli with frame pointers" >&2; exit 2; }
+[ -x "$RS_BIN" ] || { echo "[err] release binary missing: $RS_BIN — run cargo build --release -p omnilua-cli with frame pointers" >&2; exit 2; }
 if [ -z "$PROFILE_LUA_EVAL" ]; then
     [ -f "$WORKLOAD_FILE" ] || { echo "[err] workload not found: $WORKLOAD_FILE" >&2; exit 2; }
 fi

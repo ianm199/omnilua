@@ -228,7 +228,7 @@ emit "loaded ${#PROGS[@]} test programs (with expected outputs)"
 
 # Make sure binary exists.
 ensure_binary() {
-    cargo build -q -p lua-cli >/dev/null 2>&1
+    cargo build -q -p omnilua-cli >/dev/null 2>&1
 }
 
 # Run one test program with timeout, return its output. The bash-only
@@ -238,7 +238,7 @@ ensure_binary() {
 run_one() {
     local prog="$1"
     local out_file="$2"
-    local bin="target/debug/lua-rs"
+    local bin="target/debug/omnilua"
     if command -v gtimeout >/dev/null 2>&1; then
         gtimeout --signal=KILL "$TEST_TIMEOUT_S" "$bin" "$prog" > "$out_file" 2>&1
     elif command -v timeout >/dev/null 2>&1; then
@@ -482,7 +482,7 @@ $(cat "$per_test_prompt")"
     $timeout_cmd claude -p \
         --model "$model" \
         --append-system-prompt "$(cat PORTING.md)" \
-        --allowedTools "Read,Write,Edit,Glob,Grep,Bash(cargo build*),Bash(cargo check*),Bash(grep *),Bash(rg *),Bash(cat *),Bash(head *),Bash(tail *),Bash(wc *),Bash(find *),Bash(target/debug/lua-rs *),Bash(./harness/run_official_test.sh *)" \
+        --allowedTools "Read,Write,Edit,Glob,Grep,Bash(cargo build*),Bash(cargo check*),Bash(grep *),Bash(rg *),Bash(cat *),Bash(head *),Bash(tail *),Bash(wc *),Bash(find *),Bash(target/debug/omnilua *),Bash(./harness/run_official_test.sh *)" \
         --permission-mode dontAsk \
         --output-format stream-json \
         --include-partial-messages \
@@ -548,7 +548,7 @@ while [ "$OUTER" -lt "$MAX_OUTER" ]; do
         break
     fi
 
-    if ! cargo build -q -p lua-cli 2>"$OUT_DIR/build-O$OUTER.err"; then
+    if ! cargo build -q -p omnilua-cli 2>"$OUT_DIR/build-O$OUTER.err"; then
         emit "  BUILD BROKEN at top of round — abort. See $OUT_DIR/build-O$OUTER.err"
         head -30 "$OUT_DIR/build-O$OUTER.err" | tee -a "$LOG"
         break

@@ -17,4 +17,4 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 lua-types.workspace = true
-lua-rs-runtime.workspace = true
+omnilua.workspace = true

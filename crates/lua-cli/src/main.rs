@@ -1472,6 +1472,22 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 #[global_allocator]
 static FAST_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// Single resolution point for the version-override environment variable.
+///
+/// `OMNILUA_VERSION` is canonical; `LUA_RS_VERSION` is read only as a documented
+/// legacy fallback. Returns the variable name actually consulted alongside its
+/// value so the caller can name the right variable in error messages. Reading
+/// new-else-old keeps one source of truth — no fallback-chain sprawl elsewhere.
+fn resolve_version_override() -> Option<(&'static str, String)> {
+    if let Ok(v) = std::env::var("OMNILUA_VERSION") {
+        return Some(("OMNILUA_VERSION", v));
+    }
+    if let Ok(v) = std::env::var("LUA_RS_VERSION") {
+        return Some(("LUA_RS_VERSION", v));
+    }
+    None
+}
+
 fn main() -> ExitCode {
     #[cfg(feature = "dhat-heap")]
     let _dhat = dhat::Profiler::new_heap();
@@ -1492,14 +1508,14 @@ fn main() -> ExitCode {
 
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<i32, String> {
         let mut state = new_state().ok_or("new_state returned None")?;
-        if let Ok(v) = std::env::var("LUA_RS_VERSION") {
+        if let Some((var_name, v)) = resolve_version_override() {
             let lv = match v.trim() {
                 "5.1" | "51" => lua_types::LuaVersion::V51,
                 "5.2" | "52" => lua_types::LuaVersion::V52,
                 "5.3" | "53" => lua_types::LuaVersion::V53,
                 "5.4" | "54" => lua_types::LuaVersion::V54,
                 "5.5" | "55" => lua_types::LuaVersion::V55,
-                other => return Err(format!("unknown LUA_RS_VERSION: {other}")),
+                other => return Err(format!("unknown {var_name}: {other}")),
             };
             if !lv.is_supported() {
                 return Err(format!(

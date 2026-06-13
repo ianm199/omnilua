@@ -14,7 +14,7 @@
 //! tries to use it after the tick, the call fails cleanly instead of
 //! touching a dangling pointer.
 
-use lua_rs_runtime::{AnyUserData, Lua, Result, UserData, UserDataMethods};
+use omnilua::{AnyUserData, Lua, Result, UserData, UserDataMethods};
 
 /// A component on an entity.
 #[derive(Default)]

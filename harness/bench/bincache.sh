@@ -12,7 +12,7 @@
 #
 # Usage:
 #   BASE=$(bash harness/bench/bincache.sh HEAD~1)
-#   bash harness/bench/compare_bins.sh --a "$BASE" --b target/release/lua-rs ...
+#   bash harness/bench/compare_bins.sh --a "$BASE" --b target/release/omnilua ...
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -28,6 +28,6 @@ mkdir -p "$CACHE_DIR"
 WT="$CACHE_DIR/wt-$SHA"
 trap 'git worktree remove --force "$WT" >/dev/null 2>&1 || true' EXIT
 git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1
-( cd "$WT" && cargo build --release -p lua-cli -q )
-cp "$WT/target/release/lua-rs" "$BIN"
+( cd "$WT" && cargo build --release -p omnilua-cli -q )
+cp "$WT/target/release/omnilua" "$BIN"
 echo "$BIN"

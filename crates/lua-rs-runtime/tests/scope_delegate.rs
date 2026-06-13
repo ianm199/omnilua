@@ -12,7 +12,7 @@
 //!
 //! These tests pin the API shape and the invariants that fall out of it.
 
-use lua_rs_runtime::{AnyUserData, Lua, UserData, UserDataMethods};
+use omnilua::{AnyUserData, Lua, UserData, UserDataMethods};
 
 /// Run `body` inside Lua-side `pcall` and return the error message as a
 /// `String`. `LuaError::Runtime` wraps the message in an opaque `LuaValue`

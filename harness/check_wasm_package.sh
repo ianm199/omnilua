@@ -17,12 +17,12 @@ export RUSTFLAGS="${RUSTFLAGS:--Awarnings}"
 
 echo "[wasm] checking JS syntax"
 node --check harness/check_release_versions.mjs
-node --check packages/lua-rs-wasm/index.mjs
-node --check packages/lua-rs-wasm/node.mjs
-node --check packages/lua-rs-wasm/scripts/build-wasm.mjs
-node --check packages/lua-rs-wasm/scripts/smoke.mjs
-node --check packages/lua-rs-wasm/scripts/install-smoke.mjs
-node --check packages/lua-rs-wasm/scripts/registry-smoke.mjs
+node --check packages/omnilua/index.mjs
+node --check packages/omnilua/node.mjs
+node --check packages/omnilua/scripts/build-wasm.mjs
+node --check packages/omnilua/scripts/smoke.mjs
+node --check packages/omnilua/scripts/install-smoke.mjs
+node --check packages/omnilua/scripts/registry-smoke.mjs
 node --check harness/wasm/runtime-smoke.mjs
 node --check harness/wasm/unknown-smoke.mjs
 node --check harness/wasm/browser-smoke.mjs
@@ -32,33 +32,33 @@ node harness/check_release_versions.mjs
 
 echo "[wasm] checking Rust crates for wasm32-unknown-unknown"
 cargo check --target wasm32-unknown-unknown \
-  -p lua-rs-runtime \
+  -p omnilua \
   -p lua-wasm \
   -p lua-wasm-smoke
 
 echo "[wasm] building packaged wasm artifact"
-npm run build:wasm --prefix packages/lua-rs-wasm
+npm run build:wasm --prefix packages/omnilua
 
 echo "[wasm] building low-level wasm smoke artifact"
 cargo build --target wasm32-unknown-unknown -p lua-wasm-smoke --release
 
 echo "[wasm] checking generated wasm git hygiene"
-if ! git check-ignore -q packages/lua-rs-wasm/dist/lua_wasm.wasm; then
+if ! git check-ignore -q packages/omnilua/dist/lua_wasm.wasm; then
   echo "[wasm] FAIL: generated dist/lua_wasm.wasm should be ignored by git" >&2
   exit 1
 fi
 
 echo "[wasm] running package smoke"
-npm test --prefix packages/lua-rs-wasm
+npm test --prefix packages/omnilua
 
 echo "[wasm] running tarball install smoke"
-npm run test:install --prefix packages/lua-rs-wasm
+npm run test:install --prefix packages/omnilua
 
 echo "[wasm] checking npm package contents"
 PACK_LOG="$(mktemp)"
 PACK_JSON="$(mktemp)"
 trap 'rm -f "$PACK_LOG" "$PACK_JSON"' EXIT
-npm pack --dry-run --json ./packages/lua-rs-wasm >"$PACK_LOG"
+npm pack --dry-run --json ./packages/omnilua >"$PACK_LOG"
 awk 'found || /^\[/ { found=1; print }' "$PACK_LOG" >"$PACK_JSON"
 node -e '
 const fs = require("node:fs");

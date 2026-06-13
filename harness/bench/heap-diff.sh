@@ -79,9 +79,9 @@ build_and_run() {
 
     echo "[heap-diff] ($label) building --features dhat-heap in $srcdir" >&2
     ( cd "$srcdir" && CARGO_TARGET_DIR="$tgt" \
-        cargo build --release -p lua-cli --features dhat-heap -q ) >&2
+        cargo build --release -p omnilua-cli --features dhat-heap -q ) >&2
 
-    local bin="$tgt/release/lua-rs"
+    local bin="$tgt/release/omnilua"
     [ -x "$bin" ] || { echo "[err] $label binary missing: $bin" >&2; return 3; }
 
     local rundir="$SCRATCH/run-$label"

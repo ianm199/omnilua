@@ -4,7 +4,7 @@
 //! a private field.
 
 use lua_rs_derive::{lua_methods, LuaUserData};
-use lua_rs_runtime::Lua;
+use omnilua::Lua;
 
 // ---------------------------------------------------------------------------
 // Case 1 (issue #56): a struct with a private, non-`Clone` field derives

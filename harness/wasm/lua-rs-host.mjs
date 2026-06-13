@@ -1,1 +1,1 @@
-export * from "../../packages/lua-rs-wasm/index.mjs";
+export * from "../../packages/omnilua/index.mjs";

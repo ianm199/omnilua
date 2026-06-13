@@ -13,7 +13,7 @@
 //! `LUA_COMPAT_GLOBAL`) and the 5.5 bytecode shape (ivABC, GETVARG, ERRNNIL,
 //! SHRI/SHLI swap) are NOT yet ported. See that spec for the remaining work.
 
-use lua_rs_runtime::{Lua, LuaVersion, Value};
+use omnilua::{Lua, LuaVersion, Value};
 
 #[test]
 fn v55_reports_its_version() {

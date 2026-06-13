@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const cargoToml = await readFile("Cargo.toml", "utf8");
-const packageJson = JSON.parse(await readFile("packages/lua-rs-wasm/package.json", "utf8"));
+const packageJson = JSON.parse(await readFile("packages/omnilua/package.json", "utf8"));
 
 const workspaceVersion = matchRequired(
   cargoToml,
@@ -12,7 +12,7 @@ const workspaceVersion = matchRequired(
 
 if (packageJson.version !== workspaceVersion) {
   fail(
-    `packages/lua-rs-wasm/package.json version ${packageJson.version} does not match workspace ${workspaceVersion}`,
+    `packages/omnilua/package.json version ${packageJson.version} does not match workspace ${workspaceVersion}`,
   );
 }
 

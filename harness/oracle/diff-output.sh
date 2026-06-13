@@ -18,7 +18,7 @@ NAME="$(basename "$PROG" .lua)"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RESULTS="$ROOT/harness/oracle/results"
 C_LUA="$ROOT/reference/lua-5.4.7/src/lua"
-RUST_LUA="$ROOT/target/release/lua-rs"
+RUST_LUA="$ROOT/target/release/omnilua"
 
 mkdir -p "$RESULTS"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Differential oracle: run ONE Lua snippet through version-selected lua-rs and
+# Differential oracle: run ONE Lua snippet through version-selected omnilua and
 # the matching reference C binary; print MATCH or a DIFF block. Normalizes
 # program-name paths and heap addresses (known noise). The CALLER must avoid
 # nondeterministic snippets (unseeded random, os.time/clock) or treat such DIFFs
@@ -9,7 +9,7 @@ set -uo pipefail
 ver="${1:?usage: diff_one.sh <5.3|5.4|5.5> <luacode>}"; shift; code="$*"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RS="${LUA_RS_BIN:-$ROOT/target/debug/lua-rs}"
+RS="${LUA_RS_BIN:-$ROOT/target/debug/omnilua}"
 
 choose_ref() {
   local local_ref="$1" tmp_ref="$2"
@@ -29,11 +29,11 @@ case "$ver" in
   *) echo "unknown version $ver"; exit 2 ;;
 esac
 [ -x "$ref" ] || { echo "missing reference binary $ref"; exit 2; }
-[ -x "$RS" ] || { echo "missing $RS (cargo build -p lua-cli)"; exit 2; }
-norm(){ sed -E -e 's#[^ ]*/lua-rs#PROG#g' -e 's#[^ ]*/lua5\.[0-9.]+#PROG#g' \
+[ -x "$RS" ] || { echo "missing $RS (cargo build -p omnilua-cli)"; exit 2; }
+norm(){ sed -E -e 's#[^ ]*/omnilua#PROG#g' -e 's#[^ ]*/lua5\.[0-9.]+#PROG#g' \
                 -e 's#(table|function|userdata|thread): (builtin: )?0x[0-9a-fA-F]+#\1: ADDR#g' \
                 -e 's#0x[0-9a-fA-F]{6,}#ADDR#g'; }
-a=$(LUA_RS_VERSION="$ver" "$RS" -e "$code" 2>&1); ae=$?
+a=$(OMNILUA_VERSION="$ver" "$RS" -e "$code" 2>&1); ae=$?
 b=$("$ref" -e "$code" 2>&1); be=$?
 na=$(printf '%s' "$a" | norm); nb=$(printf '%s' "$b" | norm)
 if [ "$na" = "$nb" ] && [ "$ae" = "$be" ]; then

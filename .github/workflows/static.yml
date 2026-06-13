@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: "22"
       - name: Build wasm playground artifact
-        run: node packages/lua-rs-wasm/scripts/build-wasm.mjs
+        run: node packages/omnilua/scripts/build-wasm.mjs
       # The build dir is huge and not part of the site; the only artifact we
       # need (dist/lua_wasm.wasm) was copied out of it by build-wasm.mjs.
       - name: Drop build dir from the Pages upload

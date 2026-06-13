@@ -35,8 +35,8 @@ default_tests_dir() {
 }
 
 TEST_TIMEOUT_S=${TEST_TIMEOUT_S:-60}
-BIN="${LUA_RS_BIN:-$ROOT/target/debug/lua-rs}"
-VERSION="${LUA_RS_VERSION:-5.4}"
+BIN="${LUA_RS_BIN:-$ROOT/target/debug/omnilua}"
+VERSION="${OMNILUA_VERSION:-5.4}"
 TESTES_DIR=""
 
 while [ $# -gt 0 ]; do
@@ -103,7 +103,7 @@ PREAMBLE_EXPR="_soft=true; _port=true; _nomsg=true; _U=false; arg=arg or {}; _G=
 
 export LUA_PATH="$TESTES_DIR/?.lua;$TESTES_DIR/?/init.lua;./?.lua;./?/init.lua"
 export LUA_RS_VERBOSE=1
-export LUA_RS_VERSION="$VERSION"
+export OMNILUA_VERSION="$VERSION"
 
 pass=0; fail=0; timeout=0
 declare -a FAILED
@@ -162,7 +162,7 @@ for test_file in "$TESTES_DIR"/*.lua; do
         if [ -z "$msg" ]; then
             msg=$(awk 'NF { print; exit }' "$outfile")
         fi
-        msg=$(printf '%s' "$msg" | sed -E "s#$ROOT/##g; s#.*target/debug/lua-rs: #lua-rs: #" | cut -c1-140)
+        msg=$(printf '%s' "$msg" | sed -E "s#$ROOT/##g; s#.*target/debug/omnilua: #omnilua: #" | cut -c1-140)
         printf "  %-20s FAIL  %s\n" "$base" "$msg"
         printf '%s\tFAIL\t%s\n' "$base" "$msg" >> "$TSV"
     fi

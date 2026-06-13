@@ -32,7 +32,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---- COMMON: default binaries -------------------------------------------------
-LUA_RS_BIN="${LUA_RS_BIN:-$ROOT/target/debug/lua-rs}"
+LUA_RS_BIN="${LUA_RS_BIN:-$ROOT/target/debug/omnilua}"
 REF="${REF:-$ROOT/reference/lua-5.4.7/src/lua}"
 TESTES="$ROOT/reference/lua-c/testes"
 
@@ -46,7 +46,7 @@ OUTDIR="${TMPDIR:-/tmp}"
 
 if [ ! -x "$LUA_RS_BIN" ]; then
   echo "ERROR: lua-rs binary not found/executable: $LUA_RS_BIN" >&2
-  echo "       build it with: cargo build -p lua-cli -q" >&2
+  echo "       build it with: cargo build -p omnilua-cli -q" >&2
   exit 126
 fi
 if [ ! -x "$REF" ]; then

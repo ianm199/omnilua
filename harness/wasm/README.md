@@ -30,7 +30,7 @@ Verify the npm-package shape, including a tarball install into a temporary
 project:
 
 ```bash
-npm run test:install --prefix packages/lua-rs-wasm
+npm run test:install --prefix packages/omnilua
 ```
 
 Run the full WASM/package gate:
@@ -42,7 +42,7 @@ Run the full WASM/package gate:
 Set `WASM_SKIP_BROWSER=1` to skip the Chrome/Chromium smoke on headless systems
 that cannot launch a browser.
 
-`packages/lua-rs-wasm` is the reusable JS side of the harness. Its root export
+`packages/omnilua` is the reusable JS side of the harness. Its root export
 has no Node imports, so the same runtime wrapper can be used from a browser
 embedder after it has fetched or bundled the `.wasm` bytes. It also exposes
 `lua-rs-wasm/node` as a Node-only convenience helper that reads the packaged

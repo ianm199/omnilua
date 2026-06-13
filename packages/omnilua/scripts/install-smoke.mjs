@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = new URL("../", import.meta.url);
 const packageRootPath = fileURLToPath(packageRoot);
-const tempRoot = await mkdtemp(join(tmpdir(), "lua-rs-wasm-install-"));
+const tempRoot = await mkdtemp(join(tmpdir(), "omnilua-install-"));
 const packDir = join(tempRoot, "pack");
 const appDir = join(tempRoot, "app");
 
@@ -56,7 +56,7 @@ try {
   await writeFile(
     join(appDir, "smoke.mjs"),
 `
-import { loadLuaRsNode } from "lua-rs-wasm/node";
+import { loadLuaRsNode } from "omnilua/node";
 
 const { lua } = await loadLuaRsNode({
   env: { LUA_PATH_5_4: "./?.lua" },
@@ -84,7 +84,7 @@ if (!lua.outputText().includes("installed package smoke 42")) {
 `,
   );
   run("node", ["smoke.mjs"], { cwd: appDir });
-  console.log("lua-rs-wasm install smoke ok");
+  console.log("omnilua install smoke ok");
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }

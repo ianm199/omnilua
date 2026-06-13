@@ -62,10 +62,10 @@ record() {
 run_test() {
     # Build first so cargo build noise doesn't push the runner past the
     # 20s budget; then exec the binary directly so we can kill it cleanly.
-    cargo build -q -p lua-cli >/dev/null 2>&1
-    local bin="target/debug/lua-rs"
+    cargo build -q -p omnilua-cli >/dev/null 2>&1
+    local bin="target/debug/omnilua"
     if [ ! -x "$bin" ]; then
-        cargo run -q -p lua-cli -- "$TEST_PROG" 2>&1
+        cargo run -q -p omnilua-cli -- "$TEST_PROG" 2>&1
         return
     fi
     if command -v gtimeout >/dev/null 2>&1; then
@@ -205,7 +205,7 @@ Process:
        parameter shape as the trait method.
      - If a free function `<name>(state, ...)` already exists in api.rs,
        the inherent method should just call it.
-   Verify by `cargo build -p lua-cli` — no edits to state_stub.rs needed.
+   Verify by `cargo build -p omnilua-cli` — no edits to state_stub.rs needed.
 
 2. Read the C source for context. The canonical mapping is in
    ANALYSES/file_deps.txt; typical Lua functions live in:
@@ -227,7 +227,7 @@ Process:
    into implementing those; the loop catches them next iteration.
 
 5. After your edits:
-   cargo build -p lua-cli 2>&1 | tail -20
+   cargo build -p omnilua-cli 2>&1 | tail -20
    to verify they compile. If they don't compile, fix until they do.
    THEN stop. Do NOT actually try to run the program — the loop will.
 
@@ -275,7 +275,7 @@ Report (under 250 words):
 - One-line summary of what \`$func\` now does.
 - List of FAMILY MEMBERS you ALSO implemented in this session (name + one-line each).
 - Any todo!() calls inside your new impls that will surface next.
-- Whether cargo build -p lua-cli is green after your edits."
+- Whether cargo build -p omnilua-cli is green after your edits."
 
     export CLAUDE_CONFIG_DIR="$HOME/.claude-personal"
     unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
@@ -335,7 +335,7 @@ $recent_output
 
 3. Add temporary eprintln!() instrumentation if needed to localize
    which call returns the unexpected value. After each batch:
-     cargo run -q -p lua-cli -- '$TEST_PROG' 2>&1 | grep -E '^\\[' | head -25
+     cargo run -q -p omnilua-cli -- '$TEST_PROG' 2>&1 | grep -E '^\\[' | head -25
    Iterate until you isolate the buggy function.
 
 4. Identify the root cause. Likely categories:
@@ -408,7 +408,7 @@ for ITER in $(seq 1 $MAX_ITER); do
     emit "─── iter $ITER  (spent: \$$TOTAL_COST) ───"
 
     # Build check (cheap, catches uncommitted broken state)
-    if ! cargo build -q -p lua-cli 2>"$OUT_DIR/iter-$ITER.build.err"; then
+    if ! cargo build -q -p omnilua-cli 2>"$OUT_DIR/iter-$ITER.build.err"; then
         emit "  cargo build broke at iter $ITER — reverting to last commit"
         git reset --hard HEAD >/dev/null 2>&1
         record "build_broke" "iter=$ITER"

@@ -93,7 +93,7 @@ fn traceback_body(s: &str) -> Option<&str> {
 }
 
 fn lua_rs() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_lua-rs"))
+    Command::new(env!("CARGO_BIN_EXE_omnilua"))
 }
 
 fn reference_binary(version: &str) -> Option<PathBuf> {

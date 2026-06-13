@@ -56,8 +56,8 @@ finding() { findings=$((findings+1)); printf 'FINDING: %s\n' "$*"; }
 REPRO_SET=(db gc gengc coroutine locals calls closure errors)
 STRESS_REPRO_SET=(db coroutine locals)
 
-cargo build -p lua-cli -q || { echo "debug build failed" >&2; exit 2; }
-BIN="$ROOT/target/debug/lua-rs"
+cargo build -p omnilua-cli -q || { echo "debug build failed" >&2; exit 2; }
+BIN="$ROOT/target/debug/omnilua"
 
 run_capture() {
     local outfile="$1"; shift
@@ -167,9 +167,9 @@ if [ "$ASAN" = "1" ]; then
         WT="$CACHE_DIR/wt-asan-$SHA"
         trap 'git worktree remove --force "$WT" >/dev/null 2>&1 || true' EXIT
         git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || { echo "worktree add failed (dirty tree? commit first)" >&2; exit 2; }
-        ( cd "$WT" && RUSTFLAGS=-Zsanitizer=address cargo +nightly build -p lua-cli --target "$HOST_TRIPLE" -q ) \
+        ( cd "$WT" && RUSTFLAGS=-Zsanitizer=address cargo +nightly build -p omnilua-cli --target "$HOST_TRIPLE" -q ) \
             || { echo "ASAN build failed" >&2; exit 2; }
-        cp "$WT/target/$HOST_TRIPLE/debug/lua-rs" "$ASAN_BIN"
+        cp "$WT/target/$HOST_TRIPLE/debug/omnilua" "$ASAN_BIN"
         git worktree remove --force "$WT" >/dev/null 2>&1 || true
     fi
     for stress in 0 1; do

@@ -20,31 +20,31 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.33"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
-description = "A Lua 5.4 interpreter implemented in safe Rust."
-repository = "https://github.com/ianm199/lua-rs"
-homepage = "https://github.com/ianm199/lua-rs"
-authors = ["lua-rs contributors"]
+description = "Every Lua, everywhere — pure-Rust Lua 5.1–5.5, suite-passing, LuaRocks-compatible, wasm-ready."
+repository = "https://github.com/ianm199/omnilua"
+homepage = "https://github.com/ianm199/omnilua"
+authors = ["omniLua contributors"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.dependencies]
-lua-types   = { path = "crates/lua-types", version = "0.0.33" }
-lua-lex     = { path = "crates/lua-lex", version = "0.0.33" }
-lua-parse   = { path = "crates/lua-parse", version = "0.0.33" }
-lua-code    = { path = "crates/lua-code", version = "0.0.33" }
-lua-vm      = { path = "crates/lua-vm", version = "0.0.33" }
-lua-stdlib  = { path = "crates/lua-stdlib", version = "0.0.33" }
-lua-gc      = { path = "crates/lua-gc", version = "0.0.33" }
-lua-coro    = { path = "crates/lua-coro", version = "0.0.33" }
-lua-rs-lfs  = { path = "crates/lua-rs-lfs", version = "0.0.33" }
-lua-rs-runtime = { path = "crates/lua-rs-runtime", version = "0.0.33" }
-lua-rs-derive = { path = "crates/lua-rs-derive", version = "0.0.33" }
-lua-wasm = { path = "crates/lua-wasm", version = "0.0.33" }
+lua-types   = { path = "crates/lua-types", version = "0.1.0" }
+lua-lex     = { path = "crates/lua-lex", version = "0.1.0" }
+lua-parse   = { path = "crates/lua-parse", version = "0.1.0" }
+lua-code    = { path = "crates/lua-code", version = "0.1.0" }
+lua-vm      = { path = "crates/lua-vm", version = "0.1.0" }
+lua-stdlib  = { path = "crates/lua-stdlib", version = "0.1.0" }
+lua-gc      = { path = "crates/lua-gc", version = "0.1.0" }
+lua-coro    = { path = "crates/lua-coro", version = "0.1.0" }
+lua-rs-lfs  = { path = "crates/lua-rs-lfs", version = "0.1.0" }
+omnilua     = { path = "crates/lua-rs-runtime", version = "0.1.0" }
+lua-rs-derive = { path = "crates/lua-rs-derive", version = "0.1.0" }
+lua-wasm = { path = "crates/lua-wasm", version = "0.1.0" }
 
 [profile.release]
 opt-level = 3

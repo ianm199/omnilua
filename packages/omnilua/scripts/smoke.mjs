@@ -29,4 +29,4 @@ if (!lua.outputText().includes("package smoke 42")) {
   throw new Error(`missing package smoke output: ${JSON.stringify(lua.outputText())}`);
 }
 
-console.log("lua-rs-wasm package smoke ok");
+console.log("omnilua package smoke ok");

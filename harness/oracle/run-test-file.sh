@@ -16,7 +16,7 @@ TEST="$1"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TESTS_DIR="$ROOT/reference/lua-5.4.7-tests"
 RESULTS="$ROOT/harness/oracle/results"
-RUST_LUA="$ROOT/target/release/lua-rs"
+RUST_LUA="$ROOT/target/release/omnilua"
 
 mkdir -p "$RESULTS"
 

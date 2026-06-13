@@ -27,7 +27,7 @@
 #   - Raw per-pair samples land in a .raw.tsv sidecar for re-analysis.
 #
 # Usage:
-#   bash harness/bench/compare_bins.sh --a /tmp/lua-rs-base --b target/release/lua-rs \
+#   bash harness/bench/compare_bins.sh --a /tmp/lua-rs-base --b target/release/omnilua \
 #     --label-a base --label-b candidate --runs 10 --workloads gc_pressure,binarytrees
 #   bash harness/bench/compare_bins.sh --a ... --b ... --gate     # fail on material regression
 #   bash harness/bench/compare_bins.sh --a ... --b ... --quick    # exploratory: 5 runs, 0.3s floor

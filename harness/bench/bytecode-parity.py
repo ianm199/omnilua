@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LUAC = ROOT / "reference/lua-5.4.7/src/luac"
-LUARS = ROOT / "target/release/lua-rs"
+LUARS = ROOT / "target/release/omnilua"
 ALLOW = Path(__file__).parent / "bytecode-parity-allow.txt"
 
 LUAC_RE = re.compile(r"^\t\d+\t\[\d+\]\t([A-Z0-9]+)")

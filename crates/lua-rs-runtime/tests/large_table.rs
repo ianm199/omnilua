@@ -4,7 +4,7 @@
 //! "not enough memory" regardless of available memory. These build tables an
 //! order of magnitude larger and assert they succeed.
 
-use lua_rs_runtime::Lua;
+use omnilua::Lua;
 
 #[test]
 fn two_million_entry_array_builds() {

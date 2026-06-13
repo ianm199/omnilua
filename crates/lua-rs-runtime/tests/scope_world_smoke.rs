@@ -15,7 +15,7 @@
 //! API that looks like real Bevy. If the API ever drifts, this test
 //! flags it before users do.
 
-use lua_rs_runtime::{Lua, LuaError, MetaMethod, UserData, UserDataMethods, Value};
+use omnilua::{Lua, LuaError, MetaMethod, UserData, UserDataMethods, Value};
 use std::collections::HashMap;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]

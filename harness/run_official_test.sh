@@ -26,8 +26,8 @@ normalize_version() {
 }
 
 TEST_TIMEOUT_S=${TEST_TIMEOUT_S:-30}
-BIN="${LUA_RS_BIN:-$ROOT/target/debug/lua-rs}"
-VERSION="${LUA_RS_VERSION:-5.4}"
+BIN="${LUA_RS_BIN:-$ROOT/target/debug/omnilua}"
+VERSION="${OMNILUA_VERSION:-5.4}"
 TESTES_DIR=""
 
 while [ $# -gt 0 ]; do
@@ -115,7 +115,7 @@ PREAMBLE_EXPR="_soft=true; _port=true; _nomsg=true; _U=false; arg=arg or {}; _G=
 } > "$COMBINED"
 
 export LUA_PATH="$TESTES_DIR/?.lua;$TESTES_DIR/?/init.lua;./?.lua;./?/init.lua"
-export LUA_RS_VERSION="$VERSION"
+export OMNILUA_VERSION="$VERSION"
 
 run_with_timeout() {
     local src_file="$1"

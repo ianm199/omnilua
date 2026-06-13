@@ -9,7 +9,7 @@
 # Exit code is always 0 (status carried in stdout) so callers can read it
 # under `set -e`.
 #
-# Honours TEST_TIMEOUT_S (default 20). Requires target/debug/lua-rs.
+# Honours TEST_TIMEOUT_S (default 20). Requires target/debug/omnilua.
 
 set -uo pipefail
 
@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 TEST_TIMEOUT_S=${TEST_TIMEOUT_S:-20}
-BIN="$ROOT/target/debug/lua-rs"
+BIN="$ROOT/target/debug/omnilua"
 OUT_DIR="harness/impl/official"
 mkdir -p "$OUT_DIR"
 

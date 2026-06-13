@@ -91,8 +91,8 @@ C_BIN="$C_COUNT_DIR/src/lua"
 
 if [ -z "$RS_BIN" ]; then
     echo "[setup] building lua-rs with --features dhat-heap" >&2
-    cargo build --release -p lua-cli --features dhat-heap -q
-    RS_BIN="$ROOT/target/release/lua-rs"
+    cargo build --release -p omnilua-cli --features dhat-heap -q
+    RS_BIN="$ROOT/target/release/omnilua"
 fi
 
 N=200000

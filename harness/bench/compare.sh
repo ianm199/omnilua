@@ -35,7 +35,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 REF_BIN="$ROOT/reference/lua-5.4.7/src/lua"
-RS_BIN="$ROOT/target/release/lua-rs"
+RS_BIN="$ROOT/target/release/omnilua"
 WORKLOAD_DIR="$ROOT/harness/bench/workloads"
 OUT_DIR="$ROOT/harness/bench/results"
 mkdir -p "$OUT_DIR"
@@ -70,7 +70,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -x "$REF_BIN" ] || { echo "[err] reference binary missing: $REF_BIN — run 'make macosx -C reference/lua-5.4.7' first" >&2; exit 2; }
-[ -x "$RS_BIN" ]  || { echo "[err] lua-rs release binary missing: $RS_BIN — run 'cargo build --release -p lua-cli'" >&2; exit 2; }
+[ -x "$RS_BIN" ]  || { echo "[err] lua-rs release binary missing: $RS_BIN — run 'cargo build --release -p omnilua-cli'" >&2; exit 2; }
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")

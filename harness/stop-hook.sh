@@ -14,7 +14,7 @@
 #   2. Gating hooks rerun (unsafe-budget, forbidden-import,
 #      type-vocabulary, trailer-required) on the .rs files this agent
 #      modified — the existing commit-on-stop.sh behaviour we preserve.
-#   3. cargo build -p lua-cli -q. Build broken → reject.
+#   3. cargo build -p omnilua-cli -q. Build broken → reject.
 #   4. Smoke set of 6 fixed tests + the optional AGENT_TARGET_PROG. Each
 #      compared against harness/baseline-smoke.tsv. Previously-PASS test
 #      now non-PASS → reject. New PASS for a previously-non-PASS test →
@@ -91,7 +91,7 @@ fi
 
 mkdir -p "$ROOT/harness/impl"
 BUILD_ERR="$ROOT/harness/impl/stop-build.err"
-if ! cargo build -p lua-cli -q 2>"$BUILD_ERR"; then
+if ! cargo build -p omnilua-cli -q 2>"$BUILD_ERR"; then
     echo "[stop-hook] BUILD BROKEN — rejecting commit. See $BUILD_ERR" >&2
     tail -n 10 "$BUILD_ERR" >&2 || true
     exit 1

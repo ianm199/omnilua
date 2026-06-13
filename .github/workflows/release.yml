@@ -67,8 +67,8 @@ jobs:
           }
           for c in \
             lua-gc lua-types lua-vm lua-code lua-coro lua-lex lua-parse \
-            lua-rs-lfs lua-stdlib lua-rs-derive lua-rs-runtime \
-            lua-rs-hlua-shim lua-cli; do
+            lua-rs-lfs lua-stdlib lua-rs-derive omnilua \
+            lua-rs-hlua-shim omnilua-cli; do
             if published "$c"; then
               echo "already on crates.io, skipping: $c@$ver"
               continue
@@ -79,7 +79,7 @@ jobs:
           done
 
   publish-wasm:
-    name: publish lua-rs-wasm
+    name: publish omnilua (npm)
     needs: verify
     uses: ./.github/workflows/npm-publish-wasm.yml
     with:

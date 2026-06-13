@@ -8,7 +8,7 @@ const packageJson = JSON.parse(await readFile(new URL("package.json", packageRoo
 const specifier = process.argv[2] ?? `${packageJson.name}@${packageJson.version}`;
 const attempts = Number(process.env.LUA_RS_WASM_REGISTRY_SMOKE_ATTEMPTS ?? "12");
 const delayMs = Number(process.env.LUA_RS_WASM_REGISTRY_SMOKE_DELAY_MS ?? "5000");
-const tempRoot = await mkdtemp(join(tmpdir(), "lua-rs-wasm-registry-"));
+const tempRoot = await mkdtemp(join(tmpdir(), "omnilua-registry-"));
 const appDir = join(tempRoot, "app");
 
 function run(command, args, options = {}) {
@@ -62,7 +62,7 @@ try {
   await writeFile(
     join(appDir, "smoke.mjs"),
 `
-import { loadLuaRsNode } from "lua-rs-wasm/node";
+import { loadLuaRsNode } from "omnilua/node";
 
 const { lua } = await loadLuaRsNode({
   env: { LUA_PATH_5_4: "./?.lua" },
@@ -90,7 +90,7 @@ if (!lua.outputText().includes("registry package smoke 42")) {
 `,
   );
   requireSuccess(run("node", ["smoke.mjs"], { cwd: appDir }), "node smoke.mjs");
-  console.log(`lua-rs-wasm registry smoke ok (${specifier})`);
+  console.log(`omnilua registry smoke ok (${specifier})`);
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }

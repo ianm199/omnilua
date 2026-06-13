@@ -1,7 +1,7 @@
 {
-  "name": "lua-rs-wasm",
-  "version": "0.0.33",
-  "description": "Browser and JS host wrapper for the lua-rs wasm32 runtime.",
+  "name": "omnilua",
+  "version": "0.1.0",
+  "description": "Every Lua, everywhere — pure-Rust Lua 5.1–5.5, suite-passing, LuaRocks-compatible, wasm-ready.",
   "type": "module",
   "exports": {
     ".": "./index.mjs",
@@ -24,8 +24,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ianm199/lua-rs.git",
-    "directory": "packages/lua-rs-wasm"
+    "url": "git+https://github.com/ianm199/omnilua.git",
+    "directory": "packages/omnilua"
   },
   "keywords": [
     "lua",

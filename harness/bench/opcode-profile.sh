@@ -3,7 +3,7 @@
 #
 # This is telemetry, not a ledgered benchmark. It builds lua-rs with the
 # opt-in `opcode-profile` feature, which instruments the dispatch loop and
-# overwrites target/release/lua-rs with the instrumented binary. Rebuild a
+# overwrites target/release/omnilua with the instrumented binary. Rebuild a
 # normal release binary before running compare.sh afterward.
 #
 # Usage:
@@ -18,7 +18,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 WORKLOAD="${1:?usage: $0 <workload-name>}"
-RS_BIN="$ROOT/target/release/lua-rs"
+RS_BIN="$ROOT/target/release/omnilua"
 WORKLOAD_FILE="$ROOT/harness/bench/workloads/${WORKLOAD}.lua"
 PROFILE_LUA_EVAL="${PROFILE_LUA_EVAL:-}"
 PROFILE_REPEAT="${PROFILE_REPEAT:-1}"
@@ -48,7 +48,7 @@ mkdir -p "$OUT_DIR"
 echo "==> building instrumented lua-rs (--features opcode-profile)" >&2
 CARGO_PROFILE_RELEASE_DEBUG=true \
 RUSTFLAGS="-C force-frame-pointers=yes" \
-    cargo build --release -p lua-cli --features opcode-profile
+    cargo build --release -p omnilua-cli --features opcode-profile
 
 export LUA_RS_OPCODE_PROFILE="$OUT_DIR/opcodes.tsv"
 

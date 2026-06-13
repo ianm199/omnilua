@@ -8,7 +8,7 @@
 //!   cargo test -p lua-rs-runtime --features derive --test scope_with_derive
 #![cfg(feature = "derive")]
 
-use lua_rs_runtime::{lua_methods, AnyUserData, Lua, LuaUserData, UserData, UserDataMethods};
+use omnilua::{lua_methods, AnyUserData, Lua, LuaUserData, UserData, UserDataMethods};
 
 /// Child type: all of its Lua methods are macro-generated.
 #[derive(LuaUserData)]

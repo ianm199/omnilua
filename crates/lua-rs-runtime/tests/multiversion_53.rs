@@ -9,7 +9,7 @@
 //! full 5.3 surface (RNG, for-loop wrap, coercion, error wording, etc.) is
 //! not yet ported. See that spec for the remaining work.
 
-use lua_rs_runtime::{Lua, LuaVersion, Value};
+use omnilua::{Lua, LuaVersion, Value};
 
 #[test]
 fn v53_reports_its_version() {

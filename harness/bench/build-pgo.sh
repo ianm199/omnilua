@@ -10,7 +10,7 @@
 # only reproducible if the training set is pinned (PERF_PUSH_SPEC risk note).
 #
 # Usage:
-#   bash harness/bench/build-pgo.sh            # leaves target/release/lua-rs PGO'd
+#   bash harness/bench/build-pgo.sh            # leaves target/release/omnilua PGO'd
 #   PGO_DIR=/tmp/lua-pgo-alt bash harness/bench/build-pgo.sh
 #
 # The caller is responsible for saving a stock binary first and A/B-ing via
@@ -31,8 +31,8 @@ rm -rf "$PGO_DIR"
 mkdir -p "$PGO_DIR"
 
 echo "=== [1/4] instrumented build ===" >&2
-RUSTFLAGS="-Cprofile-generate=$PGO_DIR" cargo build --release -p lua-cli -q
-BIN="$ROOT/target/release/lua-rs"
+RUSTFLAGS="-Cprofile-generate=$PGO_DIR" cargo build --release -p omnilua-cli -q
+BIN="$ROOT/target/release/omnilua"
 
 echo "=== [2/4] training run ===" >&2
 export LLVM_PROFILE_FILE="$PGO_DIR/%p-%m.profraw"
@@ -61,7 +61,7 @@ echo "=== [3/4] merge profiles ===" >&2
 echo "    $(ls "$PGO_DIR"/*.profraw | wc -l | tr -d ' ') profraw files merged" >&2
 
 echo "=== [4/4] optimized rebuild ===" >&2
-RUSTFLAGS="-Cprofile-use=$PGO_DIR/merged.profdata" cargo build --release -p lua-cli -q
+RUSTFLAGS="-Cprofile-use=$PGO_DIR/merged.profdata" cargo build --release -p omnilua-cli -q
 
 echo "PGO build complete: $BIN" >&2
-echo "Rebuild a stock binary afterwards with: cargo build --release -p lua-cli (after touching a source file or clearing RUSTFLAGS)" >&2
+echo "Rebuild a stock binary afterwards with: cargo build --release -p omnilua-cli (after touching a source file or clearing RUSTFLAGS)" >&2

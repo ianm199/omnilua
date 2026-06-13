@@ -12,7 +12,7 @@
 # Output is asserted byte-identical to reference C (any drift is flagged).
 #
 # Setup:
-#   1. Build this repo's binary:   cargo build --release -p lua-cli --bin lua-rs
+#   1. Build this repo's binary:   cargo build --release -p omnilua-cli --bin omnilua
 #   2. Build reference C Lua:      make -C reference/lua-5.4.7  (produces .../src/lua)
 #   3. Clone + build CppCXY/luars next to this repo:
 #        git clone https://github.com/CppCXY/lua-rs cppcxy-luars
@@ -27,7 +27,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SIBLING="$(cd "$ROOT/.." && pwd)/cppcxy-luars"
 
 REF="${REF:-$ROOT/reference/lua-5.4.7/src/lua}"
-OURS="${OURS:-$ROOT/target/release/lua-rs}"
+OURS="${OURS:-$ROOT/target/release/omnilua}"
 LUARS="${LUARS:-$SIBLING/target/release/lua}"
 CLBG_DIR="${CLBG_DIR:-$SIBLING/lua_benchmarks}"
 OWN="$ROOT/harness/bench/workloads"

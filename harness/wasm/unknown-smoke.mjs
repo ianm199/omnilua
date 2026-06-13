@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { instantiateLuaRs } from "../../packages/lua-rs-wasm/index.mjs";
+import { instantiateLuaRs } from "../../packages/omnilua/index.mjs";
 import { runSmokeAssertions, smokeOptions } from "./smoke-scenario.mjs";
 
 const wasmPath =

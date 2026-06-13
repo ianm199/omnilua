@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Oracle diff harness for the multi-version work.
 #
-# Runs a battery of one-line snippets through BOTH our version-selected lua-rs
-# (LUA_RS_VERSION=<v> target/debug/lua-rs) and the matching reference C binary
+# Runs a battery of one-line snippets through BOTH our version-selected omnilua
+# (OMNILUA_VERSION=<v> target/debug/omnilua) and the matching reference C binary
 # in /tmp/lua-refs/bin, normalizes (first line, strip program-name prefix), and
 # reports PASS/FAIL per snippet. The reference binary is the oracle.
 #
@@ -14,7 +14,7 @@ set -uo pipefail
 ver="${1:?usage: check.sh 5.3 or 5.4 or 5.5}"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-LUARS="${LUA_RS_BIN:-$ROOT/target/debug/lua-rs}"
+LUARS="${LUA_RS_BIN:-$ROOT/target/debug/omnilua}"
 
 choose_ref() {
   local local_ref="$1" tmp_ref="$2"
@@ -34,13 +34,13 @@ case "$ver" in
   *) echo "unknown version $ver"; exit 2 ;;
 esac
 [ -x "$ref" ] || { echo "missing reference binary $ref"; exit 2; }
-[ -x "$LUARS" ] || { echo "missing $LUARS (cargo build -p lua-cli)"; exit 2; }
+[ -x "$LUARS" ] || { echo "missing $LUARS (cargo build -p omnilua-cli)"; exit 2; }
 
 norm() { head -1 | sed -E 's#^[^ ]+: ##'; }   # first line, drop "PROG: " prefix
 pass=0; fail=0
 run() { # label  code
   local label="$1" code="$2" a b
-  a=$(LUA_RS_VERSION="$ver" "$LUARS" -e "$code" 2>&1 | norm)
+  a=$(OMNILUA_VERSION="$ver" "$LUARS" -e "$code" 2>&1 | norm)
   b=$("$ref" -e "$code" 2>&1 | norm)
   if [ "$a" = "$b" ]; then pass=$((pass+1)); printf "PASS  %s\n" "$label"
   else fail=$((fail+1)); printf "FAIL  %s\n        rs : %s\n        ref: %s\n" "$label" "$a" "$b"; fi

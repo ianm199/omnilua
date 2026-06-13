@@ -38,10 +38,10 @@ for run in $(seq 1 "$OUTER_MAX_RUNS"); do
     rc=$?
     emit "outer run #$run exited rc=$rc"
 
-    cargo build -q -p lua-cli >/dev/null 2>&1 || true
-    BIN="target/debug/lua-rs"
+    cargo build -q -p omnilua-cli >/dev/null 2>&1 || true
+    BIN="target/debug/omnilua"
     if [ ! -x "$BIN" ]; then
-        TEST_CMD="cargo run -q -p lua-cli -- $TEST_PROG"
+        TEST_CMD="cargo run -q -p omnilua-cli -- $TEST_PROG"
     elif command -v gtimeout >/dev/null 2>&1; then
         TEST_CMD="gtimeout --signal=KILL 20 $BIN"
     elif command -v timeout >/dev/null 2>&1; then

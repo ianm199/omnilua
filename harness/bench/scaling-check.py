@@ -87,11 +87,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", type=int, default=50000, help="base size N (1x)")
     ap.add_argument("--reps", type=int, default=3, help="runs per size, min is kept")
-    ap.add_argument("--bin", default=os.environ.get("LUA_RS_BIN", str(ROOT / "target/release/lua-rs")))
+    ap.add_argument("--bin", default=os.environ.get("LUA_RS_BIN", str(ROOT / "target/release/omnilua")))
     args = ap.parse_args()
 
     if not Path(args.bin).exists():
-        sys.exit(f"binary not found: {args.bin} (build with: cargo build --release --bin lua-rs)")
+        sys.exit(f"binary not found: {args.bin} (build with: cargo build --release --bin omnilua)")
 
     sizes = [args.base * m for m in (1, 2, 4, 8)]
     workloads = sorted(SCALING_DIR.glob("*.lua"))

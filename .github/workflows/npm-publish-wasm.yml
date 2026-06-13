@@ -1,4 +1,4 @@
-name: Publish lua-rs-wasm
+name: Publish omnilua (npm)
 
 on:
   workflow_dispatch:
@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   publish:
-    name: publish lua-rs-wasm
+    name: publish omnilua (npm)
     runs-on: ubuntu-latest
     steps:
       - name: require main branch or version tag
@@ -67,7 +67,7 @@ jobs:
 
       - name: npm identity
         if: ${{ !inputs.dry_run }}
-        working-directory: packages/lua-rs-wasm
+        working-directory: packages/omnilua
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm whoami
@@ -79,12 +79,12 @@ jobs:
 
       - name: npm publish dry-run
         if: ${{ inputs.dry_run }}
-        working-directory: packages/lua-rs-wasm
+        working-directory: packages/omnilua
         run: npm publish --dry-run --access public --tag "${{ inputs.tag }}"
 
       - name: npm publish
         if: ${{ !inputs.dry_run }}
-        working-directory: packages/lua-rs-wasm
+        working-directory: packages/omnilua
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -103,7 +103,7 @@ jobs:
 
       - name: verify registry install
         if: ${{ !inputs.dry_run }}
-        working-directory: packages/lua-rs-wasm
+        working-directory: packages/omnilua
         # Retry with backoff: a just-published version can take a short while to
         # propagate across the npm registry/CDN, and a single immediate install
         # would otherwise fail an already-successful publish (issue #80).

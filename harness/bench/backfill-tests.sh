@@ -106,9 +106,9 @@ for commit in $commits; do
 
     co_err=$(cd "$WORKTREE" && git checkout --detach --quiet "$commit" 2>&1) || { echo "  [skip] checkout failed: $co_err"; continue; }
 
-    echo "  [build] cargo build -p lua-cli (debug)..."
+    echo "  [build] cargo build -p omnilua-cli (debug)..."
     start=$(date +%s)
-    if ! (cd "$WORKTREE" && cargo build -p lua-cli 2>&1 | tail -3); then
+    if ! (cd "$WORKTREE" && cargo build -p omnilua-cli 2>&1 | tail -3); then
         echo "  [skip] build failed"
         build_fail=$((build_fail+1))
         continue
@@ -123,7 +123,7 @@ for commit in $commits; do
     # invocation that works on any binary version) and point it at the
     # worktree's freshly-built lua-rs. testes/ comes from MAIN (it's
     # local-only / not tracked, so the worktree wouldn't have it either).
-    LUA_RS_BIN="$WORKTREE/target/debug/lua-rs" bash "$ROOT/harness/run_official_all.sh" >"$tmp" 2>&1 || true
+    LUA_RS_BIN="$WORKTREE/target/debug/omnilua" bash "$ROOT/harness/run_official_all.sh" >"$tmp" 2>&1 || true
     elapsed=$(( $(date +%s) - start ))
 
     total_t=$(awk '/^[[:space:]]*Total:/ {print $2; exit}' "$tmp")

@@ -24,8 +24,8 @@ export CARGO_TARGET_DIR=/cache/target
 export CARGO_HOME=/cache/cargo
 
 echo "[inside] building lua-rs (release, linux)" >&2
-cargo build --release --manifest-path /src/Cargo.toml -p lua-cli -q
-RS_BIN="$CARGO_TARGET_DIR/release/lua-rs"
+cargo build --release --manifest-path /src/Cargo.toml -p omnilua-cli -q
+RS_BIN="$CARGO_TARGET_DIR/release/omnilua"
 
 if ! /cache/luaref/src/lua -v >/dev/null 2>&1; then
     echo "[inside] building reference C lua (posix)" >&2

@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 WORKLOAD="${1:?usage: $0 <workload-name>}"
-RS_BIN="$ROOT/target/release/lua-rs"
+RS_BIN="$ROOT/target/release/omnilua"
 WORKLOAD_FILE="$ROOT/harness/bench/workloads/${WORKLOAD}.lua"
 PROFILE_LUA_EVAL="${PROFILE_LUA_EVAL:-}"
 PROFILE_REPEAT="${PROFILE_REPEAT:-1}"

@@ -23,7 +23,11 @@ Status checklist (tick with evidence):
       (ianm199.github.io/omnilua): Run works, outputs correct, zero console
       errors. R2b (multi-version wasm backend per
       specs/WEBLUA_MULTIVERSION_API_SPEC.md) in flight to light up all five
-      columns; page needs zero changes when it lands.
+      columns; page needs zero changes when it lands. → R2b MERGED
+      (PR #169): all five backends selectable through the wasm ABI
+      (+720 B), version-smoke committed and wired into the package check,
+      production browser-verified 2026-06-12: ALL FIVE COLUMNS LIVE
+      (custom no-reference snippet diverges correctly per version).
 - [x] R3: docs merged (PR #167): README rewrite (744 words, wedge-first,
       verified API examples, link-check table), npm README in
       packages/omnilua/, CHANGELOG entry, identity lines, examples READMEs
@@ -32,8 +36,9 @@ Status checklist (tick with evidence):
       list updated. REMAINING = the user's irreversible step per
       RELEASING.md: tag the chosen merge SHA (`git tag v0.1.0 <sha> && git
       push origin v0.1.0`) → publishes omnilua/omnilua-cli/internals to
-      crates.io and omnilua to npm. Recommend tagging AFTER R2b merges so
-      the first published wasm is multi-version.
+      crates.io and omnilua to npm. R2b HAS MERGED — ready to tag at any
+      merge SHA ≥ 4b411d0. The first published omnilua npm package will be
+      multi-version.
 
 ## Canonical name map (every packet uses EXACTLY these)
 

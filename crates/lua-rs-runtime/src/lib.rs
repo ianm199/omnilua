@@ -130,7 +130,97 @@ pub use lua_vm::state::{DynLibId, DynamicSymbol, OsExecuteReason, OsExecuteResul
 #[cfg(feature = "derive")]
 pub use lua_rs_derive::{lua_methods, LuaUserData};
 
-pub type Error = LuaError;
+/// The embedding error type returned by every fallible public method.
+///
+/// This wraps the inner [`LuaError`] enum (still re-exported and matchable via
+/// [`Error::as_lua_error`]) together with an optional GC root that keeps a
+/// Lua-raised error *value* alive for as long as the `Error` itself.
+///
+/// # Why the root exists (issue #189)
+///
+/// A Lua error can carry any Lua value (`error('boom')`, `error({code=403})`).
+/// When such an error propagates uncaught out of `eval`/`exec`/`call`/`load`,
+/// the VM pops the value off the Lua stack before handing the [`LuaError`] back
+/// to Rust. At that point the value is referenced *only* by the Rust-side
+/// [`LuaError`], which the collector does not trace — so any collection before
+/// the embedder reads the message would sweep the value (a use-after-sweep). The
+/// public boundary therefore pins the value in the external root set the moment
+/// it captures the error, and releases it (via the same drop-cleanup queue as
+/// the internal rooted handles) when this `Error` is dropped. Errors constructed
+/// purely on the Rust side ([`From<LuaError>`], the `?` operator) carry no value
+/// that can be swept and so hold no root.
+///
+/// `Error` derefs to its inner [`LuaError`], so `err.message_lossy()`,
+/// `err.to_status()`, `err.into_value()`, and `Display` all forward unchanged.
+#[derive(Debug, Clone)]
+pub struct Error {
+    inner: LuaError,
+    /// External-root anchor pinning the inner error's Lua value. Held purely for
+    /// its [`Drop`], which queues the unroot — the field is never read, only
+    /// dropped, so it is `_`-prefixed. `None` for errors with no collectable
+    /// payload or constructed entirely on the Rust side.
+    _root: Option<RootedValue>,
+}
+
+impl Error {
+    /// Borrow the inner [`LuaError`] enum (e.g. to `match` on
+    /// [`LuaError::Runtime`] / [`LuaError::Syntax`]).
+    pub fn as_lua_error(&self) -> &LuaError {
+        &self.inner
+    }
+
+    /// Synonym for [`Error::as_lua_error`]: borrow the inner [`LuaError`] kind.
+    pub fn kind(&self) -> &LuaError {
+        &self.inner
+    }
+
+    /// Consume the wrapper and return the inner [`LuaError`].
+    ///
+    /// The GC root (if any) is dropped, so the returned [`LuaError`] is once
+    /// again subject to the #189 hazard — only call this when the value has
+    /// already been consumed or when no collection can intervene before the
+    /// returned error is read.
+    pub fn into_lua_error(self) -> LuaError {
+        self.inner
+    }
+}
+
+impl Deref for Error {
+    type Target = LuaError;
+
+    fn deref(&self) -> &LuaError {
+        &self.inner
+    }
+}
+
+impl From<LuaError> for Error {
+    fn from(inner: LuaError) -> Self {
+        Error { inner, _root: None }
+    }
+}
+
+impl From<Error> for LuaError {
+    /// Unwrap the embedding [`Error`] back to its inner [`LuaError`], dropping
+    /// the GC root.
+    ///
+    /// This is what lets a VM-facing callback — whose contract is
+    /// `Result<_, LuaError>` — propagate a public-API helper's [`Error`] with
+    /// `?`. Dropping the root is safe here because the value is being handed
+    /// straight back into the VM (re-pushed onto the Lua stack), which re-roots
+    /// it; the value is never left referenced only by an untraced Rust handle.
+    fn from(err: Error) -> Self {
+        err.inner
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.inner, f)
+    }
+}
+
+impl std::error::Error for Error {}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Host capabilities exposed to Lua stdlib.
@@ -367,13 +457,10 @@ impl<T: 'static> ScopedCell<T> {
         if b < 0 {
             return Err(LuaError::runtime(format_args!(
                 "scoped userdata is already mutably borrowed"
-            )));
-        }
-        let ptr = self.ptr.get().ok_or_else(|| {
-            LuaError::runtime(format_args!(
-                "scoped userdata is no longer valid (its scope has ended)"
             ))
-        })?;
+            .into());
+        }
+        let ptr = self.ptr.get().ok_or_else(scoped_userdata_invalid_error)?;
         self.borrow.set(b + 1);
         Ok(ScopedRef { cell: self, ptr })
     }
@@ -383,13 +470,10 @@ impl<T: 'static> ScopedCell<T> {
         if b != 0 {
             return Err(LuaError::runtime(format_args!(
                 "scoped userdata is already borrowed"
-            )));
-        }
-        let ptr = self.ptr.get().ok_or_else(|| {
-            LuaError::runtime(format_args!(
-                "scoped userdata is no longer valid (its scope has ended)"
             ))
-        })?;
+            .into());
+        }
+        let ptr = self.ptr.get().ok_or_else(scoped_userdata_invalid_error)?;
         self.borrow.set(-1);
         Ok(ScopedRefMut { cell: self, ptr })
     }
@@ -673,7 +757,8 @@ impl<S: 'static> DelegatedCell<S> {
             DelegateEnter::Mut(g) => g(f),
             DelegateEnter::Ref(_) => Err(LuaError::runtime(format_args!(
                 "cannot call a mutating method on a read-only delegated reference"
-            ))),
+            ))
+            .into()),
         }
     }
 }
@@ -785,7 +870,8 @@ impl Lua {
             return Err(LuaError::runtime(format_args!(
                 "{} is not yet supported by lua-rs (supported: 5.1, 5.2, 5.3, 5.4, 5.5)",
                 version.version_str()
-            )));
+            ))
+            .into());
         }
         let mut state = new_state().ok_or(LuaError::Memory)?;
         state.global_mut().lua_version = version;
@@ -896,6 +982,34 @@ impl Lua {
         }
     }
 
+    /// Wrap a raw [`LuaError`] surfacing at a public boundary into the embedding
+    /// [`Error`], pinning its payload so a later collection cannot sweep it.
+    ///
+    /// Fixes #189: when a Lua-raised error carries a collectable value
+    /// (`error('boom')`, `error({...})`), pcall's caller pops the value off the
+    /// Lua stack before the [`LuaError`] reaches Rust, leaving the value rooted
+    /// nowhere the collector traces. This roots the payload in the external root
+    /// set (so it survives until the returned [`Error`] is dropped) while leaving
+    /// the inner [`LuaError`] — and therefore `into_value`, `message_lossy`, and
+    /// re-raise via the Lua `pcall`/`xpcall` builtins — exactly as raised.
+    ///
+    /// Errors with no collectable payload (`Memory`, `File`, an integer/boolean
+    /// payload, …) need no root and are wrapped verbatim.
+    ///
+    /// This is the state-holding form for boundaries that are already inside a
+    /// [`Lua::with_state`] closure: it roots the payload through the held `state`
+    /// so the call cannot re-enter the `RefCell` borrow, and — critically — so
+    /// the value is pinned *before* the caller pops it off the Lua stack, where
+    /// it is still live and so the rooting cannot race a sweep.
+    fn capture_error_in_state(&self, state: &mut LuaState, err: LuaError) -> Error {
+        let payload = match &err {
+            LuaError::Runtime(v) | LuaError::Syntax(v) if v.is_collectable() => Some(v.clone()),
+            _ => None,
+        };
+        let root = payload.map(|value| self.root_raw_in_state(state, value));
+        Error { inner: err, _root: root }
+    }
+
     fn userdata_cell<'a, T: 'static>(
         &self,
         userdata: &'a AnyUserData,
@@ -903,7 +1017,8 @@ impl Lua {
         if !Rc::ptr_eq(&self.inner, &userdata.root.lua.inner) {
             return Err(LuaError::runtime(format_args!(
                 "Lua userdata belongs to a different state"
-            )));
+            ))
+            .into());
         }
         userdata.host_cell()
     }
@@ -1379,9 +1494,7 @@ impl Lua {
             return slot.expect("delegated enter_ref must invoke its callback");
         }
 
-        Err(LuaError::runtime(format_args!(
-            "scoped userdata type mismatch"
-        )))
+        Err(LuaError::runtime(format_args!("scoped userdata type mismatch")).into())
     }
 
     fn dispatch_scoped_borrow_mut<T, F, R>(&self, userdata: &AnyUserData, f: F) -> Result<R>
@@ -1410,9 +1523,7 @@ impl Lua {
             return slot.expect("delegated enter_mut must invoke its callback");
         }
 
-        Err(LuaError::runtime(format_args!(
-            "scoped userdata type mismatch"
-        )))
+        Err(LuaError::runtime(format_args!("scoped userdata type mismatch")).into())
     }
 
     /// Scoped variants of the four `create_userdata_method*` constructors. Each
@@ -1536,18 +1647,24 @@ impl Chunk {
     }
 
     pub fn exec(self) -> Result<()> {
-        self.lua
-            .with_state(|state| exec_state(state, &self.source, &self.name))
+        self.lua.with_state(|state| {
+            exec_state(state, &self.source, &self.name)
+                .map_err(|err| self.lua.capture_error_in_state(state, err))
+        })
     }
 
     pub fn eval<T: FromLuaMulti>(self) -> Result<T> {
         let raws = self.lua.with_state(|state| {
             let saved_top = state.top_idx();
-            let status = load_buffer(state, &self.source, &self.name)?;
+            let status = load_buffer(state, &self.source, &self.name).map_err(|err| {
+                self.lua.capture_error_in_state(state, err)
+            })?;
             if status != 0 {
                 let err = state.pop();
+                let captured =
+                    self.lua.capture_error_in_state(state, LuaError::from_value(err));
                 state.set_top_idx(saved_top);
-                return Err(LuaError::from_value(err));
+                return Err(captured);
             }
             match lua_vm::api::pcall_k(state, 0, T::NRESULTS, 0, 0, None) {
                 Ok(_) => {
@@ -1565,8 +1682,9 @@ impl Chunk {
                     Ok(values)
                 }
                 Err(err) => {
+                    let captured = self.lua.capture_error_in_state(state, err);
                     state.set_top_idx(saved_top);
-                    Err(err)
+                    Err(captured)
                 }
             }
         })?;
@@ -1595,7 +1713,8 @@ impl RootedValue {
         if !Rc::ptr_eq(&self.lua.inner, &lua.inner) {
             return Err(LuaError::runtime(format_args!(
                 "Lua handle belongs to a different state"
-            )));
+            ))
+            .into());
         }
         state
             .external_rooted_value(self.key)
@@ -1704,7 +1823,7 @@ impl Table {
         let value_raw = lua.with_state(|state| {
             let key_raw = key.to_raw_for_lua(&lua, state)?;
             let table_raw = self.root.raw_for_lua(&lua, state)?;
-            state.table_get_with_tm(&table_raw, &key_raw)
+            state.table_get_with_tm(&table_raw, &key_raw).map_err(Error::from)
         })?;
         let value = Value::from_raw(&lua, value_raw)?;
         V::from_lua(value, &lua)
@@ -1722,7 +1841,9 @@ impl Table {
             let key_raw = key.to_raw_for_lua(&lua, state)?;
             let value_raw = value.to_raw_for_lua(&lua, state)?;
             let table_raw = self.root.raw_for_lua(&lua, state)?;
-            state.table_set_with_tm(&table_raw, key_raw, value_raw)
+            state
+                .table_set_with_tm(&table_raw, key_raw, value_raw)
+                .map_err(Error::from)
         })
     }
 
@@ -1771,8 +1892,9 @@ impl Function {
                     Ok(results)
                 }
                 Err(err) => {
+                    let captured = lua.capture_error_in_state(state, err);
                     state.set_top_idx(saved_top);
-                    Err(err)
+                    Err(captured)
                 }
             }
         })?;
@@ -1803,8 +1925,9 @@ impl LuaString {
 
     pub fn to_str(&self) -> Result<String> {
         let bytes = self.as_bytes()?;
-        String::from_utf8(bytes)
-            .map_err(|_| LuaError::runtime(format_args!("string is not valid UTF-8")))
+        String::from_utf8(bytes).map_err(|_| {
+            Error::from(LuaError::runtime(format_args!("string is not valid UTF-8")))
+        })
     }
 }
 
@@ -1830,27 +1953,29 @@ impl AnyUserData {
             .as_deref()
             .ok_or_else(|| LuaError::runtime(format_args!("missing Rust userdata payload")))?;
         host.downcast_ref::<UserDataCell<T>>()
-            .ok_or_else(|| LuaError::runtime(format_args!("userdata type mismatch")))
+            .ok_or_else(|| Error::from(LuaError::runtime(format_args!("userdata type mismatch"))))
     }
 
     pub fn borrow<T>(&self) -> Result<Ref<'_, T>>
     where
         T: 'static,
     {
-        self.host_cell::<T>()?
-            .value
-            .try_borrow()
-            .map_err(|_| LuaError::runtime(format_args!("userdata is already mutably borrowed")))
+        self.host_cell::<T>()?.value.try_borrow().map_err(|_| {
+            Error::from(LuaError::runtime(format_args!(
+                "userdata is already mutably borrowed"
+            )))
+        })
     }
 
     pub fn borrow_mut<T>(&self) -> Result<RefMut<'_, T>>
     where
         T: 'static,
     {
-        self.host_cell::<T>()?
-            .value
-            .try_borrow_mut()
-            .map_err(|_| LuaError::runtime(format_args!("userdata is already borrowed")))
+        self.host_cell::<T>()?.value.try_borrow_mut().map_err(|_| {
+            Error::from(LuaError::runtime(format_args!(
+                "userdata is already borrowed"
+            )))
+        })
     }
 
     pub fn with_borrow<T, R>(&self, f: impl FnOnce(&T) -> R) -> Result<R>
@@ -1876,8 +2001,11 @@ impl AnyUserData {
             .host_value
             .as_deref()
             .ok_or_else(|| LuaError::runtime(format_args!("missing Rust userdata payload")))?;
-        host.downcast_ref::<ScopedCell<T>>()
-            .ok_or_else(|| LuaError::runtime(format_args!("scoped userdata type mismatch")))
+        host.downcast_ref::<ScopedCell<T>>().ok_or_else(|| {
+            Error::from(LuaError::runtime(format_args!(
+                "scoped userdata type mismatch"
+            )))
+        })
     }
 
     /// Rust-side shared borrow of a [`Scope::create_userdata`] payload. Routes
@@ -1960,7 +2088,8 @@ impl AnyUserData {
 
         Err(LuaError::runtime(format_args!(
             "delegate: receiver is not a scoped userdata of the expected type"
-        )))
+        ))
+        .into())
     }
 
     /// Shared counterpart to [`Self::delegate`]. The accessor takes `&P` and
@@ -2006,7 +2135,8 @@ impl AnyUserData {
 
         Err(LuaError::runtime(format_args!(
             "delegate_ref: receiver is not a scoped userdata of the expected type"
-        )))
+        ))
+        .into())
     }
 }
 
@@ -2232,7 +2362,7 @@ struct UserDataMethodRegistry<'lua, T: UserData> {
     meta_methods: Vec<(MetaMethod, Function)>,
     fields_get: Vec<(String, Function)>,
     fields_set: Vec<(String, Function)>,
-    error: Option<LuaError>,
+    error: Option<Error>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -2348,7 +2478,7 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
                     }
                     None => None,
                 };
-                Ok::<_, LuaError>((g, m, r))
+                Ok::<_, Error>((g, m, r))
             })?;
             let index_fn = lua.create_function(move |lua, (ud, key): (Value, Value)| {
                 let getters = Table {
@@ -2398,7 +2528,7 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
                     }
                     None => None,
                 };
-                Ok::<_, LuaError>((s, r))
+                Ok::<_, Error>((s, r))
             })?;
             let newindex_fn =
                 lua.create_function(move |lua, (ud, key, value): (Value, Value, Value)| {
@@ -2416,7 +2546,8 @@ impl<'lua, T: UserData> UserDataMethodRegistry<'lua, T> {
                     }
                     Err(LuaError::runtime(format_args!(
                         "cannot assign to unknown or read-only userdata field"
-                    )))
+                    ))
+                    .into())
                 })?;
             metatable.set(MetaMethod::NewIndex.name(), &newindex_fn)?;
         } else if let Some(raw) = raw_newindex.as_ref() {
@@ -2635,7 +2766,7 @@ impl IntoLua for i32 {
 impl FromLua for i32 {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let v = i64::from_lua(value, lua)?;
-        i32::try_from(v).map_err(|_| LuaError::runtime(format_args!("integer out of range")))
+        i32::try_from(v).map_err(|_| integer_out_of_range_error())
     }
 }
 
@@ -2650,7 +2781,7 @@ impl IntoLua for usize {
 impl FromLua for usize {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let v = i64::from_lua(value, lua)?;
-        usize::try_from(v).map_err(|_| LuaError::runtime(format_args!("integer out of range")))
+        usize::try_from(v).map_err(|_| integer_out_of_range_error())
     }
 }
 
@@ -2665,7 +2796,7 @@ impl IntoLua for u64 {
 impl FromLua for u64 {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let v = i64::from_lua(value, lua)?;
-        u64::try_from(v).map_err(|_| LuaError::runtime(format_args!("integer out of range")))
+        u64::try_from(v).map_err(|_| integer_out_of_range_error())
     }
 }
 
@@ -2678,7 +2809,7 @@ impl IntoLua for u32 {
 impl FromLua for u32 {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
         let v = u64::from_lua(value, lua)?;
-        u32::try_from(v).map_err(|_| LuaError::runtime(format_args!("integer out of range")))
+        u32::try_from(v).map_err(|_| integer_out_of_range_error())
     }
 }
 
@@ -2895,7 +3026,7 @@ where
         let table = Table::from_lua(value, lua)?;
         let raw = table.raw_table()?;
         let mut out = HashMap::new();
-        let mut result = Ok(());
+        let mut result: Result<()> = Ok(());
         raw.for_each_entry(|key, value| {
             if result.is_err() {
                 return;
@@ -3125,7 +3256,7 @@ where
     }
 }
 
-fn rust_callback_trampoline(state: &mut LuaState) -> Result<usize> {
+fn rust_callback_trampoline(state: &mut LuaState) -> std::result::Result<usize, LuaError> {
     let func_idx = state.current_call_info().func;
     let callback = match state.get_at(func_idx) {
         RawLuaValue::Function(RawLuaClosure::C(closure)) => {
@@ -3161,7 +3292,7 @@ fn heap_guard(state: &LuaState) -> lua_gc::HeapGuard {
     lua_gc::HeapGuard::push(&global.heap)
 }
 
-fn callback_args(state: &mut LuaState, lua: &Lua) -> Result<Vec<Value>> {
+fn callback_args(state: &mut LuaState, lua: &Lua) -> std::result::Result<Vec<Value>, LuaError> {
     let func_idx = state.current_call_info().func;
     let nargs = state.top_idx().0.saturating_sub(func_idx.0 + 1);
     let mut args = Vec::with_capacity(nargs as usize);
@@ -3177,13 +3308,18 @@ fn callback_userdata_args(state: &mut LuaState, lua: &Lua) -> Result<(AnyUserDat
     if args.is_empty() {
         return Err(LuaError::runtime(format_args!(
             "userdata method missing self argument"
-        )));
+        ))
+        .into());
     }
     let userdata = AnyUserData::from_lua(args.remove(0), lua)?;
     Ok((userdata, args))
 }
 
-fn push_callback_returns(state: &mut LuaState, lua: &Lua, returns: Vec<Value>) -> Result<usize> {
+fn push_callback_returns(
+    state: &mut LuaState,
+    lua: &Lua,
+    returns: Vec<Value>,
+) -> std::result::Result<usize, LuaError> {
     let mut count = 0usize;
     for value in returns {
         let raw = value.to_raw_for_lua(lua, state)?;
@@ -3193,19 +3329,29 @@ fn push_callback_returns(state: &mut LuaState, lua: &Lua, returns: Vec<Value>) -
     Ok(count)
 }
 
-fn stale_handle_error() -> LuaError {
-    LuaError::runtime(format_args!("stale Lua handle"))
+fn stale_handle_error() -> Error {
+    Error::from(LuaError::runtime(format_args!("stale Lua handle")))
 }
 
-fn type_error_raw(value: &RawLuaValue, expected: &str) -> LuaError {
-    LuaError::runtime(format_args!(
+fn scoped_userdata_invalid_error() -> Error {
+    Error::from(LuaError::runtime(format_args!(
+        "scoped userdata is no longer valid (its scope has ended)"
+    )))
+}
+
+fn integer_out_of_range_error() -> Error {
+    Error::from(LuaError::runtime(format_args!("integer out of range")))
+}
+
+fn type_error_raw(value: &RawLuaValue, expected: &str) -> Error {
+    Error::from(LuaError::runtime(format_args!(
         "{} expected, got {}",
         expected,
         value.type_name()
-    ))
+    )))
 }
 
-fn type_error_value(value: &Value, expected: &str) -> LuaError {
+fn type_error_value(value: &Value, expected: &str) -> Error {
     let got = match value {
         Value::Nil => "nil",
         Value::Boolean(_) => "boolean",
@@ -3216,7 +3362,10 @@ fn type_error_value(value: &Value, expected: &str) -> LuaError {
         Value::UserData(_) | Value::LightUserData(_) => "userdata",
         Value::Thread(_) => "thread",
     };
-    LuaError::runtime(format_args!("{} expected, got {}", expected, got))
+    Error::from(LuaError::runtime(format_args!(
+        "{} expected, got {}",
+        expected, got
+    )))
 }
 
 /// A Lua state with parser and standard libraries installed.
@@ -3254,7 +3403,8 @@ impl LuaRuntime {
             return Err(LuaError::runtime(format_args!(
                 "{} is not yet supported by lua-rs (supported: 5.1, 5.2, 5.3, 5.4, 5.5)",
                 version.version_str()
-            )));
+            ))
+            .into());
         }
         let mut state = new_state().ok_or(LuaError::Memory)?;
         state.global_mut().lua_version = version;
@@ -3287,8 +3437,14 @@ impl LuaRuntime {
     }
 
     /// Load and execute a Lua source chunk.
+    ///
+    /// This lower-level entry point surfaces a raised error's payload without
+    /// the external-root pinning that [`Chunk::exec`] applies (issue #189):
+    /// [`LuaRuntime`] owns its [`LuaState`] directly and has no drop-cleanup
+    /// queue for external roots, so the returned [`Error`] carries the inner
+    /// [`LuaError`] verbatim. Read the message before triggering a collection.
     pub fn exec(&mut self, source: &[u8], name: &[u8]) -> Result<()> {
-        exec_state(&mut self.state, source, name)
+        exec_state(&mut self.state, source, name).map_err(Error::from)
     }
 
     /// Apply sandbox limits to this runtime — the lower-level equivalent of
@@ -3314,7 +3470,18 @@ impl LuaRuntime {
     }
 }
 
-fn exec_state(state: &mut LuaState, source: &[u8], name: &[u8]) -> Result<()> {
+/// Load and run a chunk for effect, leaving the inner [`LuaError`] unwrapped.
+///
+/// This is the low-level core shared by [`Chunk::exec`] and [`LuaRuntime::exec`].
+/// It does *not* root a raised error's payload — the public [`Chunk::exec`] path
+/// wraps the result through [`Lua::capture_error_in_state`] to pin it (issue
+/// #189); the lower-level [`LuaRuntime::exec`], which owns its state and has no
+/// external-root drop-cleanup machinery, surfaces the unrooted error verbatim.
+fn exec_state(
+    state: &mut LuaState,
+    source: &[u8],
+    name: &[u8],
+) -> std::result::Result<(), LuaError> {
     let status = load_buffer(state, source, name)?;
     if status != 0 {
         let err = state.pop();
@@ -3333,7 +3500,7 @@ fn parser_hook(
     source: &[u8],
     name: &[u8],
     firstchar: i32,
-) -> Result<GcRef<LuaLClosure>> {
+) -> std::result::Result<GcRef<LuaLClosure>, LuaError> {
     let _heap_guard = heap_guard(state);
     let proto = lua_parse::parse(
         state,
@@ -3484,7 +3651,7 @@ impl Default for SandboxConfig {
 
 fn strip_globals(state: &mut LuaState, names: &[Vec<u8>]) -> Result<()> {
     let refs: Vec<&[u8]> = names.iter().map(|n| n.as_slice()).collect();
-    lua_stdlib::sandbox::strip_globals(state, &refs)
+    lua_stdlib::sandbox::strip_globals(state, &refs).map_err(Error::from)
 }
 
 /// Apply a [`SandboxConfig`] to a raw state: strip the configured globals and,
@@ -3575,7 +3742,7 @@ mod tests {
                 MetaMethod::NewIndex,
                 |_lua, this, (key, value): (String, i64)| {
                     if key != "value" {
-                        return Err(LuaError::runtime(format_args!("unknown property")));
+                        return Err(LuaError::runtime(format_args!("unknown property")).into());
                     }
                     this.value = value;
                     Ok(())
@@ -4006,6 +4173,32 @@ mod tests {
         assert!(
             after <= baseline + 2,
             "external roots grew under composed __index churn: baseline={baseline} after={after}"
+        );
+    }
+
+    /// #189 no-leak guard: capturing and rooting an escaping error value
+    /// (`error('boom')`) must release its external root when the resulting
+    /// [`Error`] is dropped. Raise-and-drop in a loop and assert the external
+    /// root set returns to baseline, so the #189 fix does not turn a
+    /// use-after-sweep into a steady leak of one root per surfaced error.
+    #[test]
+    fn captured_error_value_unroots_on_drop() {
+        let lua = Lua::new();
+        let baseline = external_root_count(&lua);
+
+        for _ in 0..1000 {
+            let err = lua
+                .load("error('boom')")
+                .eval::<Value>()
+                .expect_err("error('boom') must surface as Err");
+            assert!(err.message_lossy().contains("boom"));
+            drop(err);
+        }
+
+        let after = external_root_count(&lua);
+        assert!(
+            after <= baseline + 2,
+            "external roots grew under raised-and-dropped errors: baseline={baseline} after={after}"
         );
     }
 
@@ -4461,7 +4654,7 @@ mod tests {
                 MetaMethod::NewIndex,
                 |_lua, this, (key, value): (String, i64)| {
                     if key != "value" {
-                        return Err(LuaError::runtime(format_args!("unknown property")));
+                        return Err(LuaError::runtime(format_args!("unknown property")).into());
                     }
                     this.value = value;
                     Ok(())
@@ -5071,7 +5264,7 @@ mod tests {
             .scope(|scope| -> Result<()> {
                 let f = scope.create_function(&lua, |_lua, ()| Ok(value.get()))?;
                 lua.globals().set("get", &f)?;
-                Err(LuaError::runtime(format_args!("aborting")))
+                Err(LuaError::runtime(format_args!("aborting")).into())
             })
             .expect_err("scope body should propagate error");
 
@@ -5126,7 +5319,7 @@ mod tests {
             .scope(|scope| -> Result<()> {
                 let ud = scope.create_userdata_ref_mut(&lua, &mut counter)?;
                 lua.globals().set("c", &ud)?;
-                Err(LuaError::runtime(format_args!("aborting scope")))
+                Err(LuaError::runtime(format_args!("aborting scope")).into())
             })
             .expect_err("scope body should propagate error");
         let _ = err;

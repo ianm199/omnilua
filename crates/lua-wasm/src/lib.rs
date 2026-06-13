@@ -474,7 +474,11 @@ pub extern "C" fn lua_rs_wasm_run(ptr: *const u8, len: usize) -> i32 {
         unsafe { slice::from_raw_parts(ptr, len) }
     };
 
-    match with_runtime(|runtime| runtime.exec(source, b"=wasm-hosted-script")) {
+    match with_runtime(|runtime| {
+        runtime
+            .exec(source, b"=wasm-hosted-script")
+            .map_err(LuaError::from)
+    }) {
         Ok(()) => {
             clear_last_error();
             1

@@ -990,7 +990,7 @@ pub(crate) fn undump(
             s.state.new_upval_closed(LuaValue::Nil),
         ));
     }
-    cl.upvals = upvals_vec;
+    cl.upvals = upvals_vec.into_boxed_slice();
 
     // macros.tsv: setclLvalue2s → state.set_at(o, LuaValue::Function(LuaClosure::Lua(cl)))
     // macros.tsv: luaD_inctop → (state.push already increments; use state.push)

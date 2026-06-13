@@ -32,8 +32,22 @@ pub struct LuaLClosure {
     /// `Gc<UpVal>`), so a plain `Cell` is sufficient and skips RefCell
     /// borrow tracking on every upvalue read — critical for the
     /// `upvalue_get` hot path.
-    pub upvals: Vec<Cell<GcRef<UpVal>>>,
+    ///
+    /// The slice is `Box<[_]>`, not `Vec<_>`: the upvalue count is fixed at
+    /// closure creation (`proto.upvalues.len()`) and never grows or shrinks
+    /// afterwards (`set_upval` is a `Cell::set` into an existing slot, not a
+    /// resize). Dropping the `Vec` capacity word shrinks `LuaLClosure` by one
+    /// pointer and makes `buffer_bytes` an exact GC-accounting figure.
+    pub upvals: Box<[Cell<GcRef<UpVal>>]>,
 }
+
+/// `LuaLClosure` is a GC-traced heap object; every byte multiplies across the
+/// live closure population. Switching `upvals` from `Vec` (ptr+len+cap) to
+/// `Box<[_]>` (ptr+len) drops the capacity word, taking the struct from 32 to
+/// 24 bytes on a 64-bit target. Gated to 64-bit because the byte count is a
+/// pointer-width claim (the wasm32 CI build has a 32-bit layout).
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<LuaLClosure>() == 24);
 
 #[derive(Debug)]
 pub struct LuaCClosure {
@@ -45,7 +59,7 @@ impl LuaLClosure {
     pub fn placeholder() -> Self {
         LuaLClosure {
             proto: GcRef::new(LuaProto::placeholder()),
-            upvals: Vec::new(),
+            upvals: Box::new([]),
         }
     }
 
@@ -63,8 +77,11 @@ impl LuaLClosure {
     }
 
     /// Bytes owned outside the `GcBox` header/object allocation.
+    ///
+    /// `Box<[_]>` has no separate capacity; `len` is the exact slot count,
+    /// which is also the faithful GC-accounting figure.
     pub fn buffer_bytes(&self) -> usize {
-        self.upvals.capacity() * std::mem::size_of::<Cell<GcRef<UpVal>>>()
+        self.upvals.len() * std::mem::size_of::<Cell<GcRef<UpVal>>>()
     }
 }
 
@@ -86,5 +103,7 @@ impl LuaCClosure {
 //   notes:         LuaClosure enum covering the C-Lua C/LightC/Lua closure variants.
 //                  C uses a union with a common header; we use a tagged enum.
 //                  LuaLClosure.upvals uses Cell<GcRef<UpVal>> (not RefCell) so per-
-//                  upvalue reads avoid borrow-tracking; GcRef<UpVal> is Copy.
+//                  upvalue reads avoid borrow-tracking; GcRef<UpVal> is Copy. The
+//                  upvals slice is Box<[_]> (fixed count, never resized after
+//                  construction), making LuaLClosure 24 bytes on 64-bit.
 // ──────────────────────────────────────────────────────────────────────────────

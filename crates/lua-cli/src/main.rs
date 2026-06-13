@@ -891,7 +891,7 @@ fn parser_hook(
     proto_ref.account_buffer(proto_ref.buffer_bytes() as isize);
     let closure = GcRef::new(LuaLClosure {
         proto: proto_ref,
-        upvals,
+        upvals: upvals.into_boxed_slice(),
     });
     closure.account_buffer(closure.buffer_bytes() as isize);
     Ok(closure)

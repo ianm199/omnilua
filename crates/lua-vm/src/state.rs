@@ -3196,6 +3196,7 @@ impl LuaState {
         for _ in 0..nupvals {
             upvals.push(std::cell::Cell::new(self.new_upval_closed(LuaValue::Nil)));
         }
+        let upvals = upvals.into_boxed_slice();
         let closure = GcRef::new(LuaClosureLua { proto, upvals });
         closure.account_buffer(closure.buffer_bytes() as isize);
         closure
@@ -3279,7 +3280,7 @@ impl LuaState {
         self.mark_gc_check_needed();
         let new_cl = GcRef::new(LuaClosureLua {
             proto: child_proto.clone(),
-            upvals,
+            upvals: upvals.into_boxed_slice(),
         });
         new_cl.account_buffer(new_cl.buffer_bytes() as isize);
         if cache_enabled {

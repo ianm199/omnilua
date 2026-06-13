@@ -180,6 +180,6 @@ fn parser_hook(
     }
     Ok(GcRef::new(LuaLClosure {
         proto: GcRef::new(*proto),
-        upvals,
+        upvals: upvals.into_boxed_slice(),
     }))
 }

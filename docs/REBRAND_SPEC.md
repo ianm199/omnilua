@@ -9,16 +9,31 @@ colliding project.
 Status checklist (tick with evidence):
 
 - [x] N0: name availability verified (crates.io / npm / GitHub, 2026-06-12)
-- [ ] R0: repo renamed `ianm199/lua-rs` → `ianm199/omnilua` + description +
-      topics set (supervisor, gh)
-- [ ] R1: package/mechanics rename (crates, binary, env var, workflows,
-      harness paths, version 0.1.0) — full PR gate green
-- [ ] R2: playground rebuilt as a destination (5-version side-by-side,
-      permalinks, examples gallery, omniLua brand)
-- [ ] R3: docs/copy rebrand (README rewrite leading with the wedge,
-      CONTRIBUTING/RELEASING, CLAUDE.md identity lines, CHANGELOG entry)
-- [ ] R4: release PR open (0.1.0, new names); TAG PUSH IS THE USER'S CALL —
-      publishing to crates.io/npm is irreversible per RELEASING.md
+- [x] R0: repo renamed `ianm199/omnilua`, description + 9 topics set
+      (2026-06-12; github.com redirects verified)
+- [x] R1: mechanics merged (PR #165, 78 files / 8 commits): crates
+      omnilua/omnilua-cli, binary omnilua, OMNILUA_VERSION canonical with
+      fallback, npm omnilua 0.1.0, 30 scripts, workflows. Gates: workspace
+      379/0, official full pass, check.sh x5, canaries 36/0, wasm pkg ok,
+      env precedence smoke. Post-merge main verify: oracle 165/0, official
+      44/44, wasm pkg ok.
+- [x] R2: playground merged (PR #166, 31 KB single file): five-column hero
+      (5.4 LIVE in wasm, others verified-ref labelled honestly), permalinks,
+      6-snippet gallery. Supervisor live-reviewed production
+      (ianm199.github.io/omnilua): Run works, outputs correct, zero console
+      errors. R2b (multi-version wasm backend per
+      specs/WEBLUA_MULTIVERSION_API_SPEC.md) in flight to light up all five
+      columns; page needs zero changes when it lands.
+- [x] R3: docs merged (PR #167): README rewrite (744 words, wedge-first,
+      verified API examples, link-check table), npm README in
+      packages/omnilua/, CHANGELOG entry, identity lines, examples READMEs
+      (merge-time fixup). Badges 404 until first publish — expected.
+- [ ] R4: versions already at 0.1.0 on main via R1; release.yml publish
+      list updated. REMAINING = the user's irreversible step per
+      RELEASING.md: tag the chosen merge SHA (`git tag v0.1.0 <sha> && git
+      push origin v0.1.0`) → publishes omnilua/omnilua-cli/internals to
+      crates.io and omnilua to npm. Recommend tagging AFTER R2b merges so
+      the first published wasm is multi-version.
 
 ## Canonical name map (every packet uses EXACTLY these)
 

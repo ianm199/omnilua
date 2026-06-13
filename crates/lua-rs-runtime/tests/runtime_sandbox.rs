@@ -1,7 +1,7 @@
 //! The lower-level `LuaRuntime` sandbox surface (mirrors `Lua::sandboxed`), used
 //! by the WASM embedding.
 
-use lua_rs_runtime::{LuaRuntime, SandboxConfig, TripReason};
+use omnilua::{LuaRuntime, SandboxConfig, TripReason};
 
 #[test]
 fn runtime_install_sandbox_bounds_loop_and_resets() {

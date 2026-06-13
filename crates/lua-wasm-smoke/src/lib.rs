@@ -9,9 +9,9 @@ use std::io::{self, SeekFrom};
 use std::slice;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use lua_rs_runtime::{HostHooks, LuaRuntime};
+use omnilua::{HostHooks, LuaRuntime};
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-use lua_rs_runtime::{LuaError, LuaFileHandle};
+use omnilua::{LuaError, LuaFileHandle};
 
 static OUTPUT_BYTES: AtomicUsize = AtomicUsize::new(0);
 static INPUT_POS: AtomicUsize = AtomicUsize::new(0);

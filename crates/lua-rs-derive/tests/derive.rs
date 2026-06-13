@@ -3,7 +3,7 @@
 //! `#[lua(readonly)]`.
 
 use lua_rs_derive::LuaUserData;
-use lua_rs_runtime::Lua;
+use omnilua::Lua;
 
 #[derive(LuaUserData)]
 struct Vec2 {

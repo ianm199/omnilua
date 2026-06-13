@@ -200,7 +200,7 @@ fn expand_derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let mut meta_regs = Vec::new();
     if scfg.impl_display {
         meta_regs.push(quote! {
-            __m.add_meta_method(::lua_rs_runtime::MetaMethod::ToString, |_, __this, ()| {
+            __m.add_meta_method(::omnilua::MetaMethod::ToString, |_, __this, ()| {
                 ::core::result::Result::Ok(::std::string::ToString::to_string(__this))
             });
         });
@@ -208,9 +208,9 @@ fn expand_derive(input: DeriveInput) -> syn::Result<TokenStream> {
     if scfg.impl_partial_eq {
         meta_regs.push(quote! {
             __m.add_meta_method(
-                ::lua_rs_runtime::MetaMethod::Eq,
-                |_, __this, __other: ::lua_rs_runtime::Value| {
-                    if let ::lua_rs_runtime::Value::UserData(__ud) = __other {
+                ::omnilua::MetaMethod::Eq,
+                |_, __this, __other: ::omnilua::Value| {
+                    if let ::omnilua::Value::UserData(__ud) = __other {
                         if let ::core::result::Result::Ok(__o) = __ud.borrow::<#name>() {
                             return ::core::result::Result::Ok(*__this == *__o);
                         }
@@ -223,9 +223,9 @@ fn expand_derive(input: DeriveInput) -> syn::Result<TokenStream> {
     if scfg.impl_partial_ord {
         meta_regs.push(quote! {
             __m.add_meta_method(
-                ::lua_rs_runtime::MetaMethod::Lt,
-                |_, __this, __other: ::lua_rs_runtime::Value| {
-                    if let ::lua_rs_runtime::Value::UserData(__ud) = __other {
+                ::omnilua::MetaMethod::Lt,
+                |_, __this, __other: ::omnilua::Value| {
+                    if let ::omnilua::Value::UserData(__ud) = __other {
                         if let ::core::result::Result::Ok(__o) = __ud.borrow::<#name>() {
                             return ::core::result::Result::Ok(*__this < *__o);
                         }
@@ -234,9 +234,9 @@ fn expand_derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 },
             );
             __m.add_meta_method(
-                ::lua_rs_runtime::MetaMethod::Le,
-                |_, __this, __other: ::lua_rs_runtime::Value| {
-                    if let ::lua_rs_runtime::Value::UserData(__ud) = __other {
+                ::omnilua::MetaMethod::Le,
+                |_, __this, __other: ::omnilua::Value| {
+                    if let ::omnilua::Value::UserData(__ud) = __other {
                         if let ::core::result::Result::Ok(__o) = __ud.borrow::<#name>() {
                             return ::core::result::Result::Ok(*__this <= *__o);
                         }
@@ -251,15 +251,15 @@ fn expand_derive(input: DeriveInput) -> syn::Result<TokenStream> {
         quote! {}
     } else {
         quote! {
-            fn add_meta_methods<__M: ::lua_rs_runtime::UserDataMethods<Self>>(__m: &mut __M) {
+            fn add_meta_methods<__M: ::omnilua::UserDataMethods<Self>>(__m: &mut __M) {
                 #(#meta_regs)*
             }
         }
     };
 
     let expanded = quote! {
-        impl ::lua_rs_runtime::UserData for #name {
-            fn add_methods<__M: ::lua_rs_runtime::UserDataMethods<Self>>(__m: &mut __M) {
+        impl ::omnilua::UserData for #name {
+            fn add_methods<__M: ::omnilua::UserDataMethods<Self>>(__m: &mut __M) {
                 #(#field_regs)*
                 #methods_call
             }
@@ -351,11 +351,11 @@ fn expand_methods(item: ItemImpl) -> syn::Result<TokenStream> {
                     ));
                 }
                 let func_binding = if arg_names.is_empty() {
-                    quote! { __ud: ::lua_rs_runtime::AnyUserData }
+                    quote! { __ud: ::omnilua::AnyUserData }
                 } else {
                     quote! {
                         ( __ud #(, #arg_names)* ):
-                            ( ::lua_rs_runtime::AnyUserData #(, #arg_types)* )
+                            ( ::omnilua::AnyUserData #(, #arg_types)* )
                     }
                 };
                 let accessor = quote! { move |__this| <#self_ty>::#name(__this #(, #arg_names)*) };
@@ -402,7 +402,7 @@ fn expand_methods(item: ItemImpl) -> syn::Result<TokenStream> {
 
         impl #self_ty {
             #[doc(hidden)]
-            fn __lua_register_methods<__M: ::lua_rs_runtime::UserDataMethods<Self>>(__m: &mut __M) {
+            fn __lua_register_methods<__M: ::omnilua::UserDataMethods<Self>>(__m: &mut __M) {
                 #(#regs)*
             }
         }

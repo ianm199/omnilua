@@ -9,7 +9,7 @@
 //! found by the adversarial sweep (`specs/MULTIVERSION_ADVERSARIAL_FINDINGS.md`)
 //! it is noted.
 
-use lua_rs_runtime::{Lua, LuaVersion};
+use omnilua::{Lua, LuaVersion};
 
 /// Run `code` under `version` and return `Ok(tostring(result))` or
 /// `Err(error message)`. The snippet is `load`+`pcall`ed *inside* Lua so the VM

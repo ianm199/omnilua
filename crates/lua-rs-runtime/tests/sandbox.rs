@@ -4,7 +4,7 @@
 //! and capability stripping — actually bound untrusted code, and that a
 //! non-sandboxed run is unaffected.
 
-use lua_rs_runtime::{Lua, SandboxConfig, TripReason};
+use omnilua::{Lua, SandboxConfig, TripReason};
 
 /// A tight infinite loop must be aborted by the instruction budget rather
 /// than hanging the process.

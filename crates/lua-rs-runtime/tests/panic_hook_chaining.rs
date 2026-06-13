@@ -22,7 +22,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use lua_rs_runtime::Lua;
+use omnilua::Lua;
 
 /// Unique payload marker so the flag-setting hook only reacts to this test's
 /// panic and tolerates any unrelated panic that might occur in the process.
@@ -77,7 +77,7 @@ fn non_threadclose_panic_in_resumed_coroutine_reaches_previous_hook() {
     );
 
     let boom = lua
-        .create_function(|_lua, ()| -> lua_rs_runtime::Result<i64> {
+        .create_function(|_lua, ()| -> omnilua::Result<i64> {
             std::panic::panic_any(MARKER)
         })
         .expect("panicking callback should create");

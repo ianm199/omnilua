@@ -1,7 +1,7 @@
 [package]
-name = "lua-cli"
+name = "omnilua-cli"
 version.workspace = true
-description = "The lua-rs command-line interpreter: Lua 5.4 in safe Rust."
+description = "Every Lua, everywhere — pure-Rust Lua 5.1–5.5, suite-passing, LuaRocks-compatible, wasm-ready."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -18,7 +18,7 @@ readme = "README.md"
 unsafe_code = "allow"
 
 [[bin]]
-name = "lua-rs"
+name = "omnilua"
 path = "src/main.rs"
 
 [features]

@@ -10,8 +10,8 @@ use std::io::{self, SeekFrom};
 use std::slice;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-use lua_rs_runtime::LuaFileHandle;
-use lua_rs_runtime::{HostHooks, LuaError, LuaRuntime, SandboxConfig, TripReason};
+use omnilua::LuaFileHandle;
+use omnilua::{HostHooks, LuaError, LuaRuntime, SandboxConfig, TripReason};
 use lua_types::LuaValue;
 
 thread_local! {

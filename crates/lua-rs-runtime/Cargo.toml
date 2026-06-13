@@ -1,13 +1,17 @@
 [package]
-name = "lua-rs-runtime"
+name = "omnilua"
 version.workspace = true
-description = "Embed Lua 5.4 in Rust: handles, userdata, and scoped borrows. Pure safe Rust, no C, runs in WebAssembly."
+description = "Every Lua, everywhere — pure-Rust Lua 5.1–5.5, suite-passing, LuaRocks-compatible, wasm-ready."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
+
+[lib]
+name = "omnilua"
+path = "src/lib.rs"
 
 [lints.rust]
 unsafe_code = "allow"

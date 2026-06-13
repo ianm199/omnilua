@@ -33,7 +33,7 @@
 //! `__lt`, and `__le` from the type's Rust trait impls.
 //!
 //! ```ignore
-//! use lua_rs_runtime::{lua_methods, Lua, LuaUserData};
+//! use omnilua::{lua_methods, Lua, LuaUserData};
 //!
 //! #[derive(LuaUserData, PartialEq, PartialOrd)]
 //! #[lua(methods)]
@@ -58,7 +58,7 @@
 //! touching freed memory.
 //!
 //! ```
-//! use lua_rs_runtime::{Lua, UserData, UserDataMethods};
+//! use omnilua::{Lua, UserData, UserDataMethods};
 //!
 //! struct Counter { value: i64 }
 //! impl UserData for Counter {
@@ -1191,7 +1191,7 @@ impl Lua {
     /// cleanly instead of using-after-the-borrow-ended.
     ///
     /// ```
-    /// use lua_rs_runtime::{Lua, UserData, UserDataMethods};
+    /// use omnilua::{Lua, UserData, UserDataMethods};
     ///
     /// struct Counter { value: i64 }
     ///

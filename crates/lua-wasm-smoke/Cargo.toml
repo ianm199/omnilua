@@ -18,4 +18,4 @@ unsafe_code = "allow"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-lua-rs-runtime.workspace = true
+omnilua.workspace = true

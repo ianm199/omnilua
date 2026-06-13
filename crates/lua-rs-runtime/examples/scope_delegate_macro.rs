@@ -8,7 +8,7 @@
 //! is written out by hand. Here every accessor below is just a normal Rust
 //! method.
 
-use lua_rs_runtime::{lua_methods, Lua, LuaUserData, Result};
+use omnilua::{lua_methods, Lua, LuaUserData, Result};
 
 #[derive(LuaUserData)]
 #[lua(methods)]

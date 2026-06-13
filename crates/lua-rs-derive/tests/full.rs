@@ -5,7 +5,7 @@
 use std::fmt;
 
 use lua_rs_derive::{lua_methods, LuaUserData};
-use lua_rs_runtime::Lua;
+use omnilua::Lua;
 
 #[derive(LuaUserData, PartialEq, PartialOrd)]
 #[lua(methods)]

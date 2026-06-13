@@ -11,7 +11,7 @@ use std::slice;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use omnilua::LuaFileHandle;
-use omnilua::{HostHooks, LuaError, LuaRuntime, SandboxConfig, TripReason};
+use omnilua::{HostHooks, LuaError, LuaRuntime, LuaVersion, SandboxConfig, TripReason};
 use lua_types::LuaValue;
 
 thread_local! {
@@ -20,6 +20,23 @@ thread_local! {
     /// Sandbox limits to (re)apply whenever the runtime is created or reset.
     /// `None` = unsandboxed. Set via `lua_rs_wasm_set_limits`.
     static SANDBOX_CFG: RefCell<Option<SandboxConfig>> = RefCell::new(None);
+    /// Language version the next-created runtime speaks. Defaults to 5.4 and is
+    /// re-applied on every create/reset. Set via `lua_rs_wasm_set_version`.
+    static SELECTED_VERSION: RefCell<LuaVersion> = RefCell::new(LuaVersion::default());
+}
+
+/// Map a one-byte version code (the `luac` version byte: `0x51`..=`0x55`, i.e.
+/// `5.1`..=`5.5`) onto a [`LuaVersion`]. Returns `None` for any other code —
+/// there is no fallback, an unknown code is rejected by the caller.
+fn version_from_code(code: u32) -> Option<LuaVersion> {
+    match code {
+        0x51 => Some(LuaVersion::V51),
+        0x52 => Some(LuaVersion::V52),
+        0x53 => Some(LuaVersion::V53),
+        0x54 => Some(LuaVersion::V54),
+        0x55 => Some(LuaVersion::V55),
+        _ => None,
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
@@ -382,11 +399,12 @@ fn imported_host_hooks() -> HostHooks {
     HostHooks::new().entropy(deterministic_entropy)
 }
 
-/// Create a fresh runtime with the host hooks and the currently-configured
-/// sandbox limits (if any) installed, so a fresh budget is in force after every
-/// create/reset.
+/// Create a fresh runtime with the host hooks, the currently-selected language
+/// version, and the currently-configured sandbox limits (if any) installed, so
+/// a fresh budget and the chosen backend are in force after every create/reset.
 fn new_configured_runtime() -> Result<LuaRuntime, LuaError> {
-    let mut runtime = LuaRuntime::with_hooks(imported_host_hooks())?;
+    let version = SELECTED_VERSION.with(|cell| *cell.borrow());
+    let mut runtime = LuaRuntime::with_hooks_versioned(imported_host_hooks(), version)?;
     SANDBOX_CFG.with(|cfg| -> Result<(), LuaError> {
         if let Some(config) = cfg.borrow().as_ref() {
             runtime.install_sandbox(config.clone())?;
@@ -480,6 +498,44 @@ pub extern "C" fn lua_rs_wasm_reset() -> i32 {
             0
         }
     }
+}
+
+/// Select the Lua language version for subsequent runs and rebuild the runtime
+/// on that backend.
+///
+/// `code` is the one-byte `luac` version byte: `0x51`..=`0x55` for Lua
+/// 5.1..=5.5. The selection persists across [`lua_rs_wasm_reset`] and
+/// [`lua_rs_wasm_set_limits`] (both re-create the runtime on the selected
+/// backend). Resetting the runtime here means the per-version stdlib roster and
+/// `_VERSION` are rebuilt for the chosen version.
+///
+/// Returns 1 on success, 0 on failure (unknown code, or backend init failure
+/// with the error in the last-error buffer).
+#[no_mangle]
+pub extern "C" fn lua_rs_wasm_set_version(code: u32) -> i32 {
+    let Some(version) = version_from_code(code) else {
+        set_last_error(format!("unknown Lua version code: {code:#x}").into_bytes());
+        return 0;
+    };
+    SELECTED_VERSION.with(|cell| *cell.borrow_mut() = version);
+    match reset_runtime() {
+        Ok(()) => {
+            clear_last_error();
+            1
+        }
+        Err(error) => {
+            set_lua_error(error);
+            0
+        }
+    }
+}
+
+/// The currently-selected Lua language version as its one-byte `luac` version
+/// byte (`0x51`..=`0x55`). Lets the embedder confirm which backend a runtime is
+/// speaking without re-deriving it.
+#[no_mangle]
+pub extern "C" fn lua_rs_wasm_version() -> u32 {
+    SELECTED_VERSION.with(|cell| cell.borrow().luac_version_byte() as u32)
 }
 
 #[no_mangle]

@@ -21,6 +21,7 @@ node --check packages/omnilua/index.mjs
 node --check packages/omnilua/node.mjs
 node --check packages/omnilua/scripts/build-wasm.mjs
 node --check packages/omnilua/scripts/smoke.mjs
+node --check packages/omnilua/scripts/version-smoke.mjs
 node --check packages/omnilua/scripts/install-smoke.mjs
 node --check packages/omnilua/scripts/registry-smoke.mjs
 node --check harness/wasm/runtime-smoke.mjs
@@ -51,6 +52,9 @@ fi
 echo "[wasm] running package smoke"
 npm test --prefix packages/omnilua
 
+echo "[wasm] running per-version divergence smoke"
+npm run test:versions --prefix packages/omnilua
+
 echo "[wasm] running tarball install smoke"
 npm run test:install --prefix packages/omnilua
 
@@ -75,6 +79,7 @@ for (const required of [
   "scripts/install-smoke.mjs",
   "scripts/registry-smoke.mjs",
   "scripts/smoke.mjs",
+  "scripts/version-smoke.mjs",
 ]) {
   if (!byPath.has(required)) {
     throw new Error(`npm pack file list missing ${required}`);

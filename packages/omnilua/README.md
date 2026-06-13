@@ -88,13 +88,33 @@ Omit a limit (or pass `0`) to leave that dimension unbounded.
 
 ## Which Lua version
 
-The published npm artifact runs **Lua 5.4**. omniLua's defining feature —
-running 5.1, 5.2, 5.3, 5.4, and 5.5 from one core, selected per instance — is
-exposed today through the native crate (`Lua::new_versioned(...)`) and is
-demonstrated live in the
-[playground](https://ianm199.github.io/omnilua/), which runs the same snippet
-across all five versions side by side. Per-version selection over the wasm ABI
-is on the roadmap; until then, treat this package as the 5.4 runtime.
+omniLua's defining feature — running 5.1, 5.2, 5.3, 5.4, and 5.5 from one core,
+selected per instance — is now live in this package. **All five backends ship
+inside the single `.wasm` file**; you pick the version when you load it, with no
+second download and no recompile:
+
+```js
+import { loadLuaRs, luaRsWasmUrl } from "omnilua";
+
+const { lua: lua51 } = await loadLuaRs(luaRsWasmUrl, { version: "5.1" });
+const { lua: lua54 } = await loadLuaRs(luaRsWasmUrl, { version: "5.4" });
+
+lua51.tryExec("print(3 / 3)"); // 1     — float-only model (5.1)
+lua54.tryExec("print(3 / 3)"); // 1.0   — dual-subtype model (5.4)
+```
+
+`version` accepts `"5.1"`, `"5.2"`, `"5.3"`, `"5.4"`, or `"5.5"`; the default is
+`"5.4"`. You can also switch an existing runtime in place — `lua.setVersion("5.2")`
+rebuilds it on that backend (resetting state), and `lua.currentVersion()` reports
+which version it speaks. The version determines the standard-library roster too:
+`bit32` only exists on 5.2, `utf8`/`string.pack` only on 5.3+, and so on. The
+[playground](https://ianm199.github.io/omnilua/) drives exactly this API to run
+one snippet across all five versions side by side.
+
+Carrying every backend in one module costs almost nothing: the core already
+multiplexes all five versions, so wiring up per-instance selection added under a
+kilobyte to the `.wasm` (≈1.16 MB total). There is no per-version bundle to pick
+between — one file is every Lua.
 
 ## Size expectations
 

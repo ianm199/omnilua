@@ -3234,14 +3234,40 @@ impl LuaRuntime {
         Self::with_hooks(HostHooks::default())
     }
 
-    /// Create a Lua runtime with the supplied host capabilities.
+    /// Create a Lua runtime with the supplied host capabilities, speaking the
+    /// default language version ([`LuaVersion::default`], 5.4).
     pub fn with_hooks(hooks: HostHooks) -> Result<Self> {
+        Self::with_hooks_versioned(hooks, LuaVersion::default())
+    }
+
+    /// Create a Lua runtime with the supplied host capabilities for a specific
+    /// language version.
+    ///
+    /// The version is the backend selector for the whole runtime: it is set on
+    /// the state **before** [`open_libs`] so the per-version stdlib roster
+    /// (e.g. `bit32` on 5.2, `utf8`/`string.pack` on 5.3+) and the `_VERSION`
+    /// global are built for that version. The lower-level twin of
+    /// [`Lua::with_hooks_versioned`]; the wasm ABI builds its per-instance
+    /// runtime through this entry point.
+    pub fn with_hooks_versioned(hooks: HostHooks, version: LuaVersion) -> Result<Self> {
+        if !version.is_supported() {
+            return Err(LuaError::runtime(format_args!(
+                "{} is not yet supported by lua-rs (supported: 5.1, 5.2, 5.3, 5.4, 5.5)",
+                version.version_str()
+            )));
+        }
         let mut state = new_state().ok_or(LuaError::Memory)?;
+        state.global_mut().lua_version = version;
         install_parser_hook(&mut state);
         hooks.install(&mut state);
         open_libs(&mut state)?;
         lua_vm::api::configure_startup_gc_mode(&mut state);
         Ok(Self { state })
+    }
+
+    /// The Lua language version this runtime speaks. Fixed at construction.
+    pub fn version(&self) -> LuaVersion {
+        self.state.global().lua_version
     }
 
     pub fn state(&self) -> &LuaState {
@@ -3574,6 +3600,40 @@ mod tests {
         assert_eq!(v, "Lua 5.3");
         let from_lua: String = lua.load("return _VERSION").eval().unwrap();
         assert_eq!(from_lua, "Lua 5.3");
+    }
+
+    #[test]
+    fn runtime_with_hooks_versioned_threads_version() {
+        for (version, expected) in [
+            (LuaVersion::V51, "Lua 5.1"),
+            (LuaVersion::V52, "Lua 5.2"),
+            (LuaVersion::V53, "Lua 5.3"),
+            (LuaVersion::V54, "Lua 5.4"),
+            (LuaVersion::V55, "Lua 5.5"),
+        ] {
+            let mut runtime = LuaRuntime::with_hooks_versioned(HostHooks::default(), version)
+                .expect("runtime should initialize");
+            assert_eq!(runtime.version(), version);
+            runtime
+                .exec(
+                    format!("assert(_VERSION == {expected:?})").as_bytes(),
+                    b"=with_hooks_versioned-test",
+                )
+                .expect("_VERSION should match the selected backend");
+        }
+    }
+
+    #[test]
+    fn runtime_with_hooks_versioned_roster_diverges() {
+        let mut v52 = LuaRuntime::with_hooks_versioned(HostHooks::default(), LuaVersion::V52)
+            .expect("5.2 runtime");
+        v52.exec(b"assert(bit32 ~= nil)", b"=roster-test")
+            .expect("bit32 is present on the 5.2 backend");
+
+        let mut v54 = LuaRuntime::with_hooks_versioned(HostHooks::default(), LuaVersion::V54)
+            .expect("5.4 runtime");
+        v54.exec(b"assert(bit32 == nil)", b"=roster-test")
+            .expect("bit32 is absent on the 5.4 backend");
     }
 
     #[test]

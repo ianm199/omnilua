@@ -33,8 +33,54 @@ function asBytes(value) {
   return encoder.encode(String(value));
 }
 
+/**
+ * The Lua language versions this runtime can speak, mapped to the one-byte
+ * `luac` version code the wasm ABI expects (`lua_rs_wasm_set_version`).
+ */
+const VERSION_CODES = new Map([
+  ["5.1", 0x51],
+  ["5.2", 0x52],
+  ["5.3", 0x53],
+  ["5.4", 0x54],
+  ["5.5", 0x55],
+]);
+
+/** Default Lua version when none is requested. */
+const DEFAULT_VERSION = "5.4";
+
+/**
+ * Normalize a version selector to its wasm version code. Accepts the canonical
+ * strings `"5.1"`..`"5.5"`, the bare numbers `5.1`..`5.5`, and the codes
+ * `0x51`..`0x55`. Throws on anything else — there is no silent fallback.
+ */
+function versionToCode(version) {
+  if (typeof version === "number") {
+    if (VERSION_CODES.has(version.toFixed(1))) {
+      return VERSION_CODES.get(version.toFixed(1));
+    }
+    if ([0x51, 0x52, 0x53, 0x54, 0x55].includes(version)) {
+      return version;
+    }
+  }
+  const key = String(version);
+  if (VERSION_CODES.has(key)) {
+    return VERSION_CODES.get(key);
+  }
+  throw new Error(
+    `unknown Lua version ${JSON.stringify(version)} (expected one of ${[...VERSION_CODES.keys()].join(", ")})`,
+  );
+}
+
 export class LuaRsRuntime {
-  constructor({ env, files, dirs, stdin = "", unixTime = 1700000000n, onStdout } = {}) {
+  constructor({
+    env,
+    files,
+    dirs,
+    stdin = "",
+    unixTime = 1700000000n,
+    onStdout,
+    version = DEFAULT_VERSION,
+  } = {}) {
     this.env = asMap(env);
     this.files = asMap(files);
     this.dirs = asSet(dirs);
@@ -42,6 +88,8 @@ export class LuaRsRuntime {
     this.stdinOffset = 0;
     this.unixTime = unixTime;
     this.onStdout = onStdout;
+    this.version = String(version);
+    this.versionCode = versionToCode(version);
     this.instance = undefined;
     this.stdout = "";
     this.nextFileId = 1;
@@ -77,7 +125,48 @@ export class LuaRsRuntime {
 
   attach(instance) {
     this.instance = instance;
+    this.applyVersion(this.version);
     return this;
+  }
+
+  /**
+   * Select the Lua language version this runtime speaks and rebuild the wasm
+   * runtime on that backend. Accepts `"5.1"`..`"5.5"`. The version persists
+   * across `reset()` and `setLimits(...)` (both re-create the runtime on the
+   * selected backend). The default 5.4 selection on a wasm module that predates
+   * the version ABI is a no-op; requesting any *other* version against such a
+   * module throws rather than silently running 5.4.
+   */
+  setVersion(version) {
+    const code = versionToCode(version);
+    const setVersion = this.instance?.exports?.lua_rs_wasm_set_version;
+    if (!setVersion) {
+      if (String(version) === DEFAULT_VERSION) {
+        this.version = DEFAULT_VERSION;
+        this.versionCode = code;
+        return this;
+      }
+      throw new Error(
+        "WASM module does not export lua_rs_wasm_set_version (no per-version backend in this .wasm)",
+      );
+    }
+    const status = setVersion(code);
+    if (status !== 1) {
+      const message = this.lastErrorText();
+      throw new Error(message || `Lua set_version failed with status ${status}`);
+    }
+    this.version = String(version);
+    this.versionCode = code;
+    return this;
+  }
+
+  applyVersion(version) {
+    return this.setVersion(version);
+  }
+
+  /** The Lua language version this runtime is currently speaking (e.g. "5.4"). */
+  currentVersion() {
+    return this.version;
   }
 
   memoryBytes() {

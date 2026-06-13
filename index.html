@@ -251,13 +251,13 @@
       </div>
 
       <p class="reality" id="reality">
-        <b>What's live vs reference:</b> the shipped <code>.wasm</code> bundle currently runs the
-        <b>Lua 5.4</b> backend only, so the 5.4 column executes your edited code <b>live</b>. The
-        5.1/5.2/5.3/5.5 columns show <b>verified reference output</b> for the default snippet —
-        captured from the official PUC-Rio reference binaries — and are labelled <code>ref</code>.
-        Runtime per-instance version selection across all five backends is the live frontier
-        (see the multi-version API spec); when the multi-backend <code>.wasm</code> ships, every
-        column runs live with no page change.
+        <b>All five columns are live.</b> The shipped <code>.wasm</code> bundle carries every
+        backend (5.1, 5.2, 5.3, 5.4, 5.5) in <b>one module</b> and selects the version
+        per run, so each column executes <b>your edited code</b> on its own Lua version —
+        no second download, no recompile. Before the runtime finishes loading, the columns
+        briefly show <b>verified reference output</b> for the default snippet (captured from
+        the official PUC-Rio binaries, tagged <code>ref</code>) and flip to <code>live</code>
+        the instant the runtime is ready.
       </p>
     </section>
 
@@ -316,7 +316,6 @@
     const WASM_URL = new URL("./packages/omnilua/dist/lua_wasm.wasm", import.meta.url);
 
     const VERSIONS = ["5.1", "5.2", "5.3", "5.4", "5.5"];
-    const LIVE_VERSION = "5.4";
 
     /* ── Default hero snippet ──────────────────────────────────────────────
        One chunk valid in Lua 5.1 → 5.5 whose OUTPUT diverges by version.
@@ -519,13 +518,20 @@ end`,
       }
     }
 
-    /* ── run one snippet through the live (5.4) runtime ── */
-    function runLive(src) {
+    /* ── run one snippet through the live runtime on a chosen version ──
+       The single wasm runtime multiplexes all five backends: `setVersion`
+       rebuilds it on the requested backend (resetting state), so each call is a
+       fresh per-version interpreter. Defaults to 5.4 when no version is given. */
+    function runLive(src, version) {
       if (!lua) {
         return { ok: false, out: "", error: wasmError || "runtime not loaded" };
       }
       try {
-        lua.reset();
+        if (version) {
+          lua.setVersion(version);
+        } else {
+          lua.reset();
+        }
         host.resetOutput();
         const result = lua.tryExec(src);
         return { ok: result.ok, out: host.outputText(), error: result.ok ? "" : result.error };
@@ -534,35 +540,44 @@ end`,
       }
     }
 
-    /* ── render the five-column "all versions" view ── */
-    function renderColumns(liveResult) {
+    /* ── render the five-column "all versions" view ──
+       Every column runs the edited snippet LIVE on its own backend. When the
+       wasm runtime has not finished loading yet, the default snippet's
+       reference columns are shown as a first-paint placeholder (tagged `ref`)
+       and replaced by live output the moment the runtime is ready. */
+    function renderColumns() {
       colsEl.innerHTML = "";
       const isHero = codeEl.value.trim() === HERO.trim();
+      const ready = lua !== null;
       for (const v of VERSIONS) {
         const col = document.createElement("div");
         col.className = "col";
-        const isLive = v === LIVE_VERSION;
         const head = document.createElement("div");
         head.className = "col-head";
         head.innerHTML = `<span class="v">Lua ${v}</span>`;
         const tag = document.createElement("span");
-        tag.className = "tag " + (isLive ? "live" : "ref");
-        tag.textContent = isLive ? "live" : "ref";
-        head.appendChild(tag);
         const pre = document.createElement("pre");
 
-        if (isLive) {
-          if (liveResult.ok) {
-            pre.textContent = liveResult.out || "(no output)";
+        if (ready) {
+          tag.className = "tag live";
+          tag.textContent = "live";
+          const r = runLive(codeEl.value, v);
+          if (r.ok) {
+            pre.textContent = r.out || "(no output)";
           } else {
             pre.className = "err";
-            pre.textContent = (liveResult.out || "") + (liveResult.error || "error");
+            pre.textContent = (r.out || "") + (r.error || "error");
           }
-        } else if (isHero) {
-          pre.textContent = HERO_REF[v];
         } else {
-          pre.innerHTML = `<span class="placeholder">reference backend not in this .wasm yet — only the live ${LIVE_VERSION} column runs edited code. Load the default snippet to see verified ${v} reference output.</span>`;
+          tag.className = "tag ref";
+          tag.textContent = "ref";
+          if (isHero) {
+            pre.textContent = HERO_REF[v];
+          } else {
+            pre.innerHTML = `<span class="placeholder">loading runtime…</span>`;
+          }
         }
+        head.appendChild(tag);
         col.appendChild(head);
         col.appendChild(pre);
         colsEl.appendChild(col);
@@ -572,26 +587,23 @@ end`,
     /* ── run, dispatching on mode ── */
     function run() {
       if (mode === "all") {
-        const live = runLive(codeEl.value);
-        renderColumns(live);
+        renderColumns();
       } else {
         const v = verSel.value;
         singleVerLabel.textContent = "Lua " + v;
-        const isLive = v === LIVE_VERSION;
-        singleTag.className = "tag " + (isLive ? "live" : "ref");
-        singleTag.textContent = isLive ? "live" : "ref";
-        if (isLive) {
-          const r = runLive(codeEl.value);
+        const ready = lua !== null;
+        if (ready) {
+          singleTag.className = "tag live";
+          singleTag.textContent = "live";
+          const r = runLive(codeEl.value, v);
           singlePre.className = r.ok ? "" : "err";
           singlePre.textContent = r.ok ? (r.out || "(no output)") : ((r.out || "") + (r.error || "error"));
         } else {
+          singleTag.className = "tag ref";
+          singleTag.textContent = "ref";
           const isHero = codeEl.value.trim() === HERO.trim();
           singlePre.className = "";
-          if (isHero) {
-            singlePre.textContent = HERO_REF[v];
-          } else {
-            singlePre.innerHTML = `<span class="placeholder">The ${v} backend isn't in this .wasm bundle yet — only Lua ${LIVE_VERSION} runs edited code live. Switch to Lua ${LIVE_VERSION}, or load the default snippet for verified ${v} reference output.</span>`;
-          }
+          singlePre.textContent = isHero ? HERO_REF[v] : "loading runtime…";
         }
       }
       writePermalink();
@@ -654,8 +666,9 @@ end`,
         setMode("all");
       }
       // First paint shows the default snippet's reference columns immediately,
-      // even before the wasm finishes loading.
-      renderColumns({ ok: false, out: "", error: "loading runtime…" });
+      // even before the wasm finishes loading. Once the runtime is ready, the
+      // final run() below re-renders every column with LIVE per-version output.
+      renderColumns();
 
       try {
         const runtime = await loadLuaRs(WASM_URL, {

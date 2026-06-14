@@ -1,52 +1,34 @@
-//! Standard mathematical library — `math.*`
+//! Standard mathematical library — `math.*`.
 //!
-//! Translated from `src/lmathlib.c` (Lua 5.4.7, 782 lines, 28 functions).
+//! The PRNG is xoshiro256** operating on four 64-bit words (the single 64-bit
+//! code path; there is no 32-bit fallback to keep).
 //!
-//! The PRNG is xoshiro256** operating on four 64-bit words. In C the
-//! implementation has two code paths (64-bit integers vs two 32-bit halves);
-//! Rust always has `u64`, so only the 64-bit path is kept.
-//!
-//! Deprecated compat functions guarded by `LUA_COMPAT_MATHLIB` (cosh, sinh,
-//! tanh, pow, frexp, ldexp, log10, atan2) ship in the default lua5.3.6 build
-//! and are registered only under the 5.3 backend (`luaopen_math` gates them on
-//! `LuaVersion::V53`); they remain absent in 5.4/5.5. `atan2` is an alias of
-//! the existing `math_atan`. See `specs/followup/5.3-math.md`.
+//! The deprecated `LUA_COMPAT_MATHLIB` roster (`cosh`, `sinh`, `tanh`, `pow`,
+//! `log10`, `atan2`) ships in the default 5.1/5.2/5.3/5.4 builds and is dropped
+//! in 5.5; `frexp`/`ldexp` survive into 5.5. `atan2` is an alias of `math_atan`.
+//! Which functions exist per version is the registration logic in
+//! [`luaopen_math`].
 
-// PORT NOTE: All imports below will be unresolved until Phase B lands the
-// lua-types crate. Expected Phase-A errors: E0432, E0412, E0433, E0425.
 use crate::state_stub::{LuaState, LuaStateStubExt as _};
 use lua_types::{LuaError, LuaType, LuaValue};
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-///
-/// Higher precision than `std::f64::consts::PI`; matches the C source literal.
+/// `math.pi`. Higher precision than `std::f64::consts::PI` (which is rounded to
+/// the nearest `f64`); both round-trip to the same `f64` bit pattern.
 const PI: f64 = 3.141592653589793238462643383279502884_f64;
 
-/// Number of binary digits in the mantissa of `lua_Number` (f64).
-const FIGS: u32 = 53; // DBL_MANT_DIG for f64
+/// Number of binary digits in the `f64` mantissa (`DBL_MANT_DIG`).
+const FIGS: u32 = 53;
 
-/// Bits to discard from the 64-bit random word before float conversion.
-const SHIFT64_FIG: u32 = 64 - FIGS; // = 11
+/// Bits to discard from a 64-bit random word before float conversion (`= 11`):
+/// the word is reduced to its top [`FIGS`] significant bits.
+const SHIFT64_FIG: u32 = 64 - FIGS;
 
 // ── Type aliases for library registration ─────────────────────────────────
 
 /// A Lua C-style function: takes the Lua state, returns count of pushed values.
-/// PORT NOTE: Phase B will unify with `lua_types::LuaCFunction`.
 type LuaCFunction = fn(&mut LuaState) -> Result<usize, LuaError>;
-
-/// An entry in the library registration table (name, optional function).
-/// `None` is used for placeholder entries whose values are set manually
-/// (e.g. `pi`, `huge`, `maxinteger`, `mininteger`, `random`, `randomseed`).
-/// PORT NOTE: Phase B will unify with `lua_types::LibReg`.
-#[expect(
-    dead_code,
-    reason = "ported stdlib helper; not yet wired into the runtime"
-)]
-struct LibReg {
-    name: &'static [u8],
-    func: Option<LuaCFunction>,
-}
 
 // ── PRNG state ────────────────────────────────────────────────────────────
 
@@ -91,7 +73,6 @@ fn next_rand(s: &mut [u64; 4]) -> u64 {
 /// by `scaleFIG = 0.5 / 2^52`, then corrects the two's-complement sign.
 fn rand_to_float(x: u64) -> f64 {
     let sx = (x >> SHIFT64_FIG) as i64;
-    //            = 0.5 / 2^52
     let scale_fig: f64 = 0.5 / ((1u64 << (FIGS - 1)) as f64);
     let mut res = (sx as f64) * scale_fig;
     if sx < 0 {
@@ -103,39 +84,42 @@ fn rand_to_float(x: u64) -> f64 {
 
 /// Initialise the four PRNG words from two seed values.
 ///
-///
-/// PORT NOTE: The Lua pushes (n1, n2) are done at the call site in Rust so
-/// that this function does not need `&mut LuaState`, avoiding a borrow
-/// conflict with the upvalue `RanState`.
+/// `s[1]` is forced to `0xff` so the state is never all-zero (xoshiro's
+/// fixed point), and sixteen draws are discarded to spread the seed bits before
+/// the first observable output. Takes the word array (not the [`LuaState`]) so
+/// the caller can push the seed values without a borrow conflict against the
+/// `RanState` upvalue.
 fn set_seed_words(s: &mut [u64; 4], n1: u64, n2: u64) {
     s[0] = n1;
-    s[1] = 0xff; // avoid a zero state
+    s[1] = 0xff;
     s[2] = n2;
     s[3] = 0;
     for _ in 0..16 {
-        next_rand(s); // discard initial values to "spread" seed
+        next_rand(s);
     }
 }
 
-/// Project `ran` uniformly into [0, n].
+/// Project `ran` uniformly into `[0, n]` by rejection sampling.
 ///
-///
-/// Uses rejection sampling with the smallest Mersenne number ≥ n as a mask.
-/// Takes `&mut [u64; 4]` rather than `&mut RanState` to avoid nested borrows
-/// at call sites.
+/// When `n + 1` is a power of two the low bits are already uniform, so a single
+/// mask suffices. Otherwise `lim` is built as the smallest `2^b - 1` not smaller
+/// than `n` (the bit-smear), and draws outside `[0, n]` are rejected and
+/// redrawn. The `>> 32` smear step is unconditional here because `u64` always
+/// has 64 bits; the C source guards it behind an `#if` on the integer width.
+/// Takes the word array (not `&mut RanState`) to avoid nested borrows at the
+/// call sites.
 fn project(mut ran: u64, n: u64, s: &mut [u64; 4]) -> u64 {
     if (n & n.wrapping_add(1)) == 0 {
         return ran & n;
     }
-    // Compute the smallest (2^b - 1) not smaller than n.
     let mut lim = n;
     lim |= lim >> 1;
     lim |= lim >> 2;
     lim |= lim >> 4;
     lim |= lim >> 8;
     lim |= lim >> 16;
-    lim |= lim >> 32; // u64 always has 64 bits; C guards this with #if
-    debug_assert!((lim & lim.wrapping_add(1)) == 0); // lim+1 is a power of 2
+    lim |= lim >> 32;
+    debug_assert!((lim & lim.wrapping_add(1)) == 0);
     debug_assert!(lim >= n);
     debug_assert!((lim >> 1) < n);
     loop {
@@ -183,6 +167,16 @@ fn push_int_or_float(state: &mut LuaState, d: f64) {
     } else {
         state.push(LuaValue::Float(d));
     }
+}
+
+/// Leave the first argument as the sole result (an integer floor/ceil/modf is
+/// already its own integer part — return it unchanged, preserving subtype).
+///
+/// This goes through the public, frame-relative [`lua_vm::api::set_top`] so the
+/// truncation is relative to the call frame; the inherent `LuaState::set_top`
+/// would treat its argument as an absolute `StackIdx` and discard the argument.
+fn keep_first_arg(state: &mut LuaState) -> Result<(), LuaError> {
+    lua_vm::api::set_top(state, 1)
 }
 
 // ── Basic math functions ──────────────────────────────────────────────────
@@ -379,19 +373,17 @@ fn frexp(x: f64) -> (f64, i32) {
     (f64::from_bits(mantissa_bits), exponent)
 }
 
-/// `math.tointeger(x)` — convert x to an integer or return false.
+/// `math.tointeger(x)` — return `x` as an integer, or the fail value when it
+/// has no exact integer representation.
 ///
+/// The fail value is `nil`, not `false`: the default 5.3/5.4/5.5 builds expand
+/// `luaL_pushfail` to a nil push (only a `LUA_FAILISFALSE` build would push
+/// `false`), and the oracle contract pins the nil.
 fn math_toint(state: &mut LuaState) -> Result<usize, LuaError> {
-    // TODO(port): state.to_integer_opt(1) should return Option<i64>;
-    // the method name/signature will be confirmed in Phase B.
-    let maybe_n: Option<i64> = state.to_integer_opt(1);
-    if let Some(n) = maybe_n {
+    if let Some(n) = state.to_integer_opt(1) {
         state.push(LuaValue::Int(n));
     } else {
         state.check_any(1)?;
-        // luaL_pushfail expands to lua_pushnil in the default 5.3/5.4/5.5
-        // builds; only a LUA_FAILISFALSE build pushes false, which the oracle
-        // contract pins off.
         state.push(LuaValue::Nil);
     }
     Ok(1)
@@ -401,10 +393,7 @@ fn math_toint(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 fn math_floor(state: &mut LuaState) -> Result<usize, LuaError> {
     if arg_is_int(state, 1) {
-        // Must go through the public C-API set_top (relative to the call
-        // frame); the inherent LuaState::set_top treats its argument as an
-        // absolute StackIdx.
-        lua_vm::api::set_top(state, 1)?;
+        keep_first_arg(state)?;
     } else {
         let d = state.check_number(1)?.floor();
         push_int_or_float(state, d);
@@ -416,8 +405,7 @@ fn math_floor(state: &mut LuaState) -> Result<usize, LuaError> {
 ///
 fn math_ceil(state: &mut LuaState) -> Result<usize, LuaError> {
     if arg_is_int(state, 1) {
-        // Public C-API set_top (relative); inherent LuaState::set_top is absolute.
-        lua_vm::api::set_top(state, 1)?;
+        keep_first_arg(state)?;
     } else {
         let d = state.check_number(1)?.ceil();
         push_int_or_float(state, d);
@@ -447,16 +435,15 @@ fn math_fmod(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-/// `math.modf(x)` — split into integer and fractional parts; returns 2 values.
+/// `math.modf(x)` — split into integer and fractional parts; returns both.
 ///
-///
-/// PORT NOTE: Does not use `modf` (avoids `double *` / `float *` ABI mismatch
-/// for non-double `lua_Number`). Instead, uses ceil/floor + subtraction.
+/// The integer part is computed with `ceil`/`floor` + subtraction rather than
+/// libc `modf`, avoiding a `double *` out-parameter ABI. An integer argument is
+/// its own integer part with a `0.0` fractional part.
 fn math_modf(state: &mut LuaState) -> Result<usize, LuaError> {
     if arg_is_int(state, 1) {
-        // Public C-API set_top (relative); inherent LuaState::set_top is absolute.
-        lua_vm::api::set_top(state, 1)?; // integer part is the integer itself
-        state.push(LuaValue::Float(0.0)); // no fractional part
+        keep_first_arg(state)?;
+        state.push(LuaValue::Float(0.0));
     } else {
         let n = state.check_number(1)?;
         let ip = if n < 0.0 { n.ceil() } else { n.floor() };
@@ -570,8 +557,12 @@ fn math_max(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-/// `math.type(x)` — return `"integer"`, `"float"`, or nil for non-numbers.
+/// `math.type(x)` — return `"integer"`, `"float"`, or the fail value for
+/// non-numbers.
 ///
+/// The non-number fail value is `nil`, not `false`, for the same reason as
+/// [`math_toint`]: `luaL_pushfail` pushes nil in the default builds and the
+/// oracle contract pins the nil.
 fn math_type(state: &mut LuaState) -> Result<usize, LuaError> {
     if matches!(state.type_at(1), LuaType::Number) {
         if arg_is_int(state, 1) {
@@ -581,9 +572,6 @@ fn math_type(state: &mut LuaState) -> Result<usize, LuaError> {
         }
     } else {
         state.check_any(1)?;
-        // luaL_pushfail expands to lua_pushnil in the default 5.3/5.4/5.5
-        // builds; only a LUA_FAILISFALSE build pushes false, which the oracle
-        // contract pins off.
         state.push(LuaValue::Nil);
     }
     Ok(1)
@@ -593,17 +581,16 @@ fn math_type(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// `math.random([m [, n]])` — pseudo-random number generation.
 ///
+/// With no arguments: float in `[0, 1)`. With one argument `n`: integer in
+/// `[1, n]` (or a full-range `u64` when `n == 0`, on 5.4/5.5). With two
+/// arguments `m, n`: integer in `[m, n]`. The PRNG word is advanced first, then
+/// the arguments are read via a separate borrow.
 ///
-/// With no arguments: float in [0, 1).
-/// With one argument n: integer in [1, n] (or full random u64 if n == 0).
-/// With two arguments m, n: integer in [m, n].
+/// TODO: the PRNG state is a thread-local rather than per-`lua_State` typed
+/// userdata in closure upvalue 1; migrating it to `GcRef<RefCell<RanState>>`
+/// (so each state has its own generator) is deferred to the upvalue-userdata
+/// work, not changed here.
 fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
-    // TODO(port): RanState is stored as typed userdata in closure upvalue 1.
-    // Phase B must implement `state.upvalue_userdata_mut::<RanState>(1)` using
-    // interior mutability (e.g. GcRef<RefCell<RanState>>) to avoid the borrow
-    // conflict between &mut RanState and subsequent &mut LuaState push calls.
-    //
-    // For Phase A: advance PRNG and get args via separate borrows.
     let rv = advance_prng(state)?;
     let n_args = state.get_top();
 
@@ -678,34 +665,29 @@ fn math_random(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-/// `math.randomseed([x [, y]])` — seed the PRNG; returns two seed values.
+/// `math.randomseed([x [, y]])` — seed the PRNG.
 ///
+/// The return shape and auto-seed behavior are version-gated and load-bearing:
+/// - 5.1/5.2 (float-only) REQUIRE the seed argument (a missing one raises
+///   "number expected, got no value"), take a single seed word, and return NO
+///   values.
+/// - 5.3+ auto-seed from host entropy when the argument is absent and return the
+///   two seed words.
+///
+/// See `specs/followup/5.1-numbers-prng.md`.
 fn math_randomseed(state: &mut LuaState) -> Result<usize, LuaError> {
-    // TODO(port): same upvalue userdata access issue as math_random.
-    //
-    // 5.1's `math.randomseed` is `l_srand((unsigned int)luaL_checknumber(L, 1))`:
-    // the seed argument is REQUIRED (no auto-seed when absent — a missing arg
-    // raises "number expected, got no value"), and the function returns **no**
-    // values (the seed-word push is a 5.4/5.5 behavior). 5.2 also requires the
-    // seed but its `luaL_checknumber` floors and likewise returns nothing; the
-    // modern (5.3+) bodies auto-seed when absent and return the two seed words.
-    // See specs/followup/5.1-numbers-prng.md.
     let float_only = state.global().lua_version.number_model() == lua_types::NumberModel::FloatOnly;
 
     if matches!(state.type_at(1), LuaType::None) {
         if float_only {
-            // No auto-seed under 5.1/5.2; the missing arg is an error.
             let n1 = state.check_integer(1)? as u64;
             apply_set_seed_quiet(state, n1, 0);
             return Ok(0);
         }
-        // randseed uses time(NULL) and address of L for entropy.
         apply_random_seed(state)?;
     } else {
-        //    lua_Integer n2 = luaL_optinteger(L, 2, 0);
         let n1 = state.check_integer(1)? as u64;
         if float_only {
-            // 5.1/5.2 take a single seed and return nothing.
             apply_set_seed_quiet(state, n1, 0);
             return Ok(0);
         }
@@ -715,41 +697,36 @@ fn math_randomseed(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(2)
 }
 
-/// Advance the PRNG stored in the thread-local `RAN_STATE` and return the
-/// raw 64-bit output.
+/// Advance the PRNG in the thread-local [`RAN_STATE`] and return the raw 64-bit
+/// output.
 ///
-/// PORT NOTE: In C this draws from the userdata in closure upvalue 1. The
-/// Rust port stores the PRNG state in a thread-local until typed-userdata
-/// closure upvalues are wired up. Storage location is the only difference;
-/// the algorithm is unchanged.
+/// The thread-local is the only difference from the C source, which draws from
+/// userdata in closure upvalue 1; the [`next_rand`] algorithm is identical (see
+/// [`math_random`] for the deferred per-state migration).
 fn advance_prng(_state: &mut LuaState) -> Result<u64, LuaError> {
     Ok(RAN_STATE.with(|r| next_rand(&mut r.borrow_mut().s)))
 }
 
-/// Apply rejection sampling for `math.random` using the thread-local PRNG.
-///
-/// PORT NOTE: see `advance_prng` for the thread-local rationale.
+/// Project a raw draw into `[0, n]` using the thread-local PRNG for any
+/// rejection redraws (see [`advance_prng`] for the thread-local rationale).
 fn project_from_upvalue(_state: &mut LuaState, ran: u64, n: u64) -> Result<u64, LuaError> {
     Ok(RAN_STATE.with(|r| project(ran, n, &mut r.borrow_mut().s)))
 }
 
-/// Seed the PRNG from wall-clock time (entropy source).
+/// Seed the PRNG from the host entropy hook (the 5.3+ auto-seed path).
 ///
-///
-/// TODO(port): must write n1 and n2 back to the upvalue RanState.
+/// The second seed word is derived deterministically from the entropy value;
+/// the C source additionally mixes address entropy, which is deferred until a
+/// richer host entropy API exists.
 fn apply_random_seed(state: &mut LuaState) -> Result<(), LuaError> {
     let entropy = state.global().entropy_hook.map(|hook| hook()).unwrap_or(0);
     let seed1 = entropy;
-    // TODO(port): C also mixes address entropy; keep the second seed derived
-    // deterministically unless a richer host entropy API is added.
     let seed2: u64 = entropy.rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
     apply_set_seed(state, seed1, seed2)
 }
 
-/// Apply explicit seeds to the PRNG and push them onto the stack.
-///
-///
-/// PORT NOTE: writes seeds into the thread-local RanState (see `advance_prng`).
+/// Apply explicit seeds to the thread-local PRNG and push them onto the stack
+/// (the 5.3+ `randomseed` return shape — the two seed words).
 fn apply_set_seed(state: &mut LuaState, n1: u64, n2: u64) -> Result<(), LuaError> {
     RAN_STATE.with(|r| set_seed_words(&mut r.borrow_mut().s, n1, n2));
     state.push(LuaValue::Int(n1 as i64));
@@ -766,13 +743,11 @@ fn apply_set_seed_quiet(_state: &mut LuaState, n1: u64, n2: u64) {
 }
 
 /// Register `math.random` and `math.randomseed` on the math library table at
-/// stack top, after seeding the thread-local PRNG.
+/// stack top, after seeding the PRNG.
 ///
-///
-/// PORT NOTE: C stores the PRNG inside a userdata bound as upvalue 1 of both
-/// closures. Until typed userdata closure upvalues are available, the Rust
-/// port keeps the PRNG in a thread-local (see `RAN_STATE`) and registers the
-/// functions as plain non-closure entries on the library table.
+/// C binds the PRNG state as upvalue 1 of both closures; with the PRNG in a
+/// thread-local ([`RAN_STATE`]) these are registered as plain (non-closure)
+/// entries instead.
 fn set_rand_func(state: &mut LuaState) -> Result<(), LuaError> {
     apply_random_seed(state)?;
     state.pop_n(2);
@@ -785,128 +760,6 @@ fn set_rand_func(state: &mut LuaState) -> Result<(), LuaError> {
 }
 
 // ── Library registration table ────────────────────────────────────────────
-
-/// The `math` library function table.
-///
-///
-/// Placeholder entries (`None`) are filled in manually by `luaopen_math`
-/// (`pi`, `huge`, `maxinteger`, `mininteger`) or by `set_rand_func`
-/// (`random`, `randomseed`).
-#[expect(
-    dead_code,
-    reason = "ported stdlib helper; not yet wired into the runtime"
-)]
-static MATHLIB: &[LibReg] = &[
-    LibReg {
-        name: b"abs",
-        func: Some(math_abs),
-    },
-    LibReg {
-        name: b"acos",
-        func: Some(math_acos),
-    },
-    LibReg {
-        name: b"asin",
-        func: Some(math_asin),
-    },
-    LibReg {
-        name: b"atan",
-        func: Some(math_atan),
-    },
-    LibReg {
-        name: b"ceil",
-        func: Some(math_ceil),
-    },
-    LibReg {
-        name: b"cos",
-        func: Some(math_cos),
-    },
-    LibReg {
-        name: b"deg",
-        func: Some(math_deg),
-    },
-    LibReg {
-        name: b"exp",
-        func: Some(math_exp),
-    },
-    LibReg {
-        name: b"tointeger",
-        func: Some(math_toint),
-    },
-    LibReg {
-        name: b"floor",
-        func: Some(math_floor),
-    },
-    LibReg {
-        name: b"fmod",
-        func: Some(math_fmod),
-    },
-    LibReg {
-        name: b"ult",
-        func: Some(math_ult),
-    },
-    LibReg {
-        name: b"log",
-        func: Some(math_log),
-    },
-    LibReg {
-        name: b"max",
-        func: Some(math_max),
-    },
-    LibReg {
-        name: b"min",
-        func: Some(math_min),
-    },
-    LibReg {
-        name: b"modf",
-        func: Some(math_modf),
-    },
-    LibReg {
-        name: b"rad",
-        func: Some(math_rad),
-    },
-    LibReg {
-        name: b"sin",
-        func: Some(math_sin),
-    },
-    LibReg {
-        name: b"sqrt",
-        func: Some(math_sqrt),
-    },
-    LibReg {
-        name: b"tan",
-        func: Some(math_tan),
-    },
-    LibReg {
-        name: b"type",
-        func: Some(math_type),
-    },
-    // Placeholders; values are set manually in luaopen_math / set_rand_func.
-    LibReg {
-        name: b"random",
-        func: None,
-    },
-    LibReg {
-        name: b"randomseed",
-        func: None,
-    },
-    LibReg {
-        name: b"pi",
-        func: None,
-    },
-    LibReg {
-        name: b"huge",
-        func: None,
-    },
-    LibReg {
-        name: b"maxinteger",
-        func: None,
-    },
-    LibReg {
-        name: b"mininteger",
-        func: None,
-    },
-];
 
 static MATHLIB_FUNCS: &[(&[u8], LuaCFunction)] = &[
     (b"abs", math_abs),
@@ -930,24 +783,20 @@ static MATHLIB_FUNCS: &[(&[u8], LuaCFunction)] = &[
     (b"sqrt", math_sqrt),
     (b"tan", math_tan),
     (b"type", math_type),
-    // `frexp`/`ldexp` are registered unconditionally in lua5.4.7 and lua5.5.0
-    // (their `lmathlib.c` places these two outside the `LUA_COMPAT_MATHLIB`
-    // `#if`) and are part of the 5.3 compat roster too. Verified against all
-    // three reference binaries: `type(math.frexp)`/`type(math.ldexp)` ==
-    // "function" on 5.3.6, 5.4.7, and 5.5.0.
+    // `frexp`/`ldexp` survive into 5.5, unlike the rest of the compat roster:
+    // they are registered unconditionally on 5.3/5.4/5.5. Verified against all
+    // three reference binaries (`type(math.frexp)`/`type(math.ldexp)` ==
+    // "function" on 5.3.6, 5.4.7, 5.5.0).
     (b"frexp", math_frexp),
     (b"ldexp", math_ldexp),
 ];
 
 // ── Module entry point ────────────────────────────────────────────────────
 
-/// Open the `math` library: create the table, populate constants, register
-/// the PRNG functions with their shared `RanState` upvalue.
-///
-///
-/// `LUAMOD_API` → `pub` (see macros.tsv).
+/// Open the `math` library: create the table, register the version-agnostic
+/// functions and the per-version roster delta, populate the constants, and wire
+/// up the PRNG functions.
 pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
-    // Creates a new table and registers all non-None entries from MATHLIB.
     state.new_lib(MATHLIB_FUNCS)?;
 
     // Per-version roster delta: the `LUA_COMPAT_MATHLIB`-gated functions
@@ -1023,7 +872,6 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
         }
     }
 
-    // Registers math.random and math.randomseed as upvalue-bearing closures.
     set_rand_func(state)?;
 
     Ok(1)
@@ -1031,29 +879,12 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/lmathlib.c  (782 lines, 28 functions)
 //   target_crate:  lua-stdlib
-//   confidence:    medium
-//   todos:         16
-//   port_notes:    8
 //   unsafe_blocks: 0
-//   notes:         All basic math functions are mechanically faithful. The
-//                  PRNG xoshiro256** algorithm is correctly translated using
-//                  native u64 (only the 64-bit code path; the 32-bit fallback
-//                  is dropped). The main Phase-B work is wiring up the upvalue
-//                  RanState userdata: advance_prng, project_from_upvalue,
-//                  apply_random_seed, apply_set_seed, and set_rand_func all
-//                  carry TODO(port) stubs where typed userdata + interior
-//                  mutability (RefCell) is required to avoid borrow conflicts.
-//                  Deprecated LUA_COMPAT_MATHLIB functions (cosh, sinh, tanh,
-//                  pow, log10, ldexp, frexp, atan2) are registered only under
-//                  the 5.3 backend per specs/followup/5.3-math.md; absent in
-//                  5.4/5.5. atan2 reuses math_atan; frexp is implemented via
-//                  f64 bit manipulation (no Rust std frexp).
-//                  state.new_lib, state.set_field,
-//                  state.compare_lt, state.push_value, state.opt_number,
-//                  state.opt_integer, state.check_integer, state.check_number,
-//                  state.check_any, state.to_integer_opt, state.get_top,
-//                  state.set_top, state.pop_n API names assumed; Phase B
-//                  will reconcile with the actual LuaState impl.
+//   deferred:      one TODO — the PRNG state is a thread-local rather than
+//                  per-lua_State typed userdata in a closure upvalue; see
+//                  math_random. The PRNG/ldexp/frexp/version-gate behavior is
+//                  pinned by the behavioral net (multiversion_oracle PRNG
+//                  sequence + subnormal tests, the lua-stdlib FloatOnly test,
+//                  math.lua, and check.sh 5.1-5.5). See GRADUATED.md "math".
 // ──────────────────────────────────────────────────────────────────────────

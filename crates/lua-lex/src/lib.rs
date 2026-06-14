@@ -93,6 +93,47 @@ impl LexBuffer {
     fn push_byte(&mut self, c: u8) {
         self.buffer.push(c);
     }
+
+    /// The token text with `n` bytes removed from each end, copied to an owned
+    /// `Vec`.
+    ///
+    /// This is the delimiter-stripping extraction used after scanning a quoted
+    /// or long-bracket string: the buffer holds `<open-delim><content><close-delim>`
+    /// where each delimiter is `n` bytes (`n = 1` for `"`/`'`, `n = sep` for
+    /// `[=*[`). An empty `Vec` is returned when the buffer is shorter than the
+    /// two delimiters (an empty string literal).
+    ///
+    /// The copy is an ownership requirement, not a leftover C idiom: the caller
+    /// next passes these bytes to `new_string`, which needs `&mut LexState`, so
+    /// the borrow of the buffer must end first.
+    fn trim_ends(&self, n: usize) -> Vec<u8> {
+        match self.buffer.len().checked_sub(2 * n) {
+            Some(_) => self.buffer[n..self.buffer.len() - n].to_vec(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The whole token text, copied to an owned `Vec`.
+    ///
+    /// Used for identifiers/keywords, where the entire buffer is the token. As
+    /// with [`trim_ends`](Self::trim_ends) the copy releases the buffer borrow
+    /// before `new_string` takes `&mut LexState`.
+    fn to_owned_text(&self) -> Vec<u8> {
+        self.buffer.clone()
+    }
+
+    /// The live contents with a single trailing NUL removed, if present.
+    ///
+    /// Numeral scanning and error-message formatting append a `\0` to mirror
+    /// C's NUL-terminated buffer convention before reading the text back; this
+    /// drops that one sentinel byte without copying. A buffer that does not end
+    /// in NUL is returned whole.
+    fn without_trailing_nul(&self) -> &[u8] {
+        match self.buffer.last() {
+            Some(&0) => &self.buffer[..self.buffer.len() - 1],
+            _ => &self.buffer,
+        }
+    }
 }
 
 impl Default for LexBuffer {
@@ -645,13 +686,7 @@ fn txt_token(ls: &mut LexState, token: i32) -> Vec<u8> {
         t if t == TK_NAME || t == TK_STRING || t == TK_FLT || t == TK_INT => {
             let mut v: Vec<u8> = Vec::new();
             v.push(b'\'');
-            let buff = ls.buff.as_slice();
-            let trimmed = if buff.last() == Some(&0) {
-                &buff[..buff.len() - 1]
-            } else {
-                buff
-            };
-            v.extend_from_slice(trimmed);
+            v.extend_from_slice(ls.buff.without_trailing_nul());
             v.push(b'\'');
             v
         }
@@ -1071,13 +1106,7 @@ fn read_numeral(
 
     save(ls, state, 0)?;
 
-    let buf = ls.buff.as_slice();
-    let num_bytes = match buf.last() {
-        Some(&0) => &buf[..buf.len() - 1],
-        _ => buf,
-    };
-
-    match parse_numeral(num_bytes) {
+    match parse_numeral(ls.buff.without_trailing_nul()) {
         None => Err(lex_error(ls, b"malformed number", TK_FLT)),
         Some(lua_types::LuaValue::Int(i)) => {
             if is_float_only(state) {
@@ -1247,12 +1276,9 @@ fn read_long_string(
     //                                       luaZ_bufflen(ls->buff) - 2 * sep);
     if let Some(out) = seminfo {
         // The buffer contains: sep bytes of '[=' + content + sep bytes of '=]'
-        // We want the content in between.
-        // PORT NOTE: per PORTING.md §4.3, capture the slice into an owned
-        // Vec so the immutable borrow of ls.buff is dropped before the
-        // mutable borrow needed by new_string.
-        let buf = ls.buff.as_slice();
-        let content: Vec<u8> = buf[sep..buf.len() - sep].to_vec();
+        // The buffer holds `[=*[` + content + `]=*]`, each delimiter `sep` bytes
+        // wide; strip both to recover the content.
+        let content = ls.buff.trim_ends(sep);
         let ts = new_string(state, ls, &content)?;
         *out = TokenValue::Str(ts);
     }
@@ -1582,15 +1608,9 @@ fn read_string(
 
     save_and_next(ls, state)?;
 
-    //                                     luaZ_bufflen(ls->buff) - 2);
-    // Buffer contains: delimiter + content + delimiter; strip both delimiters.
-    // PORT NOTE: capture into owned Vec to drop the borrow before new_string.
-    let buf = ls.buff.as_slice();
-    let content: Vec<u8> = if buf.len() >= 2 {
-        buf[1..buf.len() - 1].to_vec()
-    } else {
-        Vec::new()
-    };
+    // The buffer holds the opening quote + content + closing quote; strip the
+    // one-byte delimiter from each end.
+    let content = ls.buff.trim_ends(1);
     let ts = new_string(state, ls, &content)?;
     *seminfo = TokenValue::Str(ts);
     Ok(())
@@ -1781,8 +1801,7 @@ fn llex(
                         }
                     }
 
-                    // PORT NOTE: copy buffer bytes to drop borrow before new_string.
-                    let content: Vec<u8> = ls.buff.as_slice().to_vec();
+                    let content = ls.buff.to_owned_text();
                     let ts = new_string(state, ls, &content)?;
 
                     // PORT NOTE: canonical `lua_types::LuaString` lacks the `extra`

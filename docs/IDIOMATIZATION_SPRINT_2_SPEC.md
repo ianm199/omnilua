@@ -97,12 +97,12 @@ net now guards it and which algorithm code was left load-bearing.
       57/54/23/7/10, workspace, wasm, unsafe 0); recipes + verdict below;
       graduation in `crates/lua-stdlib/GRADUATED.md`. Branch `idiom/string`
       (supervisor verifies + runs the AUTHORITATIVE Ir/cold-wall arbiter + PRs).
-- [~] (`os` date/time arithmetic — cold/pure) — DEFERRED. The pure→cold→hot set
-      (math/table/string) has proven the Phase-2 method across all three regimes;
-      more easy stdlib modules are diminishing returns (see synthesis). `os` (and
-      `coroutine`, `io`, `utf8`, `debug`) remain available as routine follow-ups.
-- [x] CLOSE: P2.0/P2a/P2b/P2c PRs #196/#197/#198/#199 merged CI-green; board row
-      updated; synthesis below.
+- [x] STDLIB CRUSH (all remaining modules, 2026-06-14): `bit32` #201, `debug`
+      #202, `utf8` #203, `os` #204, `coroutine` #205, `io` #206, `base` #207,
+      `loadlib` #208 — all merged CI-green. The ENTIRE stdlib library surface is
+      now idiomatized (11 modules). See the "Stdlib crush" section below.
+- [x] CLOSE: all PRs #196–#208 merged CI-green; board row updated; VM-layer
+      findings filed in `docs/IDIOMATIZATION_VM_FINDINGS.md`; synthesis below.
 
 ## Phase 2 synthesis (module set complete 2026-06-14)
 
@@ -134,6 +134,56 @@ removal + (for string) the perf-arbiter proof. The method is proven across all
 regimes — bytecode-parity (Phase 1) and behavioral+perf-arbiter (Phase 2).
 Remaining high-value work is the marquee fork (`ExprPayload` enum / Phase 3
 errors / Phase 4 GC), not more easy modules.
+
+## Stdlib crush — ALL modules complete (2026-06-14)
+
+After the pure→cold→hot pilots (math/table/string), the remaining 8 stdlib
+library modules were crushed in two parallel waves (conflict-free: each agent
+touched only its own `src/<module>.rs` + a new `tests/<module>_strengthen.rs` +
+an in-file graduation note; supervisor re-verified every gate + each bug fix
+against all five reference binaries + ran the authoritative Ir arbiter for the
+two hot-path touches). **The entire stdlib library surface (11 modules) is now
+idiomatized.**
+
+| Module | PR | Strengthen tests | Bugs caught + fixed | Notes |
+|---|---|---|---|---|
+| math | #197 | PRNG seq + FloatOnly + subnormal | 0 | honest-negative: platform `rand()` |
+| table | #198 | +9 (→178) | **1** | `table.remove` 5.1/5.2 |
+| string | #199 | +3 (→181) | **2** | hot; perf-arbiter veto loop proven |
+| bit32 | #201 | 16 | **1** | 5.2-vs-5.3 arg coercion; corrected "5.2-only" → `V52\|V53` |
+| debug | #202 | 12 | **2** | 5.1 getinfo-`u` / getlocal-func; VM plumbing untouched |
+| utf8 | #203 | 18 | **6** | 5.3 decode model genuinely simpler than 5.4 |
+| os | #204 | 11 | **4** | 5.1/5.2/5.3 time/date seams; pure-Rust, no libc |
+| coroutine | #205 | 15 | **1** (+2 VM-deferred) | hot machinery untouched |
+| io | #206 | 9 | **4** | impure; installed a test fs-hook to make the net deterministic |
+| base | #207 | 21 | **3** (+2 VM-deferred) | ipairs hot-path const-split, Ir-flat (confirmed) |
+| loadlib | #208 | 16 | **7** | platform FFI left load-bearing; pure-Lua layer pinned |
+
+**Total: 31 cross-version correctness bugs caught and fixed**, plus ~5 deferred
+VM-layer findings (`docs/IDIOMATIZATION_VM_FINDINGS.md`). Every fix
+reference-verified across the affected versions; oracle stayed 181, all official
+suites + `check.sh ×5` (57/54/23/7/10) green throughout; **0 `unsafe` added** (and
+the FFI/VM `unsafe` left untouched); whole idiomatization **performance-neutral**
+(before/after Ir sweep: pure-VM workloads bit-identical, stdlib ≤0.18%).
+
+**The recurring lessons, now confirmed across 11 modules:**
+1. **Every module has a load-bearing core the behavioral net can't fully guard —
+   idiomatize AROUND it, never THROUGH it.** xoshiro / quicksort / matcher /
+   ipairs-step / dlopen-FFI / coroutine-switch / VM-introspection plumbing. For
+   the two hot ones (string matcher, base ipairs) the perf arbiter mechanically
+   enforced the boundary; the const-generic split (`gmatch_aux`, `ipairs_step`)
+   is the reusable trick for "a per-iteration version seam resolved once in cold
+   setup."
+2. **Net-strengthening-to-the-reference is where the value concentrates** — it
+   caught 31 real bugs the original suite missed, almost all of the same shape
+   ("the impl applied the modern (5.3+/5.4+) behavior to ALL versions"). A
+   net-strengthening test that FAILS at baseline is a found bug.
+3. **The boundary discipline scales** — when a fix's single source lives in
+   another crate (`lua-vm`), STOP and document it rather than forcing a fragile
+   partial fix. 5 findings cleanly deferred this way (F1–F5).
+4. **The agent corrected the supervisor's premises** three times (bit32 not
+   5.2-only; `isyieldable` is 5.3+ not 5.2; os has no libc bridge) — the
+   reference, not the prompt, is the truth-teller.
 
 ## P2a — math: coverage-precondition verdict (recon 2026-06-14)
 

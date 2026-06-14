@@ -3869,6 +3869,60 @@ fn v53_plus_move_drives_index_and_newindex_metamethods_in_order() {
 }
 
 #[test]
+fn v_remove_out_of_bounds_arg_gate_crossversion() {
+    // Gap 1: `table.remove`'s out-of-bounds handling is version-gated in THREE
+    // distinct ways, and the original net only checked the 5.3-vs-5.4 arg
+    // index — so two real divergences hid behind it.
+    //
+    //   5.1: legacy ltablib.c has NO bounds check. An out-of-range position
+    //        (`pos` outside `[1, size]`) silently removes nothing and returns
+    //        ZERO results — never an error. Verified against lua5.1.5
+    //        (`tremove`: `if (!(1 <= pos && pos <= e)) return 0;`).
+    //   5.2 + 5.3: `luaL_argcheck(..., 1, "position out of bounds")` — arg #1.
+    //   5.4 + 5.5: the same check moved to arg #2.
+    //
+    // We pin every cell of the matrix so the gate can never silently widen.
+
+    // 5.1: out-of-bounds is inert — no error, zero results.
+    eq(
+        LuaVersion::V51,
+        "return select('#', table.remove({}, 5))",
+        "0",
+    );
+    eq(
+        LuaVersion::V51,
+        "return select('#', table.remove({1, 2, 3}, 5))",
+        "0",
+    );
+    eq(
+        LuaVersion::V51,
+        "return tostring(pcall(table.remove, {1, 2, 3}, 0))",
+        "true",
+    );
+    // 5.1: a VALID remove still returns the removed value and shifts the array.
+    eq(
+        LuaVersion::V51,
+        "local t = {10, 20, 30}; local r = table.remove(t, 2); \
+         return r .. ',' .. table.concat(t, ',')",
+        "20,10,30",
+    );
+
+    // 5.2 + 5.3: out-of-bounds raises with arg #1.
+    for v in [LuaVersion::V52, LuaVersion::V53] {
+        err_contains(v, "return table.remove({}, 5)", "position out of bounds");
+        err_contains(v, "return table.remove({}, 5)", "argument #1");
+        err_contains(v, "return table.remove({1, 2, 3}, 5)", "argument #1");
+    }
+
+    // 5.4 + 5.5: same wording, arg #2.
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        err_contains(v, "return table.remove({}, 5)", "position out of bounds");
+        err_contains(v, "return table.remove({}, 5)", "argument #2");
+        err_contains(v, "return table.remove({1, 2, 3}, 5)", "argument #2");
+    }
+}
+
+#[test]
 fn v_sort_observable_contract_crossversion() {
     // Sort: the OBSERVABLE contract (not the partition internals). A custom
     // descending comparator orders correctly; an always-true comparator is a

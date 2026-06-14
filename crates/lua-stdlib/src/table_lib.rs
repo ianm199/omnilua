@@ -209,7 +209,18 @@ pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
 // ─── table.remove ─────────────────────────────────────────────────────────────
 
 ///
+/// The out-of-bounds handling is gated three ways across versions, each pinned
+/// against its reference binary by `v_remove_out_of_bounds_arg_gate_crossversion`:
+///
+/// - **5.1** (legacy `ltablib.c`): there is NO `luaL_argcheck`. An out-of-range
+///   `pos` (outside `[1, size]`) silently removes nothing and returns ZERO
+///   results — never an error.
+/// - **5.2 / 5.3**: `luaL_argcheck((lua_Unsigned)pos - 1u <= size, 1, ...)` —
+///   the offending argument is reported as **#1**.
+/// - **5.4 / 5.5**: the identical check, but the argument index is **#2**.
+///
 /// ```c
+/// // 5.4.7
 /// static int tremove (lua_State *L) {
 ///   lua_Integer size = aux_getn(L, 1, TAB_RW);
 ///   lua_Integer pos = luaL_optinteger(L, 2, size);
@@ -225,16 +236,26 @@ pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
 ///   lua_seti(L, 1, pos);
 ///   return 1;
 /// }
+/// // 5.1.5
+/// static int tremove (lua_State *L) {
+///   int e = aux_getn(L, 1);
+///   int pos = luaL_optint(L, 2, e);
+///   if (!(1 <= pos && pos <= e)) return 0;  // nothing to remove
+///   ...
+/// }
 /// ```
 pub fn remove(state: &mut LuaState) -> Result<usize, LuaError> {
     let size = aux_getn(state, 1, TAB_RW)?;
     let mut pos = state.opt_arg_integer(2, size)?;
-    if pos != size {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        if !(1 <= pos && pos <= size) {
+            return Ok(0);
+        }
+    } else if pos != size {
         if !((pos as u64).wrapping_sub(1) <= (size as u64)) {
-            let argn = if state.global().lua_version == lua_types::LuaVersion::V53 {
-                1
-            } else {
-                2
+            let argn = match state.global().lua_version {
+                lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => 1,
+                _ => 2,
             };
             return Err(lua_vm::debug::arg_error_impl(
                 state,

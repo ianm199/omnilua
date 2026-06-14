@@ -2155,6 +2155,82 @@ fn v51_prng_non_regression_modern_unchanged() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// PRNG SEQUENCE pins (the xoshiro256** path: 5.4 and 5.5 only).
+//
+// The pre-existing random assertions pin a single post-seed draw, so a
+// divergence that appears only on the SECOND draw (or only on `random(lo,hi)`
+// projection, or only on the two-seed-word `randomseed(n1,n2)` form) would
+// pass undetected. These tests seed ONCE and pin the whole consecutive
+// SEQUENCE — the real tripwire for any reordering of the `next_rand` /
+// `project` / `rand_to_float` arithmetic.
+//
+// Bit-exactness is only available on the xoshiro256** path. 5.4 and 5.5 use
+// xoshiro256**; their sequences are byte-for-byte identical to the reference
+// binaries (lua5.4.7 / lua5.5.0). 5.1, 5.2, and 5.3 wrap the host C
+// `rand()`/`random()`, whose stream is platform-dependent and is a KNOWN,
+// DOCUMENTED allowed divergence (specs/followup/5.1-numbers-prng.md,
+// specs/research/5.3-upstream-delta.md) — their CONTRACT (range/type/shape) is
+// pinned above but their SEQUENCE is intentionally NOT bit-compared.
+//
+// Every expected sequence below was captured from /tmp/lua-refs/bin/lua5.4.7
+// and lua5.5.0 with `string.format("%.17g", ...)` (a round-tripping rendering,
+// independent of tostring precision).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v54_v55_random_float_sequence_bit_exact() {
+    for v in [LuaVersion::V54, LuaVersion::V55] {
+        // Six consecutive math.random() draws after a single randomseed(1).
+        eq(
+            v,
+            "math.randomseed(1)\n\
+             local t = {}\n\
+             for i = 1, 6 do t[i] = string.format('%.17g', math.random()) end\n\
+             return table.concat(t, '|')",
+            "0.81558781554723059|0.98657750643457565|0.079330719590026022|\
+             0.49864849323368698|0.59181018547898889|0.83396886864931397",
+        );
+    }
+}
+
+#[test]
+fn v54_v55_random_interval_sequence_bit_exact() {
+    // The `project` rejection-sampling path: pin a positive-range sequence on
+    // 5.4 and a signed-range sequence on 5.5 (both reference-captured).
+    eq(
+        LuaVersion::V54,
+        "math.randomseed(1)\n\
+         local t = {}\n\
+         for i = 1, 8 do t[i] = math.random(1, 1000) end\n\
+         return table.concat(t, ',')",
+        "414,488,418,685,983,990,745,895",
+    );
+    eq(
+        LuaVersion::V55,
+        "math.randomseed(1)\n\
+         local t = {}\n\
+         for i = 1, 8 do t[i] = math.random(-50, 50) end\n\
+         return table.concat(t, ',')",
+        "-21,-17,-6,36,43,9,43,-27",
+    );
+}
+
+#[test]
+fn v54_two_seed_word_random_sequence_bit_exact() {
+    // The two-argument `randomseed(n1, n2)` seeding form (set_seed_words with a
+    // nonzero second word) — pinned so a change to seed mixing is caught.
+    eq(
+        LuaVersion::V54,
+        "math.randomseed(1, 2)\n\
+         local t = {}\n\
+         for i = 1, 4 do t[i] = string.format('%.17g', math.random()) end\n\
+         return table.concat(t, '|')",
+        "0.44949358084855551|0.22576880156399304|\
+         0.73957236111052194|0.34305203708388043",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 5.2 — the float-only + _ENV bridge to the legacy family. 5.2 reuses the
 // modern _ENV core but is FLOAT-ONLY (no integer subtype, no //, no bitwise
 // ops, no int-specific stdlib) and carries the 5.2 roster (bit32 present,

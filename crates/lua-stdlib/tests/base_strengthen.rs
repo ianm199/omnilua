@@ -131,6 +131,29 @@ fn ipairs_type_checks_table_only_pre_5_3_crossversion() {
     }
 }
 
+#[test]
+fn ipairs_consults_ipairs_metamethod_on_5_2_and_5_3_crossversion() {
+    // The `__ipairs` metamethod (LUA_COMPAT_IPAIRS, default ON in 5.2/5.3 via
+    // LUA_COMPAT_5_2) makes `ipairs(t)` call `t`'s `__ipairs` for its iterator.
+    // 5.1 predates it; 5.4/5.5 removed it. So a `__ipairs` returning an empty
+    // iterator suppresses iteration on 5.2/5.3 but not on 5.1/5.4/5.5 (which
+    // iterate the array part). Confirmed against lua5.2.4/5.3.6 (honored) and
+    // lua5.4.7 (ignored).
+    let probe = "\
+        local t = setmetatable({'A', 'B'}, {__ipairs = function(x) \
+            return function() return nil end, x, 0 \
+        end}) \
+        local s = '' \
+        for i, v in ipairs(t) do s = s .. v end \
+        return s";
+    for v in [LuaVersion::V52, LuaVersion::V53] {
+        assert_eq!(eval_str(v, probe), b"", "{v:?}: __ipairs must suppress iteration");
+    }
+    for v in [LuaVersion::V51, LuaVersion::V54, LuaVersion::V55] {
+        assert_eq!(eval_str(v, probe), b"AB", "{v:?}: __ipairs must be ignored");
+    }
+}
+
 // ── assert: the 5.1/5.2 string-message seam (caught a real bug) ───────────────
 
 #[test]

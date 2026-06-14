@@ -907,6 +907,12 @@ pub(crate) fn pairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// the next array element.  Returns the index + value, or just the index when
 /// the value is nil (signalling end-of-iteration).
 ///
+/// The element fetch is a genuine cross-version split. Lua 5.1/5.2's
+/// `ipairsaux` reads with `lua_rawgeti` — `__index` is NOT consulted, so an
+/// empty array part stops immediately even when an `__index` would supply
+/// values. Lua 5.3 switched to `lua_geti`, which honors `__index`. The first
+/// argument is guaranteed a table on 5.1/5.2 (`ipairs` type-checks it there),
+/// so the raw read is safe.
 fn ipairs_aux(state: &mut LuaState) -> Result<usize, LuaError> {
     let i = match lua_vm::api::positive_index_value(state, 2) {
         LuaValue::Int(i) => i,
@@ -915,8 +921,16 @@ fn ipairs_aux(state: &mut LuaState) -> Result<usize, LuaError> {
     // luaL_intop(+, a, b) → wrapping integer addition (PORTING.md §9 / macros.tsv `intop`)
     let i = (i as u64).wrapping_add(1u64) as i64;
     state.push(LuaValue::Int(i));
-    let table = lua_vm::api::positive_index_value(state, 1);
-    let t = state.table_get_i_value(&table, i)?;
+    let raw_read = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
+    let t = if raw_read {
+        lua_vm::api::raw_get_i(state, 1, i)
+    } else {
+        let table = lua_vm::api::positive_index_value(state, 1);
+        state.table_get_i_value(&table, i)?
+    };
     if t == LuaType::Nil {
         Ok(1)
     } else {
@@ -926,10 +940,40 @@ fn ipairs_aux(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ── ipairs ────────────────────────────────────────────────────────────────────
 
-/// Returns the `ipairsaux` iterator, the table, and 0 as the initial counter.
+/// Returns the `ipairsaux` iterator, the table, and 0 as the initial counter
+/// (or invokes an `__ipairs` metamethod on the versions that honor it).
 ///
+/// Three cross-version seams converge here, all in this cold setup path:
+///
+/// - **`__ipairs` metamethod.** The `LUA_COMPAT_IPAIRS` macro (default ON in
+///   5.2/5.3 via `LUA_COMPAT_5_2`) routes `ipairs` through `pairsmeta`, which
+///   calls `t.__ipairs(t)` for the iterator triple when present. 5.1 predates
+///   `__ipairs`; 5.4/5.5 removed the compat path. Honored only on 5.2/5.3.
+/// - **Setup type check.** 5.1's `luaB_ipairs` (and 5.2's `pairsmeta` when no
+///   `__ipairs` is found) does `luaL_checktype(1, TABLE)` — `ipairs(non_table)`
+///   raises at the `ipairs` call. 5.3+ relaxed this to `luaL_checkany`, so a
+///   non-table reaches the iterator and only errors (or stops) there.
+/// - **Raw vs `__index` read** is handled in `ipairs_aux` (5.1/5.2 raw).
 pub(crate) fn ipairs_fn(state: &mut LuaState) -> Result<usize, LuaError> {
-    state.check_arg_any(1)?;
+    let version = state.global().lua_version;
+    let consult_ipairs_tm = matches!(
+        version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
+    if consult_ipairs_tm && state.get_metafield(1, b"__ipairs")? != LuaType::Nil {
+        state.push_copy(1)?;
+        state.call(1, 3)?;
+        return Ok(3);
+    }
+    let checks_table = matches!(
+        version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
+    if checks_table {
+        state.check_arg_type(1, LuaType::Table)?;
+    } else {
+        state.check_arg_any(1)?;
+    }
     state.push_c_function(ipairs_aux)?;
     state.push_copy(1)?;
     state.push(LuaValue::Int(0));

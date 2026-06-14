@@ -112,10 +112,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-fn test_file_open_hook(
-    _filename: &[u8],
-    mode: &[u8],
-) -> Result<Box<dyn LuaFileHandle>, LuaError> {
+fn test_file_open_hook(_filename: &[u8], mode: &[u8]) -> Result<Box<dyn LuaFileHandle>, LuaError> {
     let path = SCRATCH_PATH
         .with(|p| p.borrow().clone())
         .expect("scratch path must be set before io.open in a test");
@@ -148,7 +145,11 @@ static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn make_scratch(contents: &[u8]) -> std::path::PathBuf {
     let n = SCRATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
-    path.push(format!("omnilua_io_strengthen_{}_{}", std::process::id(), n));
+    path.push(format!(
+        "omnilua_io_strengthen_{}_{}",
+        std::process::id(),
+        n
+    ));
     std::fs::write(&path, contents).expect("write scratch file");
     SCRATCH_PATH.with(|p| *p.borrow_mut() = Some(path.clone()));
     path
@@ -274,7 +275,10 @@ fn starred_line_format_accepted_everywhere() {
                 return tostring(line)";
     for v in ALL {
         let got = eval_str(v, b"firstline\nsecond\n", code);
-        assert_eq!(got, "firstline", "{v:?}: read('*l') should read the first line");
+        assert_eq!(
+            got, "firstline",
+            "{v:?}: read('*l') should read the first line"
+        );
     }
 }
 
@@ -337,7 +341,10 @@ fn read_number_star_form_on_51_52() {
                 return tostring(a)";
     for v in [LuaVersion::V51, LuaVersion::V52] {
         let got = eval_str(v, b"42 3.14\n", code);
-        assert_eq!(got, "42", "{v:?}: read('*n') over `42 ...` should parse to 42");
+        assert_eq!(
+            got, "42",
+            "{v:?}: read('*n') over `42 ...` should parse to 42"
+        );
     }
 }
 

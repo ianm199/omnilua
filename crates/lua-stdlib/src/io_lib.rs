@@ -1,21 +1,31 @@
-//! Standard I/O library — `io.*` functions and `file:*` methods.
+//! Standard I/O library — `io.*` functions and `file:*` methods (port of
+//! `liolib.c`).
 //!
-//! C source: `src/liolib.c` (841 lines, ~35 functions).
+//! **Impurity is host-provided and load-bearing.** Filesystem and process
+//! access reach the host only through hooks: regular files via
+//! `GlobalState::file_open_hook`, `io.popen` via `GlobalState::popen_hook`,
+//! stdout/stderr via output hooks. The native CLI installs hooks backed by
+//! `std::fs`/`std::process`/`std::io`; sandboxed and `wasm32` hosts leave those
+//! capabilities absent, and the functions then return a clean `(nil, msg,
+//! errno)` failure tuple (or, for the standard streams, an `Unsupported` error)
+//! instead of touching ambient OS state. That hook plumbing and the `wasm32`
+//! cfg gates are deliberately kept intact.
 //!
-//! PORT NOTE: Filesystem and process access is host-provided. Regular files use
-//! `GlobalState::file_open_hook`, `io.popen` uses `GlobalState::popen_hook`, and
-//! stdout/stderr use output hooks when installed. The native CLI provides hooks
-//! backed by `std::fs`, `std::process`, and `std::io`; sandboxed and WASM hosts
-//! can leave those capabilities absent.
+//! **The side-table indirection** is the one structural divergence from C: C
+//! stores the `LStream` inside the userdata payload, but `LStream` carries heap
+//! pointers (a `Box<dyn LuaFileHandle>` and a fn pointer) that cannot be safely
+//! reinterpreted from a raw byte buffer in safe Rust, so the stream lives in a
+//! thread-local `LSTREAM_REGISTRY` keyed by userdata identity. Each I/O step
+//! borrows the file through its `Rc<RefCell<LStream>>` briefly, releases the
+//! borrow, then touches `LuaState` — resolving C's single `LStream *` aliasing
+//! into two scoped borrows.
 //!
-//! PORT NOTE: Rust's borrow checker prevents holding `&mut dyn LuaFileOps`
-//! (extracted from userdata) and `&mut LuaState` simultaneously. The affected
-//! functions (`io_read`, `f_read`, `io_write`, `f_write`, `io_flush`, `f_flush`,
-//! `f_seek`, `f_setvbuf`, `get_io_file`) are marked with `TODO(port): borrow
-//! split`. Phase B must restructure `g_read`/`g_write` to take a `StackIdx`
-//! rather than a raw `&mut dyn LuaFileOps`, and use `RefCell` inside `LStream`
-//! for interior mutability, or extract the file handle via a separate borrow
-//! scope.
+//! Graduation: the deterministic format-parsing/validation and error-shaping
+//! surface (read formats, the `*`-prefix version seam, the closed-file error,
+//! `io.type`) is pinned by `tests/io_strengthen.rs` against the reference
+//! binaries; host-specific I/O *results* are not reproducible and stay
+//! oracle-checked only through the official `files.lua` suite. See
+//! `crates/lua-stdlib/GRADUATED.md`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -28,11 +38,10 @@ use lua_vm::state::{InputHook, OutputHook};
 
 thread_local! {
     /// Side-table mapping userdata identity (the `Rc` pointer address from
-    /// `GcRef::identity()`) to its associated `LStream`. The C port stores
-    /// `LStream` directly inside the userdata payload; Rust cannot do that
-    /// safely because `LStream` carries heap pointers (a `Box<dyn LuaFileOps>`
-    /// and a fn pointer). Entries are inserted by `new_pre_file` and never
-    /// removed in Phase A-C — leak is intentional per `PORTING.md` §2 #4.
+    /// `GcRef::identity()`) to its associated `LStream` (see the module header
+    /// for why the stream lives here rather than inside the userdata payload).
+    /// Entries are inserted by `new_pre_file` and intentionally never removed —
+    /// a bounded leak per `PORTING.md` §2 #4.
     static LSTREAM_REGISTRY: RefCell<HashMap<usize, Rc<RefCell<LStream>>>>
         = RefCell::new(HashMap::new());
 }
@@ -69,7 +78,7 @@ const MAX_ARG_LINE: usize = 250;
 /// Maximum byte-length of a numeric literal read from a file. C: `L_MAXLENNUM`.
 const L_MAX_LEN_NUM: usize = 200;
 
-/// End-of-file sentinel returned by `LuaFileOps::read_byte`. C: `EOF` == -1.
+/// End-of-file sentinel returned by `LuaFileHandle::read_byte`. C: `EOF` == -1.
 const EOF_SENTINEL: i32 = -1;
 
 /// Bulk-read chunk size, mirroring C's `LUAL_BUFFERSIZE`.
@@ -115,18 +124,13 @@ pub enum StdFileKind {
 
 // ── Structs ──────────────────────────────────────────────────────────────────
 
-/// Lua file handle stored as the typed payload of a `LuaUserData`.
+/// A Lua file handle. C equivalent: `typedef luaL_Stream LStream`.
 ///
-/// C equivalent: `typedef luaL_Stream LStream` in `liolib.c`.
-///
-/// TODO(port): Phase B must arrange for `LStream` to live inside
-/// `LuaUserData`'s opaque payload. The userdata system needs a typed-access
-/// API, e.g. `state.check_arg_typed_userdata::<LStream>(1, LUA_FILE_HANDLE)?`.
-///
-/// TODO(port): `file` must be `Option<RefCell<Box<dyn LuaFileOps>>>` to allow
-/// interior-mutability borrow splitting between the file handle and `LuaState`.
+/// The instance lives in `LSTREAM_REGISTRY` (keyed by its userdata's identity),
+/// wrapped in `Rc<RefCell<…>>` so a brief file borrow and a `LuaState` borrow
+/// never overlap — the safe-Rust resolution of C's single `LStream *` pointer.
 pub struct LStream {
-    /// OS file handle. `None` = incompletely opened (pre-file pattern).
+    /// OS file handle. `None` = incompletely opened (the pre-file pattern).
     /// Concrete implementations are installed via `GlobalState::file_open_hook`
     /// (registered by `lua-cli`) to keep `std::fs` out of `lua-stdlib`.
     pub file: Option<Box<dyn LuaFileHandle>>,
@@ -435,19 +439,18 @@ fn file_result(
     Ok(3)
 }
 
-/// Push popen/system exit-status results per `luaL_execresult`.
+/// Push popen/system exit-status results per `luaL_execresult`: `true` on a
+/// zero status, else `(nil, "exit"|"signal", stat)`.
 ///
-/// else { luaL_pushfail; pushlstring("exit"|"signal"); pushinteger(stat); return 3; }`
-///
-/// TODO(port): POSIX `WIFEXITED`/`WTERMSIG` macros not available on all platforms;
-/// this stub always treats non-zero stat as an exit code.
+/// Deferred: `WIFEXITED`/`WTERMSIG` are not portable across all hosts, so this
+/// always reports a non-zero status as an `"exit"` code and never distinguishes
+/// a signal — faithful enough for the clients that probe an exit status.
 fn exec_result(state: &mut LuaState, stat: i32) -> Result<usize, LuaError> {
     if stat == 0 {
         state.push(LuaValue::Bool(true));
         Ok(1)
     } else {
         state.push(LuaValue::Bool(false));
-        // TODO(port): distinguish exit vs signal via POSIX macros
         state.push_string(b"exit")?;
         state.push(LuaValue::Int(stat as i64));
         Ok(3)
@@ -569,10 +572,12 @@ fn opencheck(state: &mut LuaState, fname: &[u8], mode: &[u8]) -> Result<(), LuaE
 
 /// Close a regular file via `fclose`. C: `io_fclose`.
 ///
-/// TODO(port): flush + drop `Box<dyn LuaFileOps>`, map io::Error to file_result.
+/// Dropping the `Box<dyn LuaFileHandle>` flushes through the host handle's own
+/// `Drop` (the CLI's writer flushes on drop). Deferred: surfacing a close-time
+/// I/O error as a `file_result` failure tuple — close currently always reports
+/// success.
 fn io_fclose(state: &mut LuaState) -> Result<usize, LuaError> {
     let p_rc = get_lstream(state)?;
-    // TODO(port): actually flush then drop p.file, capture any error
     let _closed = p_rc.borrow_mut().file.take();
     state.push(LuaValue::Bool(true));
     Ok(1)
@@ -580,18 +585,21 @@ fn io_fclose(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// Close a popen process pipe. C: `io_pclose`.
 ///
-/// TODO(port): std::process::Child — popen not yet implemented.
+/// Deferred: waiting on the child and forwarding its real exit status. Dropping
+/// the handle closes the pipe; the status reported here is a fixed success.
 fn io_pclose(state: &mut LuaState) -> Result<usize, LuaError> {
     let p_rc = get_lstream(state)?;
     let _closed = p_rc.borrow_mut().file.take();
-    // TODO(port): wait on the child process and forward its exit code
     exec_result(state, 0)
 }
 
 /// Refuse to close a standard-stream handle. C: `io_noclose`.
+///
+/// The close function is reinstalled before returning so the handle stays alive
+/// and remains closeable-but-inert on a later attempt, matching C's `io_noclose`.
 fn io_noclose(state: &mut LuaState) -> Result<usize, LuaError> {
     let p_rc = get_lstream(state)?;
-    p_rc.borrow_mut().close_fn = Some(io_noclose); // reinstall to keep the handle alive
+    p_rc.borrow_mut().close_fn = Some(io_noclose);
     state.push(LuaValue::Bool(false));
     state.push_string(b"cannot close standard file")?;
     Ok(2)
@@ -640,13 +648,17 @@ pub fn io_type(state: &mut LuaState) -> Result<usize, LuaError> {
 // ── __tostring metamethod ────────────────────────────────────────────────────
 
 /// `tostring(file)` metamethod. C: `f_tostring`.
+///
+/// An open handle renders `file (0x?)`. The reference prints the handle's real
+/// pointer address (`file (0x<addr>)`); that address is non-deterministic, so
+/// reproducing it is deferred and intentionally not pinned by the behavioral
+/// net. A closed handle renders `file (closed)`, matching the reference exactly.
 fn f_tostring(state: &mut LuaState) -> Result<usize, LuaError> {
     let p_rc = get_lstream(state)?;
     let closed = p_rc.borrow().is_closed();
     if closed {
         state.push_string(b"file (closed)")?;
     } else {
-        // TODO(port): pointer-address representation for the file handle
         state.push_string(b"file (0x?)")?;
     }
     Ok(1)
@@ -858,36 +870,6 @@ pub fn io_tmpfile(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ── io.input / io.output ─────────────────────────────────────────────────────
 
-/// Retrieve the current default IO file from the registry; error if closed.
-///
-/// TODO(port): borrow split — returns `&mut dyn LuaFileHandle` while caller also
-/// needs `&mut LuaState`. Phase B: use `RefCell` inside `LStream`.
-#[expect(
-    dead_code,
-    unreachable_code,
-    unused_variables,
-    reason = "io default-file helper: not yet wired; pending LStream-from-registry port"
-)]
-fn get_io_file<'a>(
-    state: &'a mut LuaState,
-    key: &[u8],
-) -> Result<&'a mut dyn LuaFileHandle, LuaError> {
-    state.registry_get(key)?;
-    // TODO(port): extract &mut LStream from the registry value's userdata payload
-    let label = &key[IO_PREFIX_LEN..]; // strip "_IO_" for the error message
-    let p: &mut LStream = todo!("TODO(port): extract LStream from registry userdata");
-    if p.is_closed() {
-        return Err(LuaError::runtime(format_args!(
-            "default {} file is closed",
-            label.escape_ascii()
-        )));
-    }
-    Ok(p.file
-        .as_mut()
-        .expect("open stream has no file handle")
-        .as_mut())
-}
-
 /// Generic setter/getter for `io.input` and `io.output`. C: `g_iofile`.
 fn g_iofile(state: &mut LuaState, key: &[u8], mode: &[u8]) -> Result<usize, LuaError> {
     if !matches!(state.type_at(1), LuaType::None | LuaType::Nil) {
@@ -917,6 +899,10 @@ pub fn io_output(state: &mut LuaState) -> Result<usize, LuaError> {
 // ── Read helpers ─────────────────────────────────────────────────────────────
 
 /// Read a numeric literal from `file` into an owned byte buffer.
+///
+/// The decimal point is always `.`: the reference reads the locale's
+/// `decimal_point`, but omnilua is locale-independent, so `.` is the single
+/// source of truth (the same simplification the rest of the number path makes).
 fn read_number_bytes(file: &mut dyn LuaFileHandle) -> Vec<u8> {
     let first = loop {
         let b = file.read_byte();
@@ -943,7 +929,6 @@ fn read_number_bytes(file: &mut dyn LuaFileHandle) -> Vec<u8> {
 
     count += rn.read_digits(file, hex);
 
-    // TODO(port): locale decimal-point character; defaulting to '.'
     let dec_point = b'.';
     if rn.try2(file, [dec_point, b'.']) {
         count += rn.read_digits(file, hex);
@@ -974,16 +959,14 @@ fn test_eof(file: &mut dyn LuaFileHandle) -> bool {
 /// Read one line from `file` into an owned buffer. Returns `(bytes, had_content)`.
 /// If `chop` is true the trailing `\n` is stripped. C: `read_line(L, f, chop)`.
 ///
-/// PERF(port): C uses luaL_prepbuffer (large fixed stack buffer) to avoid
-/// per-byte allocation; Rust's Vec grows here, which is slightly slower.
+/// The bytes are accumulated in `LUAL_BUFFER_SIZE`-sized passes and the outer
+/// loop continues while a pass fills without hitting a newline or EOF — the
+/// chunked structure mirrors C's `luaL_prepbuffer` loop, though a growable `Vec`
+/// stands in for the fixed stack buffer.
 fn read_line(file: &mut dyn LuaFileHandle, chop: bool) -> (Vec<u8>, bool) {
     let mut buf: Vec<u8> = Vec::new();
     let mut c: i32;
 
-    //          while (i < LUAL_BUFFERSIZE && (c = l_getc(f)) != EOF && c != '\n')
-    //            buff[i++] = c;
-    //          luaL_addsize(&b, i);
-    //    } while (c != EOF && c != '\n');
     'outer: loop {
         for _ in 0..LUAL_BUFFER_SIZE {
             c = file.read_byte();
@@ -992,7 +975,6 @@ fn read_line(file: &mut dyn LuaFileHandle, chop: bool) -> (Vec<u8>, bool) {
             }
             buf.push(c as u8);
         }
-        // chunk full but no newline/EOF yet — continue reading
     }
 
     if !chop && c == b'\n' as i32 {
@@ -1005,9 +987,9 @@ fn read_line(file: &mut dyn LuaFileHandle, chop: bool) -> (Vec<u8>, bool) {
 
 /// Read the entire file into an owned buffer. C: `read_all(L, f)` (file-only half).
 ///
-/// PERF(port): C uses `fread` with a large buffer; Rust reads byte-by-byte via
-/// `LuaFileOps::read_byte`. Phase B should add `read_chunk(&mut buf)` to the
-/// trait for bulk reads.
+/// Perf: C `fread`s in bulk; this reads one byte at a time via
+/// `LuaFileHandle::read_byte`. A future `read_chunk(&mut [u8])` on the trait
+/// would let the host fill a buffer directly.
 fn read_all(file: &mut dyn LuaFileHandle) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::new();
     loop {
@@ -1317,67 +1299,15 @@ pub fn f_read(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// Render a numeric `LuaValue` to its `io.write` byte form.
 ///
-/// C's `g_write` writes numbers with `lua_tostring`, i.e. the same
-/// `tostringbuff` path as `print`/`tostring`. Routing through the shared,
-/// version-aware [`lua_vm::object::num_to_string`] keeps `io.write(1.0)`
-/// identical to `print(1.0)` on every version: `%.14g` on 5.1-5.4 (no `.0`
-/// suffix under the float-only 5.1/5.2), shortest-round-trip on 5.5. Previously
-/// these sites used `{:.14e}`, which always emitted scientific notation
-/// (`0.00000000000000e0`) and only stayed hidden because the modern test
-/// scripts wrote integers.
+/// Reference `g_write` writes numbers with `lua_tostring` — the same
+/// `tostringbuff` path as `print`/`tostring` — so this routes through the
+/// shared, version-aware [`lua_vm::object::num_to_string`] to keep
+/// `io.write(1.0)` byte-identical to `print(1.0)` on every version: `%.14g` on
+/// 5.1-5.4 (no `.0` suffix under the float-only 5.1/5.2), shortest-round-trip
+/// on 5.5.
 fn num_to_write_bytes(state: &mut LuaState, val: &LuaValue) -> Result<Vec<u8>, LuaError> {
     let s = lua_vm::object::num_to_string(state, val)?;
     Ok(s.as_bytes().to_vec())
-}
-
-/// Dispatch one or more write values. C: `g_write(L, f, arg)`.
-///
-/// TODO(port): borrow split — same issue as g_read.
-#[expect(
-    dead_code,
-    reason = "ported stdlib helper; not yet wired into the runtime"
-)]
-fn g_write(
-    state: &mut LuaState,
-    file: &mut dyn LuaFileHandle,
-    arg: i32,
-) -> Result<usize, LuaError> {
-    let nargs = state.top() - arg;
-    let mut overall_ok = true;
-
-    for i in 0..nargs {
-        let idx = arg + i;
-        if state.type_at(idx) == LuaType::Number {
-            // PERF(port): byte-by-byte write; Phase B add bulk write_fmt to LuaFileOps.
-            // C's `g_write` renders a number with `lua_tostring`, i.e. the same
-            // `tostringbuff`/`%.14g` path as `print`/`tostring`. Route through
-            // the shared, version-aware `num_to_string` so float rendering
-            // matches (5.1-5.4 `%.14g`, 5.5 round-trip) instead of always-`%e`.
-            let val = state.value_at(idx);
-            let s = num_to_write_bytes(state, &val)?;
-            match file.write_bytes(&s) {
-                Ok(n) => overall_ok = overall_ok && n == s.len(),
-                Err(_) => overall_ok = false,
-            }
-        } else {
-            let s: Vec<u8> = state.check_arg_string(idx)?;
-            match file.write_bytes(&s) {
-                Ok(n) => overall_ok = overall_ok && n == s.len(),
-                Err(_) => overall_ok = false,
-            }
-        }
-    }
-
-    if overall_ok {
-        Ok(1) // file handle already at stack top; C returns it on success
-    } else {
-        file_result(
-            state,
-            false,
-            None,
-            io::Error::new(io::ErrorKind::Other, "write error"),
-        )
-    }
 }
 
 /// `io.write(...)`. C: `io_write`.
@@ -1762,36 +1692,27 @@ pub fn luaopen_io(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-// ────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/liolib.c  (841 lines, ~35 functions)
 //   target_crate:  lua-stdlib
-//   confidence:    medium
-//   todos:         62
-//   port_notes:    2
-//   unsafe_blocks: 0   (must be 0 outside explicit unsafe-budget crates)
-//   notes:         Logic faithfully translated. Phase F closed the io_readline
-//                  is_closed/g_read stubs via lstream_from_upvalue (looks up
-//                  the LStream side-table from the GcRef<LuaUserData> sitting
-//                  at upvalue 1). io.popen is now wired through a new
-//                  GlobalState::popen_hook (mirrors file_open_hook): the
-//                  lua-cli backend spawns /bin/sh -c <cmd> and wraps the
-//                  resulting ChildStdout/ChildStdin in a PopenFile so the
-//                  existing LStream read/write/close path Just Works. With
-//                  no hook registered (sandboxed embeddings) io.popen
-//                  returns nil, errmsg, errno via file_result rather than
-//                  panicking. stdout/stderr can now route through host output
-//                  hooks; native builds retain a direct stdio fallback.
-//                  io.tmpfile now uses the temp-name host hook when installed
-//                  and fails cleanly under bare WASM without one.
-//                  Remaining systemic Phase B blockers:
-//                  (1) The borrow checker prevents holding &mut dyn LuaFileOps
-//                  (extracted from LuaUserData) and &mut LuaState simultaneously;
-//                  fix via RefCell<Box<dyn LuaFileOps>> inside LStream, plus
-//                  restructure g_read/g_write to accept StackIdx not a raw borrow.
-//                  (2) C's %.14g (significant-digit float format) has no direct
-//                  Rust equivalent; a custom formatter is needed for faithful
-//                  number serialisation. The typed-userdata API (needed to cast
-//                  raw LuaUserData bytes to LStream) must also land in Phase B.
-//                  rustc self-check shows only expected E0432/E0433 import errors.
-// ────────────────────────────────────────────────────────────────────────────
+//   unsafe_blocks: 0
+//   deferred:      genuine deferred behavior (NOT stale scaffolding): close does
+//                  not surface a close-time I/O error as a failure tuple;
+//                  io.popen does not wait on the child for its real exit status;
+//                  f_tostring prints `0x?` rather than the handle's real (non-
+//                  deterministic) pointer address; number reading uses `.` for
+//                  the decimal point (omnilua is locale-independent).
+//   load-bearing:  the host capability hooks (file_open/popen/stdout/stderr/
+//                  temp_name) and the `wasm32` cfg gates — io is impure, and
+//                  these are the only path to the OS; idiomatize AROUND them.
+//                  The `LSTREAM_REGISTRY` side-table + Rc<RefCell<LStream>>
+//                  borrow-split is the deliberate safe-Rust resolution of C's
+//                  single `LStream *` and must not be "simplified" into payload
+//                  storage.
+//   net:           the deterministic read-format / `*`-prefix-seam / closed-file
+//                  / io.type surface is pinned by tests/io_strengthen.rs against
+//                  the reference binaries; whole-program behavior by the official
+//                  files.lua suite + check.sh 5.1-5.5. Host-specific I/O results
+//                  (OS error text, pointer addresses) are not reproducible and
+//                  are intentionally not pinned. See GRADUATED.md "io".
+// ──────────────────────────────────────────────────────────────────────────────

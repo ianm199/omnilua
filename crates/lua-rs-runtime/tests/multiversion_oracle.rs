@@ -3688,3 +3688,218 @@ fn issue92_legacy_numeric_for_behavior_matches_53() {
         "integer",
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// P2b net-strengthening (table library). The table module was already
+// idiomatic with a coarse behavioral net: 75% standard paths sampled, edge
+// cases and version seams thin. These tests pin REFERENCE behavior (captured
+// from `/tmp/lua-refs/bin/lua5.{1.5,2.4,3.6,4.7,5.0}`) for the four real gaps
+// the recon flagged, so the idiomatization that follows is verified, not
+// described. See `docs/IDIOMATIZATION_SPRINT_2_SPEC.md` → "### P2b — table".
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v51_insert_uses_primitive_length_ignoring_len_metamethod() {
+    // Gap 2: under 5.1 `table.insert` (and `#`) use the PRIMITIVE length and
+    // NEVER consult a table `__len` metamethod — `__len` on tables was a 5.2
+    // addition. So inserting into a `{10,20,30}` carrying a `__len` that lies
+    // (returns 99) appends at the primitive border 4, not at 100. Verified
+    // against lua5.1.5.
+    eq(
+        LuaVersion::V51,
+        "local t = setmetatable({10,20,30}, {__len = function() return 99 end}); \
+         table.insert(t, 40); return tostring(t[4]) .. ',' .. tostring(t[100]) .. ',' .. #t",
+        "40,nil,4",
+    );
+}
+
+#[test]
+fn v52_plus_insert_honors_len_metamethod() {
+    // Gap 2 contrast: under 5.2-5.5 `table.insert` HONORS `__len`. With a
+    // `__len` that returns 1, the append lands at border+1 == 2 (overwriting
+    // the primitive element there), and position 4 stays nil. This is the
+    // exact inverse of the 5.1 behavior above; keeping both proves the version
+    // gate is exercised, not a coincidental match. Verified against
+    // lua5.2.4/5.3.6/5.4.7/5.5.0.
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(
+            v,
+            "local t = setmetatable({10,20,30}, {__len = function() return 1 end}); \
+             table.insert(t, 40); return tostring(t[1]) .. ',' .. tostring(t[2]) .. ',' .. tostring(t[4])",
+            "10,40,nil",
+        );
+    }
+}
+
+#[test]
+fn v52_plus_pack_n_field_counts_all_args_including_nils() {
+    // Gap 3: `table.pack`'s `.n` field is the literal argument count, holes
+    // and trailing nils included — it is NOT a border. `pack(1, nil, 3).n`
+    // is 3 (with `t[2] == nil`), `pack()` is 0, and `pack(nil, nil, nil)` is
+    // 3. This is the whole point of `.n`: to recover the arity a `#t` border
+    // would lose. Verified against lua5.2.4/5.3.6/5.4.7/5.5.0.
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(
+            v,
+            "local t = table.pack(1, nil, 3); \
+             return t.n .. ',' .. tostring(t[1]) .. ',' .. tostring(t[2]) .. ',' .. tostring(t[3])",
+            "3,1,nil,3",
+        );
+        eq(v, "return table.pack().n", "0");
+        eq(v, "return table.pack(nil, nil, nil).n", "3");
+    }
+}
+
+#[test]
+fn v52_plus_unpack_boundaries_and_too_many_results() {
+    // Gap 3: `table.unpack` boundary behavior expressible with plain literals
+    // (so it runs from 5.2, before the integer subtype existed). An `i > e`
+    // empty range yields zero results; a span at/above INT_MAX
+    // (`unpack({}, 1, 2^31)`) raises "too many results to unpack" rather than
+    // attempting a 2-billion-result push. Verified against
+    // lua5.2.4/5.3.6/5.4.7/5.5.0.
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(
+            v,
+            "return select('#', table.unpack({1, 2, 3}, 5, 2))",
+            "0",
+        );
+        err_contains(
+            v,
+            "return table.unpack({}, 1, 2147483647)",
+            "too many results to unpack",
+        );
+    }
+}
+
+#[test]
+fn v53_plus_unpack_i64_extreme_boundaries() {
+    // Gap 3 (5.3+ only): the i64-extreme cases need `math.mininteger` /
+    // `math.maxinteger`, which are 5.3 additions (5.1/5.2 have no integer
+    // subtype). The full span `mininteger..maxinteger` wraps to a huge
+    // unsigned count and raises "too many results to unpack" rather than
+    // entering a 2^64-iteration loop; a single element at `maxinteger`
+    // (i == e) is an in-range read that returns the value. Verified against
+    // lua5.3.6/5.4.7/5.5.0.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        err_contains(
+            v,
+            "return table.unpack({}, math.mininteger, math.maxinteger)",
+            "too many results to unpack",
+        );
+        eq(
+            v,
+            "local t = {}; t[math.maxinteger] = 'x'; \
+             return table.unpack(t, math.maxinteger, math.maxinteger)",
+            "x",
+        );
+    }
+}
+
+#[test]
+fn v53_plus_move_overlap_copies_in_collision_safe_order() {
+    // Gap 4: `table.move` within one array must pick copy direction so an
+    // overlapping range is not clobbered mid-copy. A right shift
+    // (`move(t, 1, 3, 2)` over `{1,2,3,4,5}`) copies BACKWARD, yielding
+    // `1,1,2,3,5`; a left shift (`move(t, 3, 5, 1)`) copies FORWARD, yielding
+    // `3,4,5,4,5`. A naive single-direction loop corrupts one of these. A
+    // cross-table forward copy into a distinct destination is also pinned.
+    // `table.move` is a 5.3 addition. Verified against lua5.3.6/5.4.7/5.5.0.
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local t = {1,2,3,4,5}; table.move(t, 1, 3, 2); return table.concat(t, ',')",
+            "1,1,2,3,5",
+        );
+        eq(
+            v,
+            "local t = {1,2,3,4,5}; table.move(t, 3, 5, 1); return table.concat(t, ',')",
+            "3,4,5,4,5",
+        );
+        eq(
+            v,
+            "local b = {0,0,0,0,0}; table.move({10,20,30}, 1, 3, 2, b); return table.concat(b, ',')",
+            "0,10,20,30,0",
+        );
+        eq(
+            v,
+            "local b = {}; return tostring(table.move({1,2}, 1, 2, 1, b) == b)",
+            "true",
+        );
+    }
+}
+
+#[test]
+fn v53_plus_move_drives_index_and_newindex_metamethods_in_order() {
+    // Gap 4: `table.move` reads each source slot through `__index` and writes
+    // each destination slot through `__newindex`, interleaved one element at a
+    // time. A non-overlapping cross-table forward copy fires
+    // get1/set1/get2/set2/get3/set3 in that exact order; an overlapping
+    // in-place right shift fires the BACKWARD order (g3/s4/g2/s3/g1/s2),
+    // proving the decreasing-index loop drives the metamethods, not just raw
+    // slots. Verified against lua5.3.6/5.4.7/5.5.0.
+    let forward = "local log = {}; \
+        local src = setmetatable({}, {__index = function(_, k) log[#log+1] = 'get' .. k; return k * 10 end}); \
+        local dst = setmetatable({}, {__newindex = function(_, k, v) log[#log+1] = 'set' .. k .. '=' .. v end}); \
+        table.move(src, 1, 3, 1, dst); return table.concat(log, ' ')";
+    let backward = "local log = {}; local store = {1,2,3,4,5}; \
+        local t = setmetatable({}, { \
+          __index = function(_, k) log[#log+1] = 'g' .. k; return store[k] end, \
+          __newindex = function(_, k, v) log[#log+1] = 's' .. k .. '=' .. tostring(v); store[k] = v end}); \
+        table.move(t, 1, 3, 2); return table.concat(log, ' ')";
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(v, forward, "get1 set1=10 get2 set2=20 get3 set3=30");
+        eq(v, backward, "g3 s4=3 g2 s3=2 g1 s2=1");
+    }
+}
+
+#[test]
+fn v_sort_observable_contract_crossversion() {
+    // Sort: the OBSERVABLE contract (not the partition internals). A custom
+    // descending comparator orders correctly; an always-true comparator is a
+    // non-strict-order violation that raises "invalid order function for
+    // sorting"; the default `<` on a mixed string/number array raises the
+    // comparison error. The partition-internal callback-during-GC safety is a
+    // load-bearing region the behavioral net CANNOT guard (see the P2b
+    // verdict) — only these externally-visible facts are pinned here.
+    // Verified against lua5.1.5/5.3.6/5.4.7/5.5.0.
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(
+            v,
+            "local t = {3,1,4,1,5,9,2,6}; table.sort(t, function(a, b) return a > b end); \
+             return table.concat(t, ',')",
+            "9,6,5,4,3,2,1,1",
+        );
+        err_contains(
+            v,
+            "table.sort({1,2,3,4,5,6,7,8,9,10}, function() return true end)",
+            "invalid order function for sorting",
+        );
+    }
+    err_contains(
+        LuaVersion::V54,
+        "table.sort({1, 'a', 3})",
+        "attempt to compare",
+    );
+}

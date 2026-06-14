@@ -17,8 +17,18 @@ main 5abb986; `omnilua` 0.2.0; official suite passing.
       165, official 33/33, literals/errors, check.sh 5.1/5.4); 5 recipe entries +
       graduation doc (`crates/lua-lex/GRADUATED.md`) + 17 unit tests. (Not yet
       merged — branch awaiting review; do NOT push/tag per task scope.)
-- [ ] P1b: PARSER (lua-parse) idiomatized + merged (if P1a clean)
-- [ ] P1c: CODEGEN (lua-code) idiomatized + merged (if P1a/P1b clean)
+- [x] P1b: PARSER (lua-parse) idiomatized on `idiom/parser` — bytecode parity
+      (bench all-OK + broad-corpus counts identical) + behavioral suite green
+      (oracle 165, official 33/33, literals/errors, check.sh 5.1..5.5
+      57/54/23/7/10); 3 recipe entries + 2 detailed honest-negatives (RAII,
+      ExprPayload enum) + graduation doc (`crates/lua-parse/GRADUATED.md`) + 4
+      unit tests; `unsafe` 0 → 0. (Awaiting supervisor review/PR per task scope.)
+- [x] P1c: CODEGEN — **SUBSUMED into P1b.** `lcode.c` is folded into `lua-parse`
+      (86 `cg_*` functions); the standalone `lua-code` crate is only the opcode
+      tables / `Instruction` encoding, so there is no separate codegen crate to
+      idiomatize. The emit/register/jump/line-info/constant-fold core was
+      deliberately left structurally faithful (the hot-loop exception). No
+      separate P1c work item remains.
 - [ ] REFLECT: `docs/IDIOMATIZATION_REFLECTION_1.md` written with Phase-2
       go/no-go (REQUIRED before any Phase-2 work)
 - [ ] CLOSE: all PRs merged CI-green; board row closed
@@ -188,6 +198,105 @@ not reach.
   you want the idiomatic shape in place so it's obvious which comments are now
   redundant.
 
+### P1b — lua-parse (parser + folded-in codegen), 2026-06-14
+
+`crates/lua-parse/src/lib.rs` is a ~6.1k-line port of `lparser.c` **with
+`lcode.c` codegen folded in** (86 `cg_*` functions). The recon premise held:
+this file was **already mostly idiomatic** (Result/`?`, `Option<Box>` chains,
+proper enums, ZERO unsafe). Its C-residue is narrow, so the discipline here was
+the *inverse* of P1a — find the genuine residue, idiomatize it, and **leave the
+already-idiomatic majority and the hot codegen core alone**. Three code
+transformations landed; two planned ones are recorded honest-negatives (below).
+
+The dominant new lesson: **the bytecode-parity oracle is so strong on this
+crate (parser + codegen → `luac -l -l` byte-for-byte) that "already idiomatic"
+and "load-bearing structural" are the two reasons NOT to change code, and you
+must actively resist churning the 84-site `.u.info` / 202-site `match e.k`
+surface just because it "looks like C".** The marquee enum recipe is a negative
+here precisely because the surface is large *and* the tag/data are set apart.
+
+---
+
+**Recipe: `manual reverse index walk → .rev() range iterator`**
+- Pattern: a C-style descending index scan with a hand-decremented counter and a
+  `>= 0` guard, used to find the innermost (most-recently-declared) match.
+- Before (`searchvar`):
+  ```rust
+  let mut i = fs.nactvar as i32 - 1;
+  while i >= 0 { let vd = get_local_var_desc(ls, fs, i); /* ... */ i -= 1; }
+  -1
+  ```
+- After: a reversed range; the early-return-on-match is a plain `return`.
+  ```rust
+  for i in (0..fs.nactvar as i32).rev() { let vd = get_local_var_desc(ls, fs, i); /* ... */ }
+  -1
+  ```
+- Invariant that replaced the structural one: **resolution order** — the
+  innermost shadowing declaration still wins, because `(0..n).rev()` yields
+  `n-1 .. 0` (identical sequence) and the `n==0` empty case matches `i = -1`.
+  Proven by bytecode parity (searchvar is on the variable-resolution hot path).
+- Caveat: only applies where the index sequence and early-exit are the entire
+  loop semantics. Do NOT convert a count-down loop whose counter is entangled
+  with deferred side effects — `remove_vars` here keeps its manual `while
+  nactvar > tolevel { nactvar -= 1; ... }` because the truncate is deliberately
+  deferred until after the loop walks each soon-to-be-removed slot (documented).
+
+**Recipe: `sentinel-terminated chain walk → named lending cursor`**
+- Pattern: a singly-linked list threaded through a sentinel (`NO_JUMP`), walked
+  by N hand-written `while pc != NO_JUMP { ...; pc = get_next(fs, pc) }` loops,
+  where each loop body **mutates the same structure** the chain lives in.
+- Before (×4: `cg_remove_values`, `cg_need_value`, `cg_patch_list_aux`,
+  `cg_concat`):
+  ```rust
+  let mut list = list;
+  while list != NO_JUMP { let next = cg_get_jump(fs, list); /* mutate node */ list = next; }
+  ```
+- After: a `JumpList` **lending cursor** (not a plain `Iterator`, because every
+  body needs `&mut FuncState` — the chain can't be borrowed across steps, so
+  `fs` is handed back in per call):
+  ```rust
+  struct JumpList { cur: i32 }
+  impl JumpList { fn next(&mut self, fs: &FuncState) -> Option<i32> {
+      if self.cur == NO_JUMP { return None; }
+      let pc = self.cur; self.cur = cg_get_jump(fs, pc); Some(pc) }}
+  // visit-every:  while let Some(pc) = walk.next(fs) { /* mutate pc */ }
+  // find-tail:    while let Some(pc) = walk.next(fs) { tail = pc; }
+  ```
+- Invariant that replaced the structural one: **the cursor yields the same pc
+  sequence as the manual walk, so the jump offsets that get patched do not
+  move.** `next` computes the successor *before* returning the current node, so
+  a body may rewrite the yielded node without breaking the walk (the
+  read-next-then-mutate discipline the hand loops relied on). Proven by bytecode
+  parity AND three new unit tests (same-pcs-as-manual-walk, empty/single,
+  cg_concat tail-link).
+- Caveat: when the visit body mutates the structure the chain lives in, a
+  borrowing `Iterator<Item=pc>` will NOT compile (the `&fs` it holds conflicts
+  with the body's `&mut fs`). The *lending* cursor (`next(&mut self, fs)`) is the
+  idiomatic answer — and it serves both "visit every node" and "find the tail"
+  shapes from one type.
+
+**Recipe: `crutch removal on graduation` (parser extension)**
+- Same pattern as P1a, with two parser-specific judgment calls worth recording:
+- **A bare `file.c:NNN` ref embedded in an otherwise-behavioral comment**: strip
+  the `(lparser.c:1862)` coordinate, KEEP the behavioral prose (which attributes
+  are legal, the exact error wording). The coordinate is the crutch; the wording
+  is the spec.
+- **Genuine vs stale `TODO(port)`**: this crate had 14. Most "when lua-X lands"
+  TODOs were STALE (the dep landed; verify with grep before deleting — e.g.
+  `lex_next`/`lex_lookahead` actually call `lua_lex::next`/`lookahead` now). But
+  **8 are GENUINE deferred-codegen markers** (integer stack-check, debug-var
+  startpc, local const-fold, explicit `fix_line`, GC proto allocation,
+  single-vs-multret arg, an unnamed-var defensive branch). They were KEPT: the
+  bytecode-parity oracle proves they don't move output, so they document a real,
+  invisible divergence from full `lcode.c` — deleting them would hide it. The
+  PORT STATUS trailer counts them honestly (`todos: 8`, `port_notes: 0`).
+- Caveat: the most *misleading* crutch here was a section header claiming codegen
+  "cannot yet be called from lua-parse ... emits the small subset of bytecode
+  required to execute simple programs" — flatly false (the full single-pass
+  generator is folded in and passes parity on the whole corpus). The
+  graduation-era danger is exactly this: a stale comment that *understates* how
+  done the code is. Replace it with what the code actually does.
+
 ## Verdict ledger
 (append per-subsystem outcomes — graduated OR honest-negative-with-reason)
 
@@ -216,3 +325,83 @@ forced):**
 
 No transformation had to be reverted for a parity/behavior break — every gate
 stayed green on the first landing.
+
+### P1b — lua-parse: **GRADUATED** (2026-06-14)
+
+Three code transformations landed (crutch removal → `searchvar` `.rev()`
+iterator → `JumpList` lending cursor), one commit each, the full Sprint-1 gate
+green after every one: bytecode parity bench all-OK + broad-corpus divergent-op
+counts **identical to baseline** (33 files; the pre-existing const-fold/LOADNIL
+divergences did not move); `multiversion_oracle` 165; official 33/33;
+`literals.lua` + `errors.lua` PASS; `check.sh` 5.1/5.2/5.3/5.4/5.5 =
+57/54/23/7/10, 0 fail; `cargo test -p lua-parse` (4 new unit tests) +
+`--workspace` green; wasm `cargo check` clean. `unsafe` 0 → 0. **No entry added
+to `bytecode-parity-allow.txt`.** `GRADUATED.md` written; module doc + PORT
+STATUS trailer declare the new oracle. `lua-lex`/`lua-vm`/`lua-code` untouched.
+
+**P1c (CODEGEN) is SUBSUMED into P1b.** `lcode.c` is folded into `lua-parse`
+(the 86 `cg_*` functions); the standalone `lua-code` crate is *only* the opcode
+tables / `Instruction` encoding. There is no separate codegen crate to
+idiomatize. The emit / register-alloc / jump-offset / line-info / constant-fold
+**core was deliberately left structurally faithful** (the hot-loop exception in
+the roadmap): its instruction ordering, register LIFO discipline, and
+constant-insertion order are exactly what bytecode parity pins. We idiomatized
+*around* that core (the jump-list *walks*, not the jump *offset math*), never
+*through* it.
+
+**Honest-negatives (transformations planned and deliberately NOT forced):**
+
+- *`enter_level`/`leave_level` and `enter_block`/`leave_block` → RAII `Drop`* —
+  **NOT done; left as explicit calls.** Two independent blockers:
+  1. **Borrow + public-API.** A `Drop` guard must own a handle to the thing it
+     cleans up. The depth counter (`recursion_depth`) and the block chain live
+     *inside* `LexState`, which the guarded function bodies also mutate (`subexpr`
+     calls `lex_next(ls, …)` etc.). A guard holding `&mut LexState` would forbid
+     the body from touching `ls` at all. The borrow-safe alternative — making
+     `recursion_depth` a `Cell<u32>` and holding `&Cell` — changes a **public**
+     `LexState` field type, which the task forbids (byte-stable public boundary).
+     `unsafe` is banned. So no borrow-safe, API-stable RAII exists.
+  2. **`leave_block` ordering + extra args.** `leave_block` is ordering-sensitive
+     (it snapshots the block's fields *before* popping, because `createlabel` /
+     goto-resolution read `fs->bl` while it still points at the block; then
+     restores 5.5 global-scope state, `remove_vars`, emits `OP_CLOSE`, resolves
+     gotos, *then* pops). `Drop` cannot take the `&mut LuaState` it needs to emit
+     `CLOSE`, and folding this sequence into `Drop` risks reordering the
+     load-bearing snapshot→restore→resolve→pop chain.
+  Conclusion: the explicit paired calls **are** the correct Rust shape here. The
+  one "defect" RAII would fix (the depth decrement is skipped on `?`-error paths)
+  is unobservable — a parse error aborts the whole `parse()`, after which
+  `recursion_depth` is never read again, matching the C longjmp abort. Zero
+  behavioral gain for real cost. (Not a parity break — a borrow/API/ordering
+  wall.)
+
+- *`ExprPayload` flat struct → tagged `enum` (THE marquee parser recipe)* —
+  **NOT attempted as code; recorded honest-negative.** The recon's "all-or-
+  nothing-safe (disjoint fields, no cross-talk)" was true at the field level but
+  missed the access *shape*, which makes a faithful conversion a hundreds-of-site
+  big-bang that is only gate-able at the very end. The structural blockers:
+  1. **Generic setter writes the wrong-looking field for many kinds.**
+     `init_exp(e, k, i)` sets `e.k = k; e.u.info = i` for **12 different
+     ExprKinds**, including the no-payload `Nil`/`True`/`False`/`Void` and even
+     `KInt`/`KFlt` (where the caller then overwrites `ival`/`nval` separately).
+     It relies on the flat struct's "write `info` even when unused" semantics —
+     an enum where the variant *is* the data cannot express that.
+  2. **Tag and data are set in SEPARATE statements**, pervasively and sometimes
+     far apart: `init_exp(v, KInt, 0)` then `v.u.ival = …` (simpleexp);
+     `e1.k = ExprKind::KFlt` then `e1.u.nval = v` (constant folding). An enum has
+     no valid intermediate state between "set the tag" and "set the data".
+  3. **Helpers pass tag and payload as separate args** (`promote(e1.k, &e1.u)`).
+  4. **Scale, all-or-nothing, hot path.** 12 `match e.k` + 48 `.k ==/!=` + 45
+     `.k = ExprKind` + **161 `.u.field` accesses**, none of which compile (let
+     alone gate) until the *entire* conversion is done, against the codegen hot
+     path where a single mis-mapped field silently moves a constant index or
+     register — invisible until the final parity run. This is exactly the
+     "balloons beyond what you can gate cleanly → REVERT entirely and record a
+     detailed honest-negative" outcome the task sanctioned. `ExprPayload` and the
+     parallel `VarDesc` stay flat structs; their doc-comments now record this as
+     the deliberate decision (the bytecode-parity oracle, not the type system,
+     holds the "which field each kind uses" invariant).
+
+No transformation that *was* landed had to be reverted for a parity/behavior
+break — every gate stayed green on the first landing. The two negatives above
+were never coded (the analysis ruled them out before writing risky code).

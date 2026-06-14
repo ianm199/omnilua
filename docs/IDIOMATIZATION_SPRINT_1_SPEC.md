@@ -15,23 +15,31 @@ main 5abb986; `omnilua` 0.2.0; official suite passing.
 - [x] P1a: LEXER (lua-lex) idiomatized on `idiom/lexer` — bytecode parity (bench
       all-OK + broad-corpus counts identical) + behavioral suite green (oracle
       165, official 33/33, literals/errors, check.sh 5.1/5.4); 5 recipe entries +
-      graduation doc (`crates/lua-lex/GRADUATED.md`) + 17 unit tests. (Not yet
-      merged — branch awaiting review; do NOT push/tag per task scope.)
+      graduation doc (`crates/lua-lex/GRADUATED.md`) + 17 unit tests.
+      **MERGED — PR #193 (`b113ab7`), CI green; supervisor re-verified the gate.**
 - [x] P1b: PARSER (lua-parse) idiomatized on `idiom/parser` — bytecode parity
       (bench all-OK + broad-corpus counts identical) + behavioral suite green
       (oracle 165, official 33/33, literals/errors, check.sh 5.1..5.5
       57/54/23/7/10); 3 recipe entries + 2 detailed honest-negatives (RAII,
       ExprPayload enum) + graduation doc (`crates/lua-parse/GRADUATED.md`) + 4
-      unit tests; `unsafe` 0 → 0. (Awaiting supervisor review/PR per task scope.)
+      unit tests; `unsafe` 0 → 0.
+      **MERGED — PR #194 (`2ee0136e`), CI green; supervisor re-verified the gate.**
 - [x] P1c: CODEGEN — **SUBSUMED into P1b.** `lcode.c` is folded into `lua-parse`
       (86 `cg_*` functions); the standalone `lua-code` crate is only the opcode
       tables / `Instruction` encoding, so there is no separate codegen crate to
       idiomatize. The emit/register/jump/line-info/constant-fold core was
       deliberately left structurally faithful (the hot-loop exception). No
       separate P1c work item remains.
-- [ ] REFLECT: `docs/IDIOMATIZATION_REFLECTION_1.md` written with Phase-2
-      go/no-go (REQUIRED before any Phase-2 work)
-- [ ] CLOSE: all PRs merged CI-green; board row closed
+- [x] REFLECT: `docs/IDIOMATIZATION_REFLECTION_1.md` written — recipes, the
+      verification-model shift, the "idiomatization debt is not uniform" finding,
+      honest-negatives as the richest output (incl. the two-phase technique for a
+      future `ExprPayload` enum attempt), roadmap adjustments, and an explicit
+      **Phase-2 GO** (with a coverage-check precondition + recommended
+      easy-pure-first → hot-string-matcher sequence). Phase 2 NOT started in this
+      run, per scope.
+- [x] CLOSE: PR #193 + PR #194 merged CI-green (`b113ab7`, `2ee0136e`); the
+      reflection + this checklist land via the reflection/closeout PR; board row
+      closed on `../AGENT_COORDINATION_BOARD.md`.
 
 ## Phase-0 scaffolding
 

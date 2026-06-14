@@ -1,13 +1,30 @@
-//! Debug library — Rust port of `ldblib.c`.
+//! Debug library — the `debug` Lua standard library module.
 //!
-//! Provides the `debug` Lua standard library module. Exposes debug
-//! introspection APIs: stack inspection (`getinfo`, `getlocal`), upvalue
-//! access (`getupvalue`, `setupvalue`, `upvaluejoin`), hook management
-//! (`sethook`, `gethook`), metatable overrides (`getmetatable`,
-//! `setmetatable`), userdata values (`getuservalue`, `setuservalue`),
-//! and utility functions (`traceback`, `debug`, `setcstacklimit`).
+//! Exposes debug introspection APIs: stack inspection (`getinfo`, `getlocal`,
+//! `setlocal`), upvalue access (`getupvalue`, `setupvalue`, `upvalueid`,
+//! `upvaluejoin`), hook management (`sethook`, `gethook`), metatable overrides
+//! (`getmetatable`, `setmetatable`), userdata values (`getuservalue`,
+//! `setuservalue`), the registry (`getregistry`), and utilities (`traceback`,
+//! `debug`, `setcstacklimit`).
 //!
-//! C source: `reference/lua-5.4.7/src/ldblib.c` (484 lines, 20 functions)
+//! # Graduation (Idiomatization Sprint 2, Phase 2 — P2-debug, 2026-06-14)
+//!
+//! Most of this module is **VM-introspection plumbing**: `getinfo`/`getlocal`/
+//! `setlocal`/`getupvalue`/`setupvalue`/`upvalueid`/`upvaluejoin`/`sethook`/
+//! `gethook`/`traceback`/`getregistry` reach into `lua-vm`'s call stack,
+//! activation records, upvalue cells, and registry. That cross-crate plumbing
+//! is **load-bearing** — it is idiomatized AROUND (the cold arg-checking, the
+//! `getinfo` result-table assembly, traceback formatting), never refactored in
+//! how it reaches into the VM. The cross-thread `lua_xmove` TODOs and the
+//! `UpvalId` pointer-identity TODO are genuine deferred behavior, kept verbatim.
+//!
+//! Behavioral net (the only oracle — there is no structural one): the official
+//! `db.lua` suite (5.4), `multiversion_oracle`, the version batteries
+//! (`specs/oracle/check.sh 5.1`..`5.5`), and this crate's reference-pinned
+//! `tests/debug_strengthen.rs`. Strengthening that net FIRST caught two real
+//! 5.1 divergences (the 5.2+ `getinfo 'u'` `nparams`/`isvararg` fields and the
+//! 5.2+ function-argument `getlocal` form leaked onto 5.1); both fixed here in
+//! the cold arg-handling surface. See `crates/lua-stdlib/GRADUATED.md` "debug".
 
 use std::cell::RefCell;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -41,9 +58,9 @@ pub(crate) type LibFn = fn(&mut LuaState) -> Result<usize, LuaError>;
 
 /// A Rust hook callback registered with the Lua VM's hook mechanism.
 ///
-/// PORT NOTE: The Rust hook receives the event code and current line directly
-/// rather than a lua_Debug pointer, since the lua-stdlib `DebugInfo` and the
-/// canonical `lua_vm::debug::LuaDebug` are distinct types during Phase B.
+/// The hook receives the event code and current line directly (not a debug
+/// record), because the lua-stdlib `DebugInfo` and the canonical
+/// `lua_vm::debug::LuaDebug` are distinct types.
 #[expect(
     dead_code,
     reason = "ported stdlib helper; not yet wired into the runtime"
@@ -104,7 +121,6 @@ fn check_cross_thread_stack(
     target_is_self: bool,
     n: i32,
 ) -> Result<(), LuaError> {
-    //        luaL_error(L, "stack overflow");
     if !target_is_self {
         // TODO(port): checking a different thread's stack requires simultaneous
         // `&mut LuaState` for both threads, which is not expressible in safe Rust
@@ -127,9 +143,6 @@ fn getthread(state: &mut LuaState) -> (i32, Option<GcRef<lua_types::value::LuaTh
 
 /// Push byte string `v` (or Nil when `v` is `None`) and store it under key
 /// `k` in the table that sits at stack position -2.
-///
-/// PORT NOTE: The C version passes NULL to signal "no value" (lua_pushstring
-/// with NULL pushes nil). Rust uses Option<&[u8]> for the same semantics.
 fn settabss(state: &mut LuaState, k: &[u8], v: Option<&[u8]>) -> Result<(), LuaError> {
     match v {
         Some(s) => {
@@ -286,7 +299,6 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut info_target_is_self = target_is_self;
 
     if state.type_at(arg + 1) == LuaType::Function {
-        // In C this also pushes the string onto the stack; in Rust we just build a Vec.
         let mut prefixed = Vec::with_capacity(raw_opts.len() + 1);
         prefixed.push(b'>');
         prefixed.extend_from_slice(&raw_opts);
@@ -371,8 +383,10 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     }
     if options.contains(&b'u') {
         settabsi(state, b"nups", ar.nups as i32)?;
-        settabsi(state, b"nparams", ar.nparams as i32)?;
-        settabsb(state, b"isvararg", ar.isvararg)?;
+        if !matches!(state.global().lua_version, LuaVersion::V51) {
+            settabsi(state, b"nparams", ar.nparams as i32)?;
+            settabsb(state, b"isvararg", ar.isvararg)?;
+        }
     }
     if options.contains(&b'n') {
         let name_opt: Option<&[u8]> = ar.name.as_deref();
@@ -389,11 +403,10 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
             settabsi(state, b"extraargs", ar.extraargs as i32)?;
         }
     }
-    // 'L' and 'f' options: lua_getinfo pushed line-table then function onto L1's stack.
-    // treat_stack_option moves each into the result table.
-    // PORT NOTE: C's lua_getinfo always pushes 'f' result before 'L' result (regardless
-    // of option-string order), so the treatstackoption calls below are intentionally
-    // ordered 'L' first then 'f' — matching the C db_getinfo exactly.
+    // The 'f' (function) and 'L' (active-lines table) results were pushed by
+    // get_debug_info in that order — function first, line-table on top — so they
+    // must be moved into the result table top-first: 'L' here, then 'f'. This
+    // ordering is load-bearing regardless of the option-string order.
     if options.contains(&b'L') {
         if info_target_is_self {
             treat_stack_option(state, true, b"activelines")?;
@@ -418,11 +431,26 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
+/// Whether `debug.getlocal` accepts a function as its first argument (the
+/// parameter-name introspection form).
+///
+/// This form is a 5.2 addition (the `lua_isfunction(L, arg+1)` branch in
+/// `ldblib.c` `db_getlocal`). On 5.1 there is no such branch: a function
+/// argument is fed straight to `luaL_checkint`, which raises
+/// `number expected, got function`. Returning `false` here lets the function
+/// argument fall through to the integer-level path so 5.1 reproduces that error.
+/// (`db_setlocal` has no function form on any version, so this gate is
+/// `getlocal`-only.)
+fn function_arg_form_supported(state: &LuaState) -> bool {
+    !matches!(state.global().lua_version, LuaVersion::V51)
+}
+
 /// `debug.getlocal([thread,] level, local)` — return the name and value of
 /// local variable `local` at stack level `level`.
 ///
-/// When the first argument is a function, returns only the parameter name at
-/// position `local` (no value).
+/// On 5.2+ the first argument may be a function, in which case only the
+/// parameter name at position `local` is returned (no value); see
+/// [`function_arg_form_supported`].
 ///
 pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
     let (arg, other_thread) = getthread(state);
@@ -430,10 +458,8 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let nvar = state.check_arg_integer(arg + 2)? as i32;
 
-    if state.type_at(arg + 1) == LuaType::Function {
+    if function_arg_form_supported(state) && state.type_at(arg + 1) == LuaType::Function {
         state.push_value_at(arg + 1)?;
-        // lua_getlocal with NULL ar reads parameter names from the function at the
-        // top of the stack; it does NOT push a value.
         let name = state.get_param_name(0, nvar)?;
         match name {
             Some(n) => {
@@ -444,8 +470,6 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
                 state.push(LuaValue::Nil);
             }
         }
-        // The pushed function below name is discarded by the VM when it collects
-        // exactly 1 return value from the top of the stack.
         return Ok(1);
     }
 
@@ -867,7 +891,6 @@ pub(crate) fn get_hook(state: &mut LuaState) -> Result<usize, LuaError> {
         return Ok(1);
     }
 
-    //      lua_pushliteral(L, "external hook");
     if !hook_is_internal {
         let s = state.intern_str(b"external hook")?;
         state.push(LuaValue::Str(s));
@@ -917,10 +940,8 @@ pub(crate) fn debug_interactive(state: &mut LuaState) -> Result<usize, LuaError>
             eprint!("lua_debug> ");
             let _ = io::stderr().flush();
 
-            //        return 0;
-            // PORT NOTE: using String for the line buffer is Rust I/O infrastructure,
-            // not Lua data. The bytes are immediately converted to &[u8] before being
-            // passed into the Lua API.
+            // The `String` line buffer is Rust I/O infrastructure, not Lua data:
+            // its bytes are handed to the Lua API as `&[u8]` immediately below.
             let mut line = String::new();
             let n = stdin
                 .lock()
@@ -933,13 +954,11 @@ pub(crate) fn debug_interactive(state: &mut LuaState) -> Result<usize, LuaError>
 
             let bytes: &[u8] = line.as_bytes();
 
-            //        lua_pcall(L, 0, 0, 0))
-            //      lua_writestringerror("%s\n", luaL_tolstring(L, -1, NULL));
             let result = state
                 .load_buffer(bytes, b"=(debug command)", None)
                 .and_then(|_| state.protected_call(0, 0, 0));
 
-            if let Err(_) = result {
+            if result.is_err() {
                 // TODO(port): display the error via state.coerce_to_string(-1) which
                 // maps to luaL_tolstring. The exact method name for the coercing
                 // to-string operation and the stderr-write helper need to be established
@@ -1040,22 +1059,14 @@ pub fn open_debug(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/ldblib.c  (484 lines, 20 functions)
 //   target_crate:  lua-stdlib
-//   confidence:    medium
-//   todos:         16
-//   port_notes:    3
 //   unsafe_blocks: 0
-//   notes:         Cross-thread ops (lua_xmove / simultaneous &mut LuaState)
-//                  are the main blockers; all 16 TODOs are in that cluster or
-//                  in UpvalId (raw-pointer identity). Single-thread paths are
-//                  faithfully translated. Phase B must define: DebugInfo field
-//                  accessor methods (source_bytes, short_src_bytes, what_bytes,
-//                  name_bytes, namewhat_bytes), hook-kind predicates
-//                  (hook_is_set, hook_is_internal_lua_hook, get_hook_mask,
-//                  get_hook_count), get_or_create_registry_subtable,
-//                  get_param_name, get_local_at, set_local_at,
-//                  upvalue_id (UpvalId type), join_upvalues, lua_traceback,
-//                  load_buffer, push_registry, get_registry_field, push_fail,
-//                  push_thread, new_lib, set_hook(Option<HookFn>, u32, i32).
+//   net:           db.lua (5.4) + multiversion_oracle + check.sh 5.1..5.5 +
+//                  tests/debug_strengthen.rs (this crate). See GRADUATED.md.
+//   deferred:      6 TODO(port), all genuine deferred VM behavior — the
+//                  cross-thread `lua_xmove` cluster (getinfo/getlocal/setlocal/
+//                  sethook/gethook against another thread's stack needs
+//                  simultaneous `&mut LuaState` for both threads) and the
+//                  `UpvalId` raw-pointer identity for upvalueid/upvaluejoin.
+//                  These reach into lua-vm internals and are load-bearing.
 // ──────────────────────────────────────────────────────────────────────────

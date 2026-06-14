@@ -6227,6 +6227,41 @@ mod tests {
         assert_eq!(cg_get_jump(&fs, a), b);
         assert_eq!(cg_get_jump(&fs, b), NO_JUMP);
     }
+
+    /// Spot-check the token-to-binop mapping and the load-bearing invariant that
+    /// every [`BinOpr`] discriminant is a valid index into [`PRIORITY`]. The
+    /// expression parser indexes `PRIORITY[op as usize]`; a reordered or
+    /// short-by-one table would silently mis-climb operator precedence.
+    #[test]
+    fn binopr_mapping_and_priority_table_are_consistent() {
+        assert_eq!(getbinopr(b'+' as TokenKind), BinOpr::Add);
+        assert_eq!(getbinopr(b'/' as TokenKind), BinOpr::Div);
+        assert_eq!(getbinopr(TK_IDIV), BinOpr::IDiv);
+        assert_eq!(getbinopr(TK_SHL), BinOpr::Shl);
+        assert_eq!(getbinopr(TK_CONCAT), BinOpr::Concat);
+        assert_eq!(getbinopr(TK_AND), BinOpr::And);
+        assert_eq!(getbinopr(b'@' as TokenKind), BinOpr::NoBinOpr);
+
+        for op in [
+            BinOpr::Add,
+            BinOpr::Pow,
+            BinOpr::Concat,
+            BinOpr::Eq,
+            BinOpr::And,
+            BinOpr::Or,
+        ] {
+            assert!(
+                (op as usize) < PRIORITY.len(),
+                "{op:?} out of PRIORITY range"
+            );
+        }
+        assert_eq!(BinOpr::Or as usize, PRIORITY.len() - 1);
+
+        assert_eq!(getunopr(b'-' as TokenKind), UnOpr::Minus);
+        assert_eq!(getunopr(TK_NOT), UnOpr::Not);
+        assert_eq!(getunopr(b'#' as TokenKind), UnOpr::Len);
+        assert_eq!(getunopr(b'+' as TokenKind), UnOpr::NoUnOpr);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

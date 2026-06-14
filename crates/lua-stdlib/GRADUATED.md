@@ -217,3 +217,128 @@ blind spot, not a coverage gap.
 
 See the "Recipe ledger" → "### P2b — table" in
 `docs/IDIOMATIZATION_SPRINT_2_SPEC.md`.
+
+---
+
+## string
+
+Status: graduated 2026-06-14 (Sprint 2, Phase P2c — the HOT Phase-2 capstone, and
+the FIRST module guarded by a PERF arbiter on top of the behavioral oracle).
+Branch of record: `idiom/string`.
+
+### What "graduated" means here — and the headline finding
+
+`crates/lua-stdlib/src/string_lib.rs` (a ~3150-line port of `lstrlib.c`) contains
+the recursive **pattern matcher**, the hot inner loop of every `string.*` pattern
+operation. The honest finding — internalized from recon and confirmed by the
+arbiter — is that **the matcher is already idiomatic Rust and CPI-load-bearing**:
+the `goto`→`'outer: loop` tail-call translation is correct and perf-critical, and
+there is NO perf-neutral idiomatization available inside it. So P2c is NOT a
+matcher rewrite. It is the **third "leave load-bearing" data point** (after math's
+xoshiro and table's quicksort), and the strongest, because the matcher is the
+only load-bearing core *exercised on a perf-measured workload* — so "do not touch
+it" is enforced by the Ir arbiter, not merely argued.
+
+The capstone deliverable is the **perf-arbiter veto loop demonstrated end-to-end**
+(see "The perf arbiter that now guards it" below): a first cut that regressed the
+matcher's instruction count was CAUGHT by the arbiter and driven back to flat.
+
+### The oracle that now guards it (behavioral suite + the NEW perf arbiter)
+
+A change to string is verified only when ALL are green (the P2c gate):
+
+1. **Behavioral suite.** `cargo test -p omnilua --test multiversion_oracle`
+   (**181** — the prior 178 plus the three P2c net-strengthening assertions added
+   FIRST), the matcher-heavy official files run directly
+   (`harness/run_official_test.sh reference/lua-5.4.7-tests/strings.lua` and
+   `pm.lua`, both PASS), and the version-gated batteries
+   (`specs/oracle/check.sh 5.1`..`5.5` at the baseline 57/54/23/7/10, 0 fail).
+2. **The PERF arbiter (new in P2c).** `bash harness/bench/instr-count.sh
+   --workloads string_ops,string_ops_long --branch-sim` must come back **Ir
+   FLAT** vs the frozen baseline (within the measured baseline-rebuild floor,
+   ~0.09%), and Bc flat. An idiomatization that keeps behavior identical but
+   regresses the matcher's instruction count or branch behavior is a NO-GO. The
+   supervisor re-runs the authoritative Ir + a cold-machine wall A/B before merge.
+3. **Crate gates:** `cargo test -p lua-stdlib`, `cargo test --workspace`,
+   `cargo check -p lua-stdlib --target wasm32-unknown-unknown`. `unsafe` blocks:
+   **0** (unchanged).
+
+#### The net had to be STRENGTHENED before idiomatizing — and it caught two bugs
+
+The behavioral net (pm.lua) exercises the matcher heavily but never HITS its
+danger-zone edges. The first three commits added reference-pinned tests for those
+edges; **two FAILED at baseline**, catching real 5.1/5.2 pre-5.3.3 divergences:
+
+- **`matchdepth` / "pattern too complex" (a REAL BUG).** The `MAXCCALLS` (200)
+  recursion guard was added in **5.2** — 5.1's `lstrlib.c` `match()` has no depth
+  counter at all (verified: zero `MAXCCALLS`/`matchdepth` in the 5.1.5 source), so
+  a too-deep pattern simply MATCHES on 5.1. Our impl applied the bound to 5.1 too
+  and raised "pattern too complex". The test FAILED at baseline.
+- **Empty-match advance / the 5.3.3 change (a REAL BUG).** The `e != lastmatch`
+  empty-match de-dup is present in 5.3+ and absent in 5.1/5.2, so
+  `gsub(" *","-")` must DOUBLE to `-a--b--c-d-` on 5.1/5.2 (vs `-a-b-c-d-` on
+  5.3+) and `gmatch("%a*")` must emit spurious empty captures. Our impl deduped
+  on all versions. The test FAILED at baseline.
+- **Capture overflow.** >32 captures → "too many captures" on every version (not
+  version-gated). Green tripwire at baseline.
+
+Both bugs were fixed in the same area via two single-source version helpers,
+`matcher_bounds_depth` and `matcher_dedups_empty_match`, verified against all five
+reference binaries and the check.sh×5 baseline. Pin reference, fix the impl —
+never weaken the test to the impl's wrong output.
+
+#### The perf arbiter that now guards it — the veto loop that fired
+
+The first cut of the empty-match fix regressed gmatch **Ir +0.33–0.54%** on the
+matcher workloads (a `state.global()` RefCell borrow + per-match version branches
+in `gmatch_aux`, which the Lua `for` loop calls once per match — 5M times on
+`string_ops_long`). The baseline-vs-baseline rebuild floor was measured at
+**±0.01–0.09%**, proving the regression was signal, not layout noise. It was
+driven FLAT (**Ir −0.11% / −0.08%**, within the floor, stable across two builds)
+by: restoring the `MatchState` release layout (dropping a debug-only field that
+shifted hot offsets); hoisting the version reads to iterator creation; and
+**specializing the gmatch step on a `const DEDUP: bool`** (`gmatch_aux` /
+`gmatch_aux_legacy`, picked at creation) so monomorphization makes the 5.3+ step's
+codegen byte-identical to the single-version baseline — version-gating behavior on
+a hot path at ZERO instruction cost. The Ir-flat verdict is the proof the whole
+packet (including the matcher) is perf-neutral.
+
+### Left load-bearing — the matcher, untouched in code (only documented)
+
+- **The recursive pattern matcher** — `match_pat` and its helpers (`singlematch`,
+  `match_class`, `matchbracketclass`, `classend`, `max_expand`, `min_expand`,
+  `start_capture`, `end_capture`, `match_capture`, `matchbalance`,
+  `handle_class_with_suffix`). The `goto`→`'outer: loop` tail-call translation,
+  the per-byte `match ms.pat[p]` dispatch, and the recursion structure are HOT and
+  CPI-critical. **No code line in the matcher changed** — the only P2c edits there
+  are doc-comments (an enriched `match_pat` contract note). No local was renamed:
+  the names are already clear and faithful, so renaming would be churn on a clean
+  load-bearing core. The Ir-flat verdict confirms it is untouched.
+- **The version seams are gated OFF the hot path.** `matcher_bounds_depth` (5.1
+  has no `MAXCCALLS`) and `matcher_dedups_empty_match` (the 5.3.3 rule) are
+  resolved once at the cold entry / iterator-creation point; the per-match step
+  never re-reads the version. The 5.1 no-bound case initializes `matchdepth` to a
+  high sentinel so the hot `< 0` check stays byte-identical.
+
+### Honest-negatives recorded in this graduation
+
+- **The matcher is idiomatized AROUND, not WITHIN — and that is the SUCCESS.**
+  There is no perf-neutral idiomatization inside the hot matcher; the packet
+  idiomatized the cold utilities, gated the version seams, and proved neutrality.
+  "Matcher load-bearing, idiomatized around it, perf-neutral confirmed" is the
+  intended outcome, not a shortfall.
+- **A real C seam left ungated because it is unobservable.** The 5.4+
+  `changed`/return-original gsub optimization (return the original string object
+  when nothing changed) is invisible through the language — strings intern, so a
+  rebuilt identical string is `rawequal` to the original. Left applied to all
+  versions (behavior-identical). The inverse of the two bugs above: a seam real in
+  C but unobservable, where the correct amount of gating is zero (the matcher
+  analogue of math's un-pinnable PRNG sequence / table's partition-internal
+  invariant).
+
+### Recipes harvested
+
+See the "Recipe ledger" → "### P2c — string" in
+`docs/IDIOMATIZATION_SPRINT_2_SPEC.md` — including the capstone methodology
+recipe, **"the perf arbiter as a veto gate — idiomatize AROUND a hot load-bearing
+core, prove neutrality with Ir/branch-sim, revert any regression."**

@@ -1,6 +1,13 @@
-//! Standard library for string operations and pattern-matching.
+//! Standard library for string operations and pattern-matching — `string.*`.
 //!
-//! Port of `lstrlib.c` (Lua 5.4.7, 1875 lines, 46 functions).
+//! C source: `reference/lua-5.4.7/src/lstrlib.c`.
+//!
+//! The recursive pattern matcher (§2) is the hot, CPI-load-bearing core: its
+//! `goto`-derived `'outer: loop` and per-char dispatch are pinned by the
+//! behavioral net and must not be refactored (see the PORT STATUS trailer and
+//! `GRADUATED.md` "string"). Version seams live in two single-source helpers:
+//! [`matcher_bounds_depth`] (the 5.2+ "pattern too complex" guard, absent on
+//! 5.1) and [`matcher_dedups_empty_match`] (the 5.3.3 empty-match rule).
 //!
 //! Sections:
 //!   1. Basic string operations (byte, char, find, format, gmatch, gsub, len,
@@ -42,29 +49,11 @@ const CAP_UNFINISHED: isize = -1;
 
 const CAP_POSITION: isize = -2;
 
-#[expect(
-    dead_code,
-    reason = "ported stdlib helper; not yet wired into the runtime"
-)]
-const MAX_ITEM: usize = 120;
-
-#[expect(
-    dead_code,
-    reason = "ported stdlib helper; not yet wired into the runtime"
-)]
-const MAX_ITEM_F: usize = 418;
-
-#[expect(
-    dead_code,
-    reason = "ported stdlib helper; not yet wired into the runtime"
-)]
-const MAX_FORMAT: usize = 32;
-
 const MAX_INT_SIZE: usize = 16;
 
-// On platforms where size_t is at least as wide as int (all our targets), this
-// collapses to INT_MAX so that packed sizes round-trip through a Lua integer
-// without ambiguity.
+/// The largest packed size accepted by `string.pack`. On platforms where
+/// `size_t` is at least as wide as `int` (all our targets) this collapses to
+/// `INT_MAX`, so packed sizes round-trip through a Lua integer without ambiguity.
 const PACK_MAXSIZE: usize = i32::MAX as usize;
 
 const NB: u32 = 8;
@@ -506,12 +495,9 @@ pub fn str_char(state: &mut LuaState) -> Result<usize, LuaError> {
 pub fn str_dump(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_type(1, LuaType::Function)?;
     let strip = state.arg_to_bool(2);
-    // PORT NOTE: `state.set_top` (inherent) takes an absolute StackIdx and
-    // would wipe the call frame. `lua_settop` is frame-relative.
+    // Use the frame-relative `lua_vm::api::set_top`, not `state.set_top`: the
+    // inherent method takes an absolute StackIdx and would wipe the call frame.
     lua_vm::api::set_top(state, 1)?;
-    // TODO(port): state.dump_function(strip) needs to produce &[u8].
-    // In the C code, lua_dump writes to a writer callback that fills a luaL_Buffer.
-    // In Rust, state.dump() should return Vec<u8> or write to a &mut Vec<u8>.
     let bytes = state
         .dump_function(strip)
         .map_err(|_| LuaError::runtime(format_args!("unable to dump given function")))?;
@@ -531,11 +517,8 @@ fn tonum(state: &mut LuaState, arg: i32) -> Result<bool, LuaError> {
         state.push_value_at(arg)?;
         Ok(true)
     } else {
-        // check whether it is a numerical string
-        //    return (s != NULL && lua_stringtonumber(L, s) == len + 1);
         if let Some(s) = state.to_lua_string_bytes(arg) {
             let len = s.len();
-            // PORT NOTE: string_to_number pushes the number if successful
             let pushed = state.string_to_number_push(&s)?;
             let ok = pushed == len + 1;
             // Lua 5.1–5.3: a string coerced in an arithmetic operation always
@@ -565,16 +548,16 @@ fn tonum(state: &mut LuaState, arg: i32) -> Result<bool, LuaError> {
 /// Try to invoke the metamethod `mtname` on the two operands.
 ///
 fn trymt(state: &mut LuaState, mtname: &[u8]) -> Result<(), LuaError> {
-    // PORT NOTE: `state.set_top` (inherent) takes an absolute StackIdx and
-    // would wipe the call frame's arguments. `lua_settop` is frame-relative
-    // — keep the first two args of the current C function.
+    // Use the frame-relative `lua_vm::api::set_top`, not `state.set_top` (which
+    // takes an absolute StackIdx and would wipe the frame's arguments) — keep
+    // the first two operands for the error formatter below.
     lua_vm::api::set_top(state, 2)?;
     let t2_is_string = state.type_at(2) == LuaType::String;
-    // C: `if (lua_type(L,2)==LUA_TSTRING || !luaL_getmetafield(L,2,mtname))`.
-    // The `||` short-circuits: when arg2 is a string, `get_meta_field` is never
-    // called, so the stack stays `[arg1, arg2]` for the error formatter. Calling
-    // it unconditionally would push the string metatable's own metamethod and
-    // shift the operands read by `type_name_at(-2)/(-1)`.
+    // The string-or-metafield test must short-circuit: when arg2 is a string,
+    // `get_meta_field` is never called, so the stack stays `[arg1, arg2]` for
+    // the error formatter. Calling it unconditionally would push the string
+    // metatable's own metamethod and shift the operands read by
+    // `type_name_at(-2)/(-1)`.
     if t2_is_string || !state.get_meta_field(2, mtname)? {
         let op = &mtname[2..]; // skip "__"
         let msg = format!(
@@ -1003,10 +986,10 @@ fn match_pat(ms: &mut MatchState, mut s: usize, mut p: usize) -> Result<Option<u
     result
 }
 
-/// Handle a pattern class element with an optional repetition suffix (`*`, `+`, `?`, `-`).
-///
-/// PORT NOTE: Factored out from `match_pat`'s `default/dflt` label to share
-/// code between the ESC-default and plain-default paths.
+/// Handle a pattern class element with an optional repetition suffix
+/// (`*`, `+`, `?`, `-`). Shared by both the escape-class and plain-class
+/// branches of [`match_pat`]; `#[inline(always)]` so the matcher's hot dispatch
+/// pays no call overhead for it.
 #[inline(always)]
 fn handle_class_with_suffix(
     ms: &mut MatchState,
@@ -1016,7 +999,6 @@ fn handle_class_with_suffix(
 ) -> Result<Option<usize>, LuaError> {
     let matched_once = singlematch(ms, s, p, ep);
     if !matched_once {
-        //    else s = NULL;
         match ms.pat.get(ep).copied() {
             Some(b'*') | Some(b'?') | Some(b'-') => {
                 // Accept zero occurrences: tail-call match(ms, s, ep+1)
@@ -1298,10 +1280,9 @@ pub fn str_match(state: &mut LuaState) -> Result<usize, LuaError> {
 /// Continuation function for `string.gmatch` iterator closure.
 ///
 ///
-/// PORT NOTE: C stores source, pattern, and `GMatchState` as three C-closure
-/// upvalues. The Rust port mirrors that shape: upvalues 1 and 2 are traced Lua
-/// strings, and upvalue 3 is a full userdata whose host payload stores only the
-/// mutable byte positions.
+/// Reads the iterator's three closure upvalues: 1 and 2 are the traced source
+/// and pattern strings; 3 is a userdata whose host payload ([`GMatchIterState`])
+/// holds the mutable byte positions advanced across calls.
 pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
     let s_val = state.value_at(upvalue_index(1));
     let p_val = state.value_at(upvalue_index(2));
@@ -1378,10 +1359,9 @@ pub fn gmatch_aux(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// `string.gmatch(s, pattern [, init])` — return an iterator for all matches.
 ///
-///
-/// PORT NOTE: C uses `lua_newuserdatauv` for the GMatchState plus a 3-upvalue
-/// C closure. The port stores the two strings as traced closure upvalues and
-/// the mutable byte positions in the userdata host payload.
+/// Builds the iterator closure consumed by [`gmatch_aux`]: the source and
+/// pattern become traced upvalues 1 and 2, and a fresh userdata holding a
+/// [`GMatchIterState`] becomes upvalue 3 (the mutable byte positions).
 pub fn gmatch(state: &mut LuaState) -> Result<usize, LuaError> {
     let s_ref = match state.to_lua_string(1) {
         Some(r) => r,
@@ -1774,13 +1754,9 @@ fn quotefloat(n: f64) -> Vec<u8> {
     } else if n.is_nan() {
         return b"(0/0)".to_vec();
     }
-    // hex float, ensuring dot separator
-    let buf = num2straux(n);
-    if !buf.contains(&b'.') && !buf.contains(&b'p') {
-        // try to find locale decimal point and replace with '.'
-        // PORT NOTE: We always produce '.' so this branch is not taken.
-    }
-    buf
+    // Rust formats with a `.` decimal point regardless of locale, so unlike C's
+    // `lua_number2strx` there is no locale separator to rewrite to `.`.
+    num2straux(n)
 }
 
 /// Add a quoted Lua string literal to `buf`.
@@ -1846,7 +1822,8 @@ fn addliteral(state: &mut LuaState, buf: &mut Vec<u8>, arg: i32) -> Result<(), L
     Ok(())
 }
 
-/// Flags allowed per conversion type (matches lstrlib.c constants).
+/// The flag characters each `string.format` conversion class accepts, used by
+/// [`check_conv_spec`] to reject an out-of-class flag (e.g. `+` on `%x`).
 const FMT_FLAGS_F: &[u8] = b"-+#0 ";
 const FMT_FLAGS_X: &[u8] = b"-#0";
 const FMT_FLAGS_I: &[u8] = b"-+0 ";
@@ -1859,9 +1836,9 @@ const FMT_FLAGS_C: &[u8] = b"-";
 /// conversion character (e.g. `b"%100.3d"`). `flags` is the allowed-flags byte set for
 /// this conversion type. `allow_precision` is false for conversions that forbid `.`.
 ///
-/// Mirrors C `checkformat` in lstrlib.c: consumes flags, then up to 2 width digits,
-/// then (if allowed) `.` + up to 2 precision digits, then asserts we are at the
-/// conversion character. Returns `Err("invalid conversion specification")` on failure.
+/// Consumes flags, then up to 2 width digits, then (if allowed) `.` + up to 2
+/// precision digits, then asserts we are at the conversion character. Returns
+/// `Err("invalid conversion specification")` on failure.
 fn check_conv_spec(
     state: &mut LuaState,
     form: &[u8],
@@ -3201,34 +3178,25 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ────────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/lstrlib.c  (1875 lines, 46 functions)
 //   target_crate:  lua-stdlib
-//   confidence:    medium
-//   todos:         13
-//   port_notes:    6
 //   unsafe_blocks: 0
-//   notes:         Pattern engine uses index-based MatchState (not raw ptrs).
-//                  string.format delegates numeric widths/precision/flags to
-//                  Phase B (a sprintf-compatible crate or manual impl).
-//                  gmatch iterator state mirrors C-Lua's closure shape:
-//                  source string, pattern string, and userdata state. The
-//                  userdata host payload stores only byte positions; strings
-//                  stay as traced closure upvalues. See gmatch_aux.
-//                  copywithendian uses safe byte-level swapping (no transmute).
-//                  unpackint sign-extension uses two's-complement bit tricks;
-//                  logic review needed in Phase B.
-//                  str_dump requires state.dump_function() which is not yet
-//                  defined; Phase B wires up the ldump.c port.
-//                  addquoted uses 3-digit escape for all control chars (slight
-//                  deviation from C which uses 1-digit when safe); benign.
-//                  str_len/str_sub/str_byte/str_reverse/str_lower/str_upper/
-//                  str_rep/gmatch/str_find_aux borrow source bytes through
-//                  to_lua_string (GcRef) instead of copying via
-//                  check_arg_string, mirroring the gmatch_aux fix (685482d).
-//                  string_ops 3.00x→2.00x, string_ops_long 2.25x→1.48x on
-//                  best-of-5 (Apple M3 Max).
-//                  gmatch_aux originally moved from stack raw_geti/raw_seti to
-//                  direct table slots, then later from table state to C-shaped
-//                  userdata/upvalues. The latter pass dropped gmatch_aux's
-//                  string_ops_long profile share from ~6.9% to ~2.9%.
+//   load-bearing:  the recursive pattern matcher (match_pat + its helpers
+//                  singlematch/match_class/matchbracketclass/classend/
+//                  max_expand/min_expand/start_capture/end_capture/
+//                  match_capture/matchbalance) is HOT and CPI-critical. The
+//                  goto->`'outer: loop` tail-call translation, the per-char
+//                  match dispatch, and the recursion structure are NOT to be
+//                  refactored — extract/rename and doc-comments only, proven
+//                  Ir/branch-sim neutral. See GRADUATED.md "string".
+//   net:           behavior is pinned by the behavioral suite — multiversion
+//                  oracle (incl. the P2c pattern-too-complex gate, the 5.3.3
+//                  empty-match advance rule, and the capture-overflow tripwire),
+//                  strings.lua + pm.lua, check.sh 5.1-5.5. Version seams are
+//                  single-sourced in matcher_bounds_depth (5.1 has no MAXCCALLS
+//                  recursion guard) and matcher_dedups_empty_match (the 5.3.3
+//                  `e != lastmatch` rule, absent on 5.1/5.2).
+//   perf:          the cold API fns borrow source bytes through to_lua_string
+//                  (GcRef) rather than copying via check_arg_string; num_to_str
+//                  stringifies small integers into a stack buffer. string_ops
+//                  ~2.00x, string_ops_long ~1.48x vs reference (best-of-5).
 // ────────────────────────────────────────────────────────────────────────────

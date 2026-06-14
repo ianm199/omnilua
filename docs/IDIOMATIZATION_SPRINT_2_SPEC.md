@@ -97,8 +97,43 @@ net now guards it and which algorithm code was left load-bearing.
       57/54/23/7/10, workspace, wasm, unsafe 0); recipes + verdict below;
       graduation in `crates/lua-stdlib/GRADUATED.md`. Branch `idiom/string`
       (supervisor verifies + runs the AUTHORITATIVE Ir/cold-wall arbiter + PRs).
-- [ ] (then, as gates + budget allow: `os` date/time arithmetic — cold/pure)
-- [ ] CLOSE: PRs merged CI-green; board row updated
+- [~] (`os` date/time arithmetic — cold/pure) — DEFERRED. The pure→cold→hot set
+      (math/table/string) has proven the Phase-2 method across all three regimes;
+      more easy stdlib modules are diminishing returns (see synthesis). `os` (and
+      `coroutine`, `io`, `utf8`, `debug`) remain available as routine follow-ups.
+- [x] CLOSE: P2.0/P2a/P2b/P2c PRs #196/#197/#198/#199 merged CI-green; board row
+      updated; synthesis below.
+
+## Phase 2 synthesis (module set complete 2026-06-14)
+
+Three modules, one per regime, each supervisor-re-verified:
+
+| Module | Regime | Oracle | Headline |
+|---|---|---|---|
+| `math` (P2a) | pure, cold | 165→169 | strengthen-net-first proven; honest-negative (platform `rand()`) |
+| `table` (P2b) | cold | 169→178 | net-strengthening **caught a real `table.remove` bug** (5.1 errored vs reference-inert; 5.2 wrong arg index) |
+| `string` (P2c) | **hot** | 178→181 | net-strengthening caught **two** matcher bugs (5.1 depth-limit, 5.1/5.2 empty-match); **perf-arbiter veto loop demonstrated** (a +0.33–0.54% gmatch Ir regression caught and driven flat; supervisor-confirmed Ir −0.08/−0.12% + wall −0.30%) |
+
+**The load-bearing finding (the durable lesson).** Every Phase-2 module had a core
+the behavioral net could not fully guard and that must NOT be refactored —
+math's xoshiro PRNG, table's quicksort, string's recursive matcher. You
+**idiomatize AROUND the core, never THROUGH it**; for the hot module the perf
+arbiter is what mechanically enforces that boundary. This is the same shape as
+Phase 1's "hot-loop exception is per-core not per-crate" — confirmed across both
+oracle regimes.
+
+**The verification-model finding.** With no structural oracle, the FIRST move is
+always to *strengthen the behavioral net to the reference* — and on two of three
+modules that step **caught pre-existing correctness bugs** the weaker net had
+hidden (3 cross-version bugs total, all reference-verified across 5 versions).
+Net-strengthening is not overhead; it is where Phase-2 value concentrates.
+
+**Scope honesty.** These modules arrived already-mostly-idiomatic, so the
+literal idiomatization was thin; the value was net-strengthening + crutch
+removal + (for string) the perf-arbiter proof. The method is proven across all
+regimes — bytecode-parity (Phase 1) and behavioral+perf-arbiter (Phase 2).
+Remaining high-value work is the marquee fork (`ExprPayload` enum / Phase 3
+errors / Phase 4 GC), not more easy modules.
 
 ## P2a — math: coverage-precondition verdict (recon 2026-06-14)
 

@@ -371,8 +371,10 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     }
     if options.contains(&b'u') {
         settabsi(state, b"nups", ar.nups as i32)?;
-        settabsi(state, b"nparams", ar.nparams as i32)?;
-        settabsb(state, b"isvararg", ar.isvararg)?;
+        if !matches!(state.global().lua_version, LuaVersion::V51) {
+            settabsi(state, b"nparams", ar.nparams as i32)?;
+            settabsb(state, b"isvararg", ar.isvararg)?;
+        }
     }
     if options.contains(&b'n') {
         let name_opt: Option<&[u8]> = ar.name.as_deref();
@@ -418,11 +420,26 @@ pub(crate) fn get_info(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
+/// Whether `debug.getlocal` accepts a function as its first argument (the
+/// parameter-name introspection form).
+///
+/// This form is a 5.2 addition (the `lua_isfunction(L, arg+1)` branch in
+/// `ldblib.c` `db_getlocal`). On 5.1 there is no such branch: a function
+/// argument is fed straight to `luaL_checkint`, which raises
+/// `number expected, got function`. Returning `false` here lets the function
+/// argument fall through to the integer-level path so 5.1 reproduces that error.
+/// (`db_setlocal` has no function form on any version, so this gate is
+/// `getlocal`-only.)
+fn function_arg_form_supported(state: &LuaState) -> bool {
+    !matches!(state.global().lua_version, LuaVersion::V51)
+}
+
 /// `debug.getlocal([thread,] level, local)` — return the name and value of
 /// local variable `local` at stack level `level`.
 ///
-/// When the first argument is a function, returns only the parameter name at
-/// position `local` (no value).
+/// On 5.2+ the first argument may be a function, in which case only the
+/// parameter name at position `local` is returned (no value); see
+/// [`function_arg_form_supported`].
 ///
 pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
     let (arg, other_thread) = getthread(state);
@@ -430,10 +447,8 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
 
     let nvar = state.check_arg_integer(arg + 2)? as i32;
 
-    if state.type_at(arg + 1) == LuaType::Function {
+    if function_arg_form_supported(state) && state.type_at(arg + 1) == LuaType::Function {
         state.push_value_at(arg + 1)?;
-        // lua_getlocal with NULL ar reads parameter names from the function at the
-        // top of the stack; it does NOT push a value.
         let name = state.get_param_name(0, nvar)?;
         match name {
             Some(n) => {
@@ -444,8 +459,6 @@ pub(crate) fn get_local(state: &mut LuaState) -> Result<usize, LuaError> {
                 state.push(LuaValue::Nil);
             }
         }
-        // The pushed function below name is discarded by the VM when it collects
-        // exactly 1 return value from the top of the stack.
         return Ok(1);
     }
 

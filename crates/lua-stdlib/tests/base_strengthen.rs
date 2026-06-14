@@ -236,28 +236,29 @@ fn rawlen_arg_error_names_function_and_gates_got_suffix_crossversion() {
     // 5.2/5.3 use `luaL_argcheck(..., "table or string expected")` → NO `, got`
     // suffix. 5.4/5.5 use `luaL_argexpected(..., "table or string")` → the
     // suffix `, got <type>` is appended. Both name the function (`to 'rawlen'`).
+    // Assert on the function-named extramsg (the location prefix the wrapper
+    // adds is host/chunk-name dependent, so match the stable tail).
     for v in [LuaVersion::V52, LuaVersion::V53] {
         let msg = eval_err(v, "return rawlen(5)");
-        assert_eq!(
-            msg,
-            "bad argument #1 to 'rawlen' (table or string expected)",
-            "{v:?}"
+        assert!(
+            msg.ends_with("bad argument #1 to 'rawlen' (table or string expected)"),
+            "{v:?}: `{msg}`"
         );
     }
     for v in [LuaVersion::V54, LuaVersion::V55] {
-        assert_eq!(
-            eval_err(v, "return rawlen(5)"),
-            "bad argument #1 to 'rawlen' (table or string expected, got number)",
+        assert!(
+            eval_err(v, "return rawlen(5)")
+                .ends_with("bad argument #1 to 'rawlen' (table or string expected, got number)"),
             "{v:?}"
         );
-        assert_eq!(
-            eval_err(v, "return rawlen(true)"),
-            "bad argument #1 to 'rawlen' (table or string expected, got boolean)",
+        assert!(
+            eval_err(v, "return rawlen(true)")
+                .ends_with("bad argument #1 to 'rawlen' (table or string expected, got boolean)"),
             "{v:?}"
         );
-        assert_eq!(
-            eval_err(v, "return rawlen(nil)"),
-            "bad argument #1 to 'rawlen' (table or string expected, got nil)",
+        assert!(
+            eval_err(v, "return rawlen(nil)")
+                .ends_with("bad argument #1 to 'rawlen' (table or string expected, got nil)"),
             "{v:?}"
         );
     }

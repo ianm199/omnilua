@@ -394,11 +394,24 @@ pub(crate) fn rawequal_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// Raw length (#) without metamethods; accepts tables and strings only.
 ///
+/// The reject message names the function (`to 'rawlen'`) on every version that
+/// has `rawlen` (5.2+). The `, got <type>` suffix is version-gated: 5.2/5.3 use
+/// `luaL_argcheck(..., "table or string expected")` (no suffix); 5.4/5.5 use
+/// `luaL_argexpected(..., "table or string")`, which appends `, got <type>`
+/// from `luaL_typename` (so an `__name`'d table reports its `__name`).
 pub(crate) fn rawlen_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     let t = state.type_at(1);
     if !(t == LuaType::Table || t == LuaType::String) {
-        let got = state.value_at(1);
-        return Err(LuaError::type_arg_error(1, "table or string", &got));
+        let extramsg: Vec<u8> = if matches!(state.global().lua_version, lua_types::LuaVersion::V54 | lua_types::LuaVersion::V55) {
+            let got = state.value_at(1);
+            let got_name = state.full_type_name(&got)?;
+            let mut m = b"table or string expected, got ".to_vec();
+            m.extend_from_slice(&got_name);
+            m
+        } else {
+            b"table or string expected".to_vec()
+        };
+        return Err(lua_vm::debug::arg_error_impl(state, 1, &extramsg));
     }
     let len = state.raw_len(1);
     state.push(LuaValue::Int(len));

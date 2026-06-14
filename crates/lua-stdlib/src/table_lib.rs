@@ -21,14 +21,9 @@ type IdxT = u32;
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/// currently sitting at stack depth `n`; returns `true` if the result is not nil.
-///
-/// ```c
-/// static int checkfield (lua_State *L, const char *key, int n) {
-///   lua_pushstring(L, key);
-///   return (lua_rawget(L, -n) != LUA_TNIL);
-/// }
-/// ```
+/// Raw-gets `key` from the table currently sitting at stack depth `n` (a
+/// metatable, in practice); returns `true` if the looked-up value is not nil.
+/// Pushes `key`, then `raw_get(-n)` replaces it with the result in place.
 fn check_field(state: &mut LuaState, key: &[u8], n: i32) -> Result<bool, LuaError> {
     state.push_string(key)?;
     // raw_get(-n): looks up MT[key] (MT is at -n after the key push), replaces key with value
@@ -36,28 +31,17 @@ fn check_field(state: &mut LuaState, key: &[u8], n: i32) -> Result<bool, LuaErro
     Ok(ty != LuaType::Nil)
 }
 
-/// metatable with the metamethods required by `what`
-/// (`TAB_R` → `__index`, `TAB_W` → `__newindex`, `TAB_L` → `__len`).
+/// Accepts `arg` if it is a table, or a non-table that carries a metatable with
+/// every metamethod `what` requires (`TAB_R` → `__index`, `TAB_W` →
+/// `__newindex`, `TAB_L` → `__len`). The fields are checked left-to-right and
+/// short-circuit: a missing field stops the scan and falls through to the
+/// table-type error. Otherwise raises "table expected".
 ///
-/// ```c
-/// static void checktab (lua_State *L, int arg, int what) {
-///   if (lua_type(L, arg) != LUA_TTABLE) {
-///     int n = 1;
-///     if (lua_getmetatable(L, arg) &&
-///         (!(what & TAB_R) || checkfield(L, "__index", ++n)) &&
-///         (!(what & TAB_W) || checkfield(L, "__newindex", ++n)) &&
-///         (!(what & TAB_L) || checkfield(L, "__len", ++n))) {
-///       lua_pop(L, n);
-///     }
-///     else
-///       luaL_checktype(L, arg, LUA_TTABLE);
-///   }
-/// }
-/// ```
-///
-/// PORT NOTE: stack cleanup on the error path is elided here (in C, `longjmp`
-/// unwinds automatically). Phase B should add cleanup before the `check_arg_type`
-/// call to leave the stack consistent.
+/// DEFERRED (behaviorally inert): on the failure path the metatable and any
+/// field values pushed during the scan are not popped before raising. In C the
+/// `longjmp` unwinds them; here the `LuaError` propagates and the call frame is
+/// torn down, so no observable behavior differs — but the stack is left dirty
+/// on that path. A tidy fix would pop `n` before `check_arg_type`.
 fn check_tab(state: &mut LuaState, arg: i32, what: u32) -> Result<(), LuaError> {
     if state.type_at(arg) == LuaType::Table {
         return Ok(());
@@ -89,8 +73,9 @@ fn check_tab(state: &mut LuaState, arg: i32, what: u32) -> Result<(), LuaError> 
     }
 }
 
-///
-/// Check that argument `n` is a table (or table-like per `w`) and return its length.
+/// Check that argument `n` is a table (or table-like per `w`) and return its
+/// length (the `#` border). This is the shared front-door for every table
+/// function that needs a length.
 fn aux_getn(state: &mut LuaState, n: i32, w: u32) -> Result<i64, LuaError> {
     check_tab(state, n, w | TAB_L)?;
     state.length_at(n)
@@ -117,32 +102,12 @@ fn raw_set_int(
 
 // ─── table.insert ─────────────────────────────────────────────────────────────
 
-///
-/// ```c
-/// static int tinsert (lua_State *L) {
-///   lua_Integer pos;
-///   lua_Integer e = aux_getn(L, 1, TAB_RW);
-///   e = luaL_intop(+, e, 1);
-///   switch (lua_gettop(L)) {
-///     case 2: { pos = e; break; }
-///     case 3: {
-///       lua_Integer i;
-///       pos = luaL_checkinteger(L, 2);
-///       luaL_argcheck(L, (lua_Unsigned)pos - 1u < (lua_Unsigned)e, 2,
-///                        "position out of bounds");
-///       for (i = e; i > pos; i--) {
-///         lua_geti(L, 1, i - 1);
-///         lua_seti(L, 1, i);
-///       }
-///       break;
-///     }
-///     default:
-///       return luaL_error(L, "wrong number of arguments to 'insert'");
-///   }
-///   lua_seti(L, 1, pos);
-///   return 0;
-/// }
-/// ```
+/// `table.insert(t, [pos,] v)`. With two args, appends `v` at border+1. With
+/// three, inserts `v` at `pos` (1 <= pos <= border+1) after shifting the tail
+/// up by one; any other arity raises "wrong number of arguments to 'insert'".
+/// The bounds check uses a wrapping unsigned subtract so `pos <= 0` is rejected
+/// alongside `pos > border+1`. Note `border` here is `#t`, which honors a
+/// `__len` metamethod on 5.2+ and uses the primitive length on 5.1.
 pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut e = aux_getn(state, 1, TAB_RW)?;
     e = (e as u64).wrapping_add(1) as i64;
@@ -205,6 +170,8 @@ pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ─── table.remove ─────────────────────────────────────────────────────────────
 
+/// `table.remove(t, [pos])`. Removes and returns `t[pos]` (default: the last
+/// element, `#t`), shifting the tail down to close the gap.
 ///
 /// The out-of-bounds handling is gated three ways across versions, each pinned
 /// against its reference binary by `v_remove_out_of_bounds_arg_gate_crossversion`:
@@ -290,33 +257,13 @@ pub fn remove(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ─── table.move ───────────────────────────────────────────────────────────────
 
-///
-/// Copies elements `a1[f..e]` into `a2[t..]` (or `a1[t..]` if `a2` is absent).
-/// Copies in increasing order when safe, decreasing when ranges overlap.
-///
-/// ```c
-/// static int tmove (lua_State *L) {
-///   lua_Integer f = luaL_checkinteger(L, 2);
-///   lua_Integer e = luaL_checkinteger(L, 3);
-///   lua_Integer t = luaL_checkinteger(L, 4);
-///   int tt = !lua_isnoneornil(L, 5) ? 5 : 1;
-///   checktab(L, 1, TAB_R);
-///   checktab(L, tt, TAB_W);
-///   if (e >= f) {
-///     lua_Integer n, i;
-///     luaL_argcheck(L, f > 0 || e < LUA_MAXINTEGER + f, 3, "too many elements to move");
-///     n = e - f + 1;
-///     luaL_argcheck(L, t <= LUA_MAXINTEGER - n + 1, 4, "destination wrap around");
-///     if (t > e || t <= f || (tt != 1 && !lua_compare(L, 1, tt, LUA_OPEQ))) {
-///       for (i = 0; i < n; i++) { lua_geti(L, 1, f + i); lua_seti(L, tt, t + i); }
-///     } else {
-///       for (i = n - 1; i >= 0; i--) { lua_geti(L, 1, f + i); lua_seti(L, tt, t + i); }
-///     }
-///   }
-///   lua_pushvalue(L, tt);
-///   return 1;
-/// }
-/// ```
+/// `table.move(a1, f, e, t, [a2])`. Copies `a1[f..e]` into `a2[t..]` (or
+/// `a1[t..]` if `a2` is absent), reading source slots through `__index` and
+/// writing destinations through `__newindex` one element at a time. To survive
+/// an overlapping in-place range, it copies FORWARD (increasing index) when the
+/// destination is clear of the source's tail (`t > e || t <= f`, or a distinct
+/// destination table) and BACKWARD (decreasing) otherwise — the order pinned by
+/// `v53_plus_move_*`. Returns the destination table. A 5.3 addition.
 pub fn tmove(state: &mut LuaState) -> Result<usize, LuaError> {
     let f = state.check_arg_integer(2)?;
     let e = state.check_arg_integer(3)?;
@@ -365,20 +312,11 @@ pub fn tmove(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ─── table.concat ─────────────────────────────────────────────────────────────
 
-/// a string-or-number, add its string representation to `buf`, then pop it.
-///
-/// ```c
-/// static void addfield (lua_State *L, luaL_Buffer *b, lua_Integer i) {
-///   lua_geti(L, 1, i);
-///   if (l_unlikely(!lua_isstring(L, -1)))
-///     luaL_error(L, "invalid value (%s) at index %I in table for 'concat'",
-///                   luaL_typename(L, -1), (LUAI_UACINT)i);
-///   luaL_addvalue(b);
-/// }
-/// ```
-///
-/// PORT NOTE: `luaL_Buffer` in C accumulates bytes and then pushes the result;
-/// Rust uses a `Vec<u8>` accumulator passed by mutable reference instead.
+/// Fetches `t[idx]`; if it is a string-or-number, appends its string form to
+/// `buf` and pops it. A non-coercible element raises the exact "invalid value
+/// (<type>) at index <idx> in table for 'concat'" message (pinned by
+/// `v_table_concat_invalid_value_type_name`). The accumulator is a borrowed
+/// `Vec<u8>` rather than C's stack-backed `luaL_Buffer`.
 fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), LuaError> {
     state.table_get_i(1, idx)?;
     if !matches!(state.type_at(-1), LuaType::String | LuaType::Number) {
@@ -398,22 +336,9 @@ fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), Lu
     Ok(())
 }
 
-///
-/// ```c
-/// static int tconcat (lua_State *L) {
-///   luaL_Buffer b;
-///   lua_Integer last = aux_getn(L, 1, TAB_R);
-///   size_t lsep;
-///   const char *sep = luaL_optlstring(L, 2, "", &lsep);
-///   lua_Integer i = luaL_optinteger(L, 3, 1);
-///   last = luaL_optinteger(L, 4, last);
-///   luaL_buffinit(L, &b);
-///   for (; i < last; i++) { addfield(L, &b, i); luaL_addlstring(&b, sep, lsep); }
-///   if (i == last) addfield(L, &b, i);
-///   luaL_pushresult(&b);
-///   return 1;
-/// }
-/// ```
+/// `table.concat(t, [sep, [i, [j]]])`. Joins `t[i..j]` (defaults `i=1`,
+/// `j=#t`) with `sep` (default empty) into one string. Each element must be a
+/// string or number; the first that is not raises through [`add_field`].
 pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
     let last = aux_getn(state, 1, TAB_R)?;
     // Clone the separator before any stack-mutating calls that might invalidate it.
@@ -421,8 +346,8 @@ pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut i = state.opt_arg_integer(3, 1)?;
     let last = state.opt_arg_integer(4, last)?;
 
-    // PORT NOTE: C uses luaL_Buffer (which may back-patch the stack);
-    // Rust uses a plain Vec<u8> accumulator and pushes the result at the end.
+    // A borrowed Vec<u8> accumulates the result, pushed once at the end —
+    // rather than C's luaL_Buffer, which can back-patch the live Lua stack.
     let mut buf: Vec<u8> = Vec::new();
     while i < last {
         add_field(state, &mut buf, i)?;
@@ -438,23 +363,10 @@ pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ─── table.pack / table.unpack ────────────────────────────────────────────────
 
-///
-/// Creates a new table `t` with all arguments as integer keys and `t.n` set
-/// to the argument count.
-///
-/// ```c
-/// static int tpack (lua_State *L) {
-///   int i;
-///   int n = lua_gettop(L);
-///   lua_createtable(L, n, 1);
-///   lua_insert(L, 1);
-///   for (i = n; i >= 1; i--)
-///     lua_seti(L, 1, i);
-///   lua_pushinteger(L, n);
-///   lua_setfield(L, 1, "n");
-///   return 1;
-/// }
-/// ```
+/// `table.pack(...)`. Creates a new table with the arguments at integer keys
+/// `1..n` and `t.n` set to the *literal* argument count `n` — holes and
+/// trailing nils included, so `.n` recovers an arity that a `#t` border would
+/// lose (pinned by `v52_plus_pack_n_field_*`). A 5.2 addition.
 pub fn pack(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.get_top();
     state.create_table(n, 1)?;
@@ -468,24 +380,12 @@ pub fn pack(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-///
-/// Pushes `t[i], t[i+1], …, t[j]` and returns the count.
-///
-/// ```c
-/// static int tunpack (lua_State *L) {
-///   lua_Unsigned n;
-///   lua_Integer i = luaL_optinteger(L, 2, 1);
-///   lua_Integer e = luaL_opt(L, luaL_checkinteger, 3, luaL_len(L, 1));
-///   if (i > e) return 0;
-///   n = (lua_Unsigned)e - i;
-///   if (l_unlikely(n >= (unsigned int)INT_MAX ||
-///                  !lua_checkstack(L, (int)(++n))))
-///     return luaL_error(L, "too many results to unpack");
-///   for (; i < e; i++) lua_geti(L, 1, i);
-///   lua_geti(L, 1, e);
-///   return (int)n;
-/// }
-/// ```
+/// `table.unpack(t, [i, [j]])`. Pushes `t[i], t[i+1], …, t[j]` (defaults
+/// `i=1`, `j=#t`) and returns the count. An `i > e` range is empty (zero
+/// results); a span of `INT_MAX` or more — including the i64-extreme wrap where
+/// `e - i` overflows to a huge unsigned value — raises "too many results to
+/// unpack" rather than attempting the push (pinned by
+/// `v52_plus_unpack_*` / `v53_plus_unpack_*`). A 5.2 addition.
 pub fn unpack(state: &mut LuaState) -> Result<usize, LuaError> {
     let i = state.opt_arg_integer(2, 1)?;
     let e = if matches!(state.type_at(3), LuaType::None | LuaType::Nil) {
@@ -838,17 +738,9 @@ pub fn sort(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ─── Registration ─────────────────────────────────────────────────────────────
 
-///
-/// ```c
-/// static const luaL_Reg tab_funcs[] = {
-///   {"concat", tconcat}, {"insert", tinsert}, {"pack", tpack},
-///   {"unpack", tunpack}, {"remove", tremove}, {"move", tmove},
-///   {"sort", sort}, {NULL, NULL}
-/// };
-/// ```
-///
-/// PORT NOTE: In Rust we represent this as a slice of `(&[u8], fn-ptr)` pairs;
-/// the sentinel `{NULL, NULL}` is implicit (the slice has a known length).
+/// The core `table` roster shared by 5.2-5.5. `move` is filtered out for 5.2
+/// (a 5.3 addition) and `move`/`pack`/`unpack` for 5.1 by [`open_table`], which
+/// also layers the version-specific extras (5.1 legacy, 5.5 `create`) on top.
 pub const TABLE_FUNCS: &[(&[u8], fn(&mut LuaState) -> Result<usize, LuaError>)] = &[
     (b"concat", concat),
     (b"insert", insert),
@@ -980,13 +872,10 @@ fn foreach(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ─── Module opener ────────────────────────────────────────────────────────────
 
-///
-/// ```c
-/// LUAMOD_API int luaopen_table (lua_State *L) {
-///   luaL_newlib(L, tab_funcs);
-///   return 1;
-/// }
-/// ```
+/// Builds the `table` library table for the running version. The base roster is
+/// [`TABLE_FUNCS`], from which 5.1 and 5.2 drop the functions they lack and onto
+/// which 5.1's legacy roster and 5.5's `create` are layered. The per-version
+/// deltas below are each verified against that version's reference binary.
 pub fn open_table(state: &mut LuaState) -> Result<usize, LuaError> {
     // Per-version roster deltas:
     //  - `table.move` is a Lua 5.3 addition, absent in 5.1/5.2 (verified against

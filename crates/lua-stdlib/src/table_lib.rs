@@ -75,8 +75,8 @@ fn check_tab(state: &mut LuaState, arg: i32, what: u32) -> Result<(), LuaError> 
 
 /// Check that argument `n` is a table (or table-like per `w`) and return its
 /// length (the `#` border). This is the shared front-door for every table
-/// function that needs a length.
-fn aux_getn(state: &mut LuaState, n: i32, w: u32) -> Result<i64, LuaError> {
+/// function that needs a length. (Ports C's `aux_getn`.)
+fn check_table_and_get_len(state: &mut LuaState, n: i32, w: u32) -> Result<i64, LuaError> {
     check_tab(state, n, w | TAB_L)?;
     state.length_at(n)
 }
@@ -109,7 +109,7 @@ fn raw_set_int(
 /// alongside `pos > border+1`. Note `border` here is `#t`, which honors a
 /// `__len` metamethod on 5.2+ and uses the primitive length on 5.1.
 pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
-    let mut e = aux_getn(state, 1, TAB_RW)?;
+    let mut e = check_table_and_get_len(state, 1, TAB_RW)?;
     e = (e as u64).wrapping_add(1) as i64;
     let plain_table = plain_table_at(state, 1);
 
@@ -209,7 +209,7 @@ pub fn insert(state: &mut LuaState) -> Result<usize, LuaError> {
 /// }
 /// ```
 pub fn remove(state: &mut LuaState) -> Result<usize, LuaError> {
-    let size = aux_getn(state, 1, TAB_RW)?;
+    let size = check_table_and_get_len(state, 1, TAB_RW)?;
     let mut pos = state.opt_arg_integer(2, size)?;
     if state.global().lua_version == lua_types::LuaVersion::V51 {
         if !(1 <= pos && pos <= size) {
@@ -340,7 +340,7 @@ fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), Lu
 /// `j=#t`) with `sep` (default empty) into one string. Each element must be a
 /// string or number; the first that is not raises through [`add_field`].
 pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
-    let last = aux_getn(state, 1, TAB_R)?;
+    let last = check_table_and_get_len(state, 1, TAB_R)?;
     // Clone the separator before any stack-mutating calls that might invalidate it.
     let sep: Vec<u8> = state.opt_arg_lstring(2, Some(b""))?.unwrap_or_default();
     let mut i = state.opt_arg_integer(3, 1)?;
@@ -719,7 +719,7 @@ fn aux_sort(
 /// }
 /// ```
 pub fn sort(state: &mut LuaState) -> Result<usize, LuaError> {
-    let n = aux_getn(state, 1, TAB_RW)?;
+    let n = check_table_and_get_len(state, 1, TAB_RW)?;
     if n > 1 {
         if !(n < i32::MAX as i64) {
             return Err(lua_vm::debug::arg_error_impl(state, 1, b"array too big"));

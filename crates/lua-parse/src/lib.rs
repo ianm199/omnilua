@@ -1,34 +1,28 @@
 //! Lua parser — translates the token stream produced by the lexer into
 //! bytecode prototypes (`LuaProto`).
 //!
-//! # C source
-//! `reference/lua-5.4.7/src/lparser.c` (1968 lines, 95 functions)
+//! This crate is the recursive-descent parser with single-pass bytecode codegen
+//! folded in: the front end pairs with `lua-lex` for tokens and `lua-code` for
+//! opcode tables. It is verified by the bytecode-parity structural oracle plus
+//! the behavioral suite (see `GRADUATED.md`); it is no longer a line-by-line
+//! mirror of any C source, so do not reach for `lparser.c`/`lcode.c` to reason
+//! about it.
 //!
-//! # Design notes (Phase A)
-//! * `BlockCnt` and `LhsAssign` form intrusive linked lists in C via raw
-//!   pointers to stack-allocated nodes. In Rust they become
-//!   `Option<Box<...>>` chains; `enter_block` pushes, `leave_block` pops.
-//! * `FuncState.prev` similarly uses `Option<Box<FuncState>>`.
+//! # Ownership shapes
+//! * `BlockCnt` and `LhsAssign` are `Option<Box<...>>` chains; [`enter_block`]
+//!   pushes, [`leave_block`] pops. `FuncState.prev` is likewise
+//!   `Option<Box<FuncState>>`.
 //! * `FuncState.f` is `Box<LuaProto>` during compilation (owned, mutably
-//!   accessible). types.tsv maps it to `GcRef<LuaProto>` but interior-
-//!   mutability via `Rc<RefCell<...>>` would be too noisy; Phase B can
-//!   switch. PORT NOTE: FuncState.f is Box<LuaProto>, not GcRef<LuaProto>.
-//! * `LexState` is logically defined in `lua-lex`; a minimal stub is declared
-//!   here for Phase A. Phase B will replace with `lua_lex::LexState` once
-//!   inter-crate deps are wired.
-//! * Cross-crate calls to `lua_code::luaK_*` and `lua_lex::luaX_*` are
-//!   written as qualified paths and will resolve in Phase B.
-//! * `LuaState` is from `lua-vm`; referenced here as an unresolved import.
+//!   accessible); it is consumed into the GC when the function closes.
 
 use lua_types::{AbsLineInfo, GcRef, LocalVar, LuaError, LuaProto, LuaString, LuaValue, UpvalDesc};
 
-// TODO(port): these imports resolve in Phase B when inter-crate deps land.
-// use lua_vm::LuaState;
-// use lua_code::{self, UnOpr, BinOpr, OpCode};
-
 // ── Token kind constants ────────────────────────────────────────────────────
-// TODO(port): replace with lua_lex::TokenKind enum when lua-lex lands.
 
+/// Token kinds cross the lexer boundary as plain `i32` (`TK_*`), matching the
+/// `i32` that `lua_lex` emits and the error formatters read. These constants
+/// are the parser's view of that boundary; they are deliberately not an enum so
+/// the lexer/parser interface stays a single integer contract.
 pub type TokenKind = i32;
 pub const TK_AND: TokenKind = 257;
 pub const TK_BREAK: TokenKind = 258;
@@ -80,13 +74,13 @@ const LUA_MULTRET: i32 = -1;
 
 const MAX_UPVAL: u8 = 255;
 
-/// TODO(port): should come from lua_types::opcode constants.
+/// Largest value the 18-bit `Bx` instruction field can hold; the ceiling on a
+/// constant-table index reachable without an `EXTRAARG` prefix.
 const MAXARG_BX: i32 = (1 << 17) - 1;
 
 const LFIELDS_PER_FLUSH: i32 = 50;
 
 // ── Variable kind constants ─────────────────────────────────────────────────
-// macros.tsv maps these to VarKind enum variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -116,31 +110,55 @@ impl VarKind {
 
 // ── ExprKind ────────────────────────────────────────────────────────────────
 
-/// Variants correspond exactly to the C enum in lparser.h.
+/// The descriptor kind of a parsed expression: where its value currently lives
+/// and how to materialize it. Drives every `discharge`/`exp2*` decision in
+/// codegen. The associated data each kind carries lives in [`ExprPayload`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExprKind {
-    Void,        // VVOID: empty expression list
-    Nil,         // VNIL: constant nil
-    True,        // VTRUE: constant true
-    False,       // VFALSE: constant false
-    K,           // VK: constant in k[]; info = index
-    KFlt,        // VKFLT: float constant; u.nval
-    KInt,        // VKINT: integer constant; u.ival
-    KStr,        // VKSTR: string constant; u.strval
-    NonReloc,    // VNONRELOC: value in fixed register; info = reg
-    Local,       // VLOCAL: local variable; u.var.ridx, u.var.vidx
-    UpVal,       // VUPVAL: upvalue; info = upvalue index
-    Const,       // VCONST: compile-time const; info = absolute actvar index
-    Indexed,     // VINDEXED: indexed by reg key; u.ind.t, u.ind.idx
-    IndexUp,     // VINDEXUP: indexed upvalue; u.ind.t, u.ind.idx
-    IndexI,      // VINDEXI: indexed by int; u.ind.t, u.ind.idx
-    IndexStr,    // VINDEXSTR: indexed by string; u.ind.t, u.ind.idx
-    VarArgVar,   // VVARGVAR: named vararg parameter; u.var.ridx, u.var.vidx
-    VarArgIndex, // VVARGIND: indexed named vararg parameter
-    Jmp,         // VJMP: test/comparison; info = jump instruction pc
-    Reloc,       // VRELOC: result in any register; info = instruction pc
-    Call,        // VCALL: function call; info = instruction pc
-    VarArg,      // VVARARG: vararg; info = instruction pc
+    /// Empty expression (an empty list slot).
+    Void,
+    /// Constant `nil`.
+    Nil,
+    /// Constant `true`.
+    True,
+    /// Constant `false`.
+    False,
+    /// Constant already in the function's constant table; carries its index.
+    K,
+    /// Float literal.
+    KFlt,
+    /// Integer literal.
+    KInt,
+    /// String literal (interned).
+    KStr,
+    /// Value sitting in a fixed register that must not be relocated.
+    NonReloc,
+    /// Local variable; carries its register and stack-frame variable indices.
+    Local,
+    /// Upvalue; carries its upvalue index.
+    UpVal,
+    /// Compile-time constant; carries its absolute active-variable index.
+    Const,
+    /// Table indexed by a register key; carries table register and key index.
+    Indexed,
+    /// Upvalue indexed by a constant key.
+    IndexUp,
+    /// Table indexed by an integer key.
+    IndexI,
+    /// Table indexed by a short-string key.
+    IndexStr,
+    /// Named vararg parameter; carries its register and variable indices.
+    VarArgVar,
+    /// Indexed named vararg parameter.
+    VarArgIndex,
+    /// Test/comparison whose value is realized by a jump; carries the jump pc.
+    Jmp,
+    /// Result that may land in any register; carries the instruction pc.
+    Reloc,
+    /// Function call; carries the call instruction's pc.
+    Call,
+    /// Vararg expansion; carries the instruction pc.
+    VarArg,
 }
 
 impl ExprKind {
@@ -303,13 +321,14 @@ pub struct BlockCnt {
 
 // ── FuncState ───────────────────────────────────────────────────────────────
 
-/// In C: stack-allocated in `body()`, chained via raw `*prev` pointer.
-/// In Rust: heap-allocated via `Option<Box<FuncState>>` in LexState.
+/// Per-function compilation state. One per function being compiled; nested
+/// functions chain through `prev` (innermost first), heap-allocated as an
+/// `Option<Box<FuncState>>` owned by [`LexState`].
 #[derive(Debug)]
 pub struct FuncState {
-    /// PORT NOTE: types.tsv maps this to GcRef<LuaProto>; we use Box<LuaProto>
-    ///   during compilation to avoid RefCell overhead. close_func hands it to
-    ///   the GC/parent at close time.
+    /// The prototype under construction, owned outright (rather than behind the
+    /// GC's `RefCell`) for the duration of compilation; [`close_func`] hands it
+    /// to the GC or the parent function at close time.
     pub f: Box<LuaProto>,
     pub prev: Option<Box<FuncState>>,
     pub bl: Option<Box<BlockCnt>>,
@@ -328,19 +347,18 @@ pub struct FuncState {
     pub freereg: u8,
     pub iwthabs: u8,
     pub needclose: bool,
-    /// Current `ls.lastline` value, mirrored on every `sync_from_lex`.
-    /// Used by `emit_inst` to attribute the line to the just-consumed token
-    /// (matching lua-c's `savelineinfo(fs, f, fs->ls->lastline)`), instead
-    /// of whatever `line` the caller threaded down. The threaded `line`
-    /// param is preserved only for explicit overrides (luaK_fixline-style).
+    /// Current `ls.lastline`, mirrored on every `sync_from_lex`. [`emit_inst`]
+    /// attributes each instruction's line to the just-consumed token via this
+    /// field, instead of whatever `line` the caller threaded down. The threaded
+    /// `line` parameter survives only for explicit line-fixup overrides.
     pub last_token_line: i32,
 }
 
 // ── ConsControl ─────────────────────────────────────────────────────────────
 
-/// PORT NOTE: C stores `expdesc *t` as a pointer to the caller's expdesc.
-///   Rust stores a copy of the table descriptor; callers must sync back
-///   if they mutate it. Phase B may restructure.
+/// Table-constructor accumulator. `t` is a *copy* of the table-expression
+/// descriptor rather than a reference into the caller; a routine that mutates
+/// it must write the result back into the caller's descriptor itself.
 #[derive(Debug)]
 pub struct ConsControl {
     pub v: ExprDesc,
@@ -352,7 +370,8 @@ pub struct ConsControl {
 
 // ── LhsAssign ───────────────────────────────────────────────────────────────
 
-/// In C: stack-allocated, chained via raw `*prev`. In Rust: `Option<Box<...>>`.
+/// One link in a multiple-assignment target list, chained innermost-first
+/// through `prev` as an `Option<Box<...>>`.
 #[derive(Debug)]
 pub struct LhsAssign {
     pub prev: Option<Box<LhsAssign>>,
@@ -360,41 +379,45 @@ pub struct LhsAssign {
 }
 
 // ── Unary / binary operator enums ───────────────────────────────────────────
-// TODO(port): unify with lua_code::UnOpr / BinOpr when lua-code lands.
 
+/// Unary operators recognized by the expression parser. `NoUnOpr` is the
+/// "this token is not a unary operator" sentinel returned by [`getunopr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOpr {
-    Minus,   // OPR_MINUS
-    BNot,    // OPR_BNOT
-    Not,     // OPR_NOT
-    Len,     // OPR_LEN
-    NoUnOpr, // OPR_NOUNOPR
+    Minus,
+    BNot,
+    Not,
+    Len,
+    NoUnOpr,
 }
 
+/// Binary operators recognized by the expression parser, in the discriminant
+/// order that indexes [`PRIORITY`]. `NoBinOpr` is the "not a binary operator"
+/// sentinel returned by [`getbinopr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOpr {
-    Add,      // OPR_ADD
-    Sub,      // OPR_SUB
-    Mul,      // OPR_MUL
-    Mod,      // OPR_MOD
-    Pow,      // OPR_POW
-    Div,      // OPR_DIV
-    IDiv,     // OPR_IDIV
-    BAnd,     // OPR_BAND
-    BOr,      // OPR_BOR
-    BXor,     // OPR_BXOR
-    Shl,      // OPR_SHL
-    Shr,      // OPR_SHR
-    Concat,   // OPR_CONCAT
-    Eq,       // OPR_EQ
-    Lt,       // OPR_LT
-    Le,       // OPR_LE
-    Ne,       // OPR_NE
-    Gt,       // OPR_GT
-    Ge,       // OPR_GE
-    And,      // OPR_AND
-    Or,       // OPR_OR
-    NoBinOpr, // OPR_NOBINOPR
+    Add,
+    Sub,
+    Mul,
+    Mod,
+    Pow,
+    Div,
+    IDiv,
+    BAnd,
+    BOr,
+    BXor,
+    Shl,
+    Shr,
+    Concat,
+    Eq,
+    Lt,
+    Le,
+    Ne,
+    Gt,
+    Ge,
+    And,
+    Or,
+    NoBinOpr,
 }
 
 /// Indexed by BinOpr discriminant (0 = Add, ... 20 = Or).
@@ -422,13 +445,11 @@ const PRIORITY: [(u8, u8); 21] = [
     (1, 1), // And, Or
 ];
 
-// TODO_ARCH(phase-b-reconcile): re-exporting canonical OpCode from lua-code.
+/// Re-export of the canonical opcode enum so downstream crates that consume
+/// emitted prototypes can name opcodes without depending on `lua-code` directly.
 pub use lua_code::opcodes::OpCode;
 
-// ── Minimal LexState stub ───────────────────────────────────────────────────
-// PORT NOTE: In C, LexState is defined in llex.h (→ lua-lex crate).
-//   We declare a minimal stub here for Phase A so function bodies can be
-//   written. Phase B will replace with `lua_lex::LexState` and remove this.
+// ── LexState ─────────────────────────────────────────────────────────────────
 
 /// Semantic info attached to a token.
 #[derive(Debug, Clone, Default)]
@@ -444,10 +465,11 @@ pub struct LexToken {
     pub seminfo: TokenValue,
 }
 
-/// PORT NOTE: This is a Phase A stub. In Phase B, `LexState` lives in
-///   `lua-lex` and `lua-parse` imports it. `FuncState` will move here
-///   or be passed separately. The `fs` field creates a circular-crate
-///   dependency that Phase B must resolve (likely: both live in one crate).
+/// The parser's working state: the current and lookahead tokens, the active
+/// [`FuncState`] chain, dynamic name/label/goto data, and the parser-side flags
+/// for Lua 5.5 `global` scoping. It embeds the lexer's own state in [`Self::lex`]
+/// and drives it through [`lex_next`] / [`lex_lookahead`]; the two layers stay
+/// separate so the lexer remains usable on its own.
 pub struct LexState {
     pub current: i32,
     pub linenumber: i32,
@@ -463,7 +485,8 @@ pub struct LexState {
     /// which forward to `lua_lex::next` / `lua_lex::lookahead` on this inner
     /// state and then mirror the resulting token into `self.t` / `self.lookahead`.
     pub lex: lua_lex::LexState,
-    /// Parser recursion depth for C-Lua's `enterlevel` / `leavelevel` guard.
+    /// Parser recursion depth, bounded by the [`enter_level`] / [`leave_level`]
+    /// guard against runaway nesting (the "C stack overflow" error).
     pub recursion_depth: u32,
     /// Lua 5.5 global-declaration mode (manual §2.2). A chunk begins with an
     /// implicit `global *` (`false` here): every free name is a global, as in
@@ -512,16 +535,15 @@ fn leave_level(ls: &mut LexState) {
 }
 
 /// Advance the lexer one token and mirror the resulting state into the
-/// parser's outer `LexState` fields. This is the canonical replacement for the
-/// Phase A `// TODO(port): lua_lex::next(ls, state)?;` stubs.
+/// parser's outer [`LexState`] fields.
 fn lex_next(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     lua_lex::next(state, &mut ls.lex)?;
     sync_from_lex(ls);
     Ok(())
 }
 
-/// Populate the lookahead token and mirror lexer state. Replaces the
-/// `// TODO(port): lua_lex::lookahead(ls, state)?` stub.
+/// Populate the lookahead token and mirror lexer state into the parser's outer
+/// [`LexState`].
 fn lex_lookahead(ls: &mut LexState, state: &mut LuaState) -> Result<TokenKind, LuaError> {
     let kind = lua_lex::lookahead(state, &mut ls.lex)?;
     sync_from_lex(ls);
@@ -550,10 +572,10 @@ fn sync_from_lex(ls: &mut LexState) {
     }
 }
 
-// TODO_ARCH(phase-b-reconcile): re-exporting canonical LuaState from lua-vm.
+/// Re-export of the VM state type the parser threads through codegen.
 pub use lua_vm::state::LuaState;
 
-// ── Minimal inline codegen (Phase A bootstrap) ──────────────────────────────
+// ── Inline codegen (lcode.c folded in) ──────────────────────────────────────
 //
 // The full code generator lives in `lua-code` but operates on its own
 // placeholder `FuncState` / `ExprDesc` types (see `lua-code/src/codegen.rs`
@@ -3025,7 +3047,7 @@ fn searchvar(ls: &LexState, fs: &FuncState, n: &GcRef<LuaString>, var: &mut Expr
                     var.k = ExprKind::VarArgVar;
                 }
             }
-            return var.k as i32; // PORT NOTE: encoding ExprKind as i32 for C compat
+            return var.k as i32;
         }
         i -= 1;
     }
@@ -5488,11 +5510,10 @@ fn checktoclose(ls: &mut LexState, _state: &mut LuaState, level: i32) -> Result<
 /// whether the declaration is `const`. When no `<...>` attribute is present,
 /// returns the default `df`.
 ///
-/// Mirrors upstream `getglobalattribute` (`lparser.c:1862`): only `<const>` is
-/// legal for a global; `<close>` is the dedicated semantic error
-/// `global variables cannot be to-be-closed`, and any other attribute name is
-/// `unknown attribute '<name>'`. Both are emitted via [`lua_lex::sem_error`]
-/// (location prefix, no `near` suffix) per upstream `luaK_semerror`.
+/// Only `<const>` is legal for a global; `<close>` is the dedicated semantic
+/// error `global variables cannot be to-be-closed`, and any other attribute
+/// name is `unknown attribute '<name>'`. Both are emitted via
+/// [`lua_lex::sem_error`] (location prefix, no `near` suffix).
 fn get_global_attribute(
     ls: &mut LexState,
     state: &mut LuaState,
@@ -5519,9 +5540,8 @@ fn get_global_attribute(
 fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     lex_next(ls, state)?; // skip 'global'
 
-    // `global function NAME body` — the global-function declaration form
-    // (upstream `globalstatfunc`/`globalfunc`, `lparser.c:1962`/`1947`).
-    // Declares NAME as a regular global, compiles the body, runs the same
+    // `global function NAME body` — the global-function declaration form:
+    // declares NAME as a regular global, compiles the body, runs the same
     // already-defined guard as `global NAME = expr`, then stores the closure.
     if ls.t.token == TK_FUNCTION {
         let line = ls.linenumber;
@@ -5561,9 +5581,8 @@ fn globalstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         return Ok(());
     }
 
-    // Mirror upstream `globalstat` (`lparser.c:1931`): parse the optional
-    // prefixed attribute FIRST (the default kind for the whole declaration),
-    // then branch on `*` (collective form) vs a name list.
+    // Parse the optional prefixed attribute FIRST (the default kind for the
+    // whole declaration), then branch on `*` (collective form) vs a name list.
     //
     //   globalstat -> (GLOBAL) attrib '*'
     //   globalstat -> (GLOBAL) attrib NAME attrib {',' NAME attrib}
@@ -5666,11 +5685,10 @@ fn localstat(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     let mut toclose: i32 = -1;
     let mut nvars: i32 = 0;
     let mut vidx: i32;
-    // Lua 5.5 (`localstat` in `lparser.c:1818`) accepts a PREFIXED attribute
-    // applied as the default for every variable in the list — e.g.
-    // `local <const> a, b`. On 5.4/5.3 no prefixed attribute exists, so a `<`
-    // before the first name stays the reference error `<name> expected near
-    // '<'`; gate the prefix parse on 5.5.
+    // Lua 5.5 accepts a PREFIXED attribute applied as the default for every
+    // variable in the list — e.g. `local <const> a, b`. On 5.4/5.3 no prefixed
+    // attribute exists, so a `<` before the first name stays the reference error
+    // `<name> expected near '<'`; gate the prefix parse on 5.5.
     use lua_types::LuaVersion;
     let defkind = if matches!(state.global().lua_version, LuaVersion::V55) {
         getlocalattribute(ls, state, VarKind::Reg)?
@@ -5959,12 +5977,9 @@ fn mainfunc(
     close_func(ls, state)
 }
 
-/// Top-level entry point: parses a chunk and returns the main LClosure.
-/// LUAI_FUNC visibility.
-///
-/// PORT NOTE: In C, returns `LClosure *` (a GC object). In Rust (Phase A),
-///   we return `Box<LuaProto>` since we don't have GcRef<LuaLClosure> ready.
-///   Phase B will wrap this in a proper LuaLClosure / GcRef.
+/// Top-level entry point: parses a whole chunk and returns the prototype of its
+/// main function. The caller wraps this `Box<LuaProto>` into a closure and hands
+/// it to the GC; that boundary is the public contract of this crate.
 pub fn parse(
     state: &mut LuaState,
     dyd: DynData,
@@ -6073,23 +6088,28 @@ fn local_token_value(v: &lua_lex::TokenValue) -> TokenValue {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/lparser.c  (1968 lines, 95 functions)
+//   source:        originally ported from src/lparser.c + src/lparser.h with
+//                  src/lcode.c codegen folded in; the C correspondence has since
+//                  been GRADUATED away (see GRADUATED.md and the module-level
+//                  doc). This file no longer tracks the C line-by-line — it is
+//                  idiomatic Rust guarded by the oracle.
 //   target_crate:  lua-parse
-//   confidence:    medium
-//   todos:         184
-//   port_notes:    14
+//   confidence:    high
+//   todos:         8  (genuine deferred-codegen markers, not crutch: integer
+//                  stack-check, debug-var startpc, local const-fold, explicit
+//                  fix_line, GC proto allocation, single-vs-multret arg, and the
+//                  unnamed-var defensive branch — each kept because the
+//                  bytecode-parity oracle proves they do not move output, and
+//                  removing them would hide a real divergence from full lcode.c)
+//   port_notes:    0  (C-correspondence crutches removed in idiomatization S1)
 //   unsafe_blocks: 0
-//   notes:         All 95 functions translated with correct logical structure.
-//                  184 TODO(port) stubs for cross-crate calls (lua_code::*,
-//                  lua_lex::*, lua_vm state allocation). Key design choices:
-//                  BlockCnt/LhsAssign use Option<Box<...>> chains; FuncState
-//                  uses Box<LuaProto> (not GcRef) for mutable access during
-//                  build. singlevaraux FuncState.prev chain traversal (upvalue
-//                  capture across closures) is a known TODO — needs recursive
-//                  descent through fs.prev without double-mutable-borrow.
-//                  LexState is a local stub — Phase B must unify with
-//                  lua_lex::LexState and add lua-lex as a dep. markupval
-//                  BlockCnt chain traversal also needs Phase B restructure.
-//                  rustc check: only E0432 (unresolved lua_types import) —
-//                  expected Phase A name-resolution error; no syntax errors.
+//   notes:         Idiomatized (Sprint 1, P1b — subsumes P1c, since lcode.c is
+//                  folded in here and the standalone lua-code crate is only the
+//                  opcode tables). The emit/register-alloc/jump-offset/line-info/
+//                  constant-fold CORE was deliberately left structurally faithful
+//                  (the hot-loop exception). The oracle that now guards behaviour:
+//                  bytecode parity (parser+codegen → identical luac -l -l), the
+//                  multiversion_oracle, the full official suite, and the
+//                  check.sh 5.1..5.5 version batteries. Do NOT reach for
+//                  lparser.c / lcode.c to debug this file — see GRADUATED.md.
 // ──────────────────────────────────────────────────────────────────────────

@@ -3957,3 +3957,135 @@ fn v_sort_observable_contract_crossversion() {
         "attempt to compare",
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// P2c — string pattern-matcher net-strengthening (Sprint 2). The behavioral
+// net is the ONLY net for the matcher (no structural oracle); these three
+// assertions pin the matcher's danger zones that pm.lua does NOT exercise,
+// each captured from the version-suffixed reference binaries
+// (`/tmp/lua-refs/bin/lua5.{1.5,2.4,3.6,4.7,5.0}`).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v_pattern_too_complex_gate_crossversion() {
+    // The matcher bounds recursion depth at MAXCCALLS (200) and raises
+    // "pattern too complex" when a pattern recurses past it. pm.lua exercises
+    // the matcher but never HITS this bound, so it was unguarded.
+    //
+    // CRITICAL version seam: the `matchdepth`/MAXCCALLS guard was ADDED IN 5.2.
+    // 5.1's lstrlib.c match() has NO depth counter at all (verified: lua-5.1.5
+    // lstrlib.c has zero `matchdepth`/`MAXCCALLS`), so a pattern that trips the
+    // bound on 5.2+ simply MATCHES on 5.1. The trigger below recurses via 200
+    // lazy `.-` elements over a 200-char subject.
+    //
+    // 5.1: no bound — the match succeeds (find returns start index 1).
+    eq(
+        LuaVersion::V51,
+        r#"local ok, r = pcall(string.find, string.rep("a", 200), string.rep(".-", 200))
+           return tostring(ok) .. ":" .. tostring(r)"#,
+        "true:1",
+    );
+    // 5.2 + 5.3 + 5.4 + 5.5: the bound is hit, "pattern too complex" raised.
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        err_contains(
+            v,
+            r#"return string.find(string.rep("a", 200), string.rep(".-", 200))"#,
+            "pattern too complex",
+        );
+    }
+}
+
+#[test]
+fn v_empty_match_advance_rule_crossversion() {
+    // The empty-match advance rule changed in 5.3.3. Pre-5.3 (5.1/5.2) the
+    // matcher has NO `lastmatch` de-dup: after an empty match at a position it
+    // counts/emits it and advances one character, so an empty match can land
+    // at a position that ALSO ends a non-empty match — producing a DOUBLED
+    // result. 5.3+ added the `lastmatch` guard (`e != lastmatch`) in both
+    // gmatch_aux and str_gsub, which suppresses the redundant empty match.
+    // Confirmed against the 5.1.5/5.2.4 sources (no lastmatch) vs 5.3.6/5.4.7/
+    // 5.5.0 (lastmatch present).
+
+    // gsub with the empty-or-more space pattern.
+    for v in [LuaVersion::V51, LuaVersion::V52] {
+        eq(
+            v,
+            r#"return (string.gsub("a b cd", " *", "-"))"#,
+            "-a--b--c-d-",
+        );
+    }
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            r#"return (string.gsub("a b cd", " *", "-"))"#,
+            "-a-b-c-d-",
+        );
+    }
+
+    // gmatch with a zero-width-allowed pattern (`%a*`) over a subject with a
+    // gap: pre-5.3 emits a spurious empty capture between each word.
+    for v in [LuaVersion::V51, LuaVersion::V52] {
+        eq(
+            v,
+            r#"local t = {}
+               for s in string.gmatch("ab cd", "%a*") do t[#t + 1] = "[" .. s .. "]" end
+               return table.concat(t)"#,
+            "[ab][][cd][]",
+        );
+    }
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            r#"local t = {}
+               for s in string.gmatch("ab cd", "%a*") do t[#t + 1] = "[" .. s .. "]" end
+               return table.concat(t)"#,
+            "[ab][cd]",
+        );
+    }
+
+    // A purely-empty pattern emits one empty match per position PLUS one past
+    // the end on EVERY version (lastmatch never fires because each match
+    // advances `src`): all five agree, pinned so a future change can't drift.
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(
+            v,
+            r#"local t = {}
+               for s in string.gmatch("abc", "") do t[#t + 1] = "[" .. s .. "]" end
+               return table.concat(t)"#,
+            "[][][][]",
+        );
+    }
+}
+
+#[test]
+fn v_too_many_captures_gate_crossversion() {
+    // Exceeding LUA_MAX_CAPTURES (32) raises "too many captures" in
+    // start_capture on EVERY version (the limit has been 32 since 5.0 and is
+    // not version-gated). 33 position captures `()` trip it. pm.lua never
+    // exercises the overflow edge; this pins it as a green tripwire so a future
+    // refactor of the capture array can't silently change the ceiling.
+    for v in [
+        LuaVersion::V51,
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        err_contains(
+            v,
+            r#"return string.match("abc", string.rep("()", 33))"#,
+            "too many captures",
+        );
+    }
+}

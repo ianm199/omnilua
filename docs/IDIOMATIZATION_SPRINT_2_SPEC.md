@@ -76,8 +76,28 @@ net now guards it and which algorithm code was left load-bearing.
       sort.lua + nextvar.lua PASS, check.sh 5.1-5.5 0-fail at 57/54/23/7/10,
       workspace, wasm, unsafe 0); recipes + verdict below; graduation in
       `crates/lua-stdlib/GRADUATED.md`. Branch `idiom/table` (supervisor PRs).
+- [x] P2c: STRING (`string_lib`) — the HOT Phase-2 capstone, the FIRST module
+      carrying a PERF arbiter (Ir + branch-sim) ON TOP of the behavioral oracle.
+      Net strengthened FIRST (3 `test(string)` commits, reference-pinned: the
+      pattern-too-complex gate, the 5.3.3 empty-match advance rule, the
+      capture-overflow tripwire); TWO of the three FAILED at baseline, catching
+      real 5.1/5.2 pre-5.3.3 divergences (the impl applied the 5.2+ matchdepth
+      guard and the 5.3+ empty-match dedup to ALL versions). Fixed in the same
+      area via two single-source version helpers (`matcher_bounds_depth`,
+      `matcher_dedups_empty_match`); the hot recursive matcher left LOAD-BEARING
+      (algorithm/recursion/`'outer: loop`/dispatch untouched, doc-comment only —
+      the analogue of math's xoshiro / table's quicksort). Cold-utils crutch
+      removal (6 PORT NOTEs, 3 dead format consts, condensed trailer + header).
+      **THE CAPSTONE: the perf-arbiter veto loop ran for real** — the first cut
+      regressed gmatch Ir +0.33-0.54% (a RefCell-borrow + per-match version
+      branches on the 5M-match hot path); proven above the baseline-rebuild
+      floor (~0.09%), then driven FLAT (-0.11%/-0.08%, within floor) by a
+      const-generic gmatch split + depth-bound fold. Behavioral suite green
+      (oracle 181, strings.lua + pm.lua PASS, check.sh 5.1-5.5 0-fail at
+      57/54/23/7/10, workspace, wasm, unsafe 0); recipes + verdict below;
+      graduation in `crates/lua-stdlib/GRADUATED.md`. Branch `idiom/string`
+      (supervisor verifies + runs the AUTHORITATIVE Ir/cold-wall arbiter + PRs).
 - [ ] (then, as gates + budget allow: `os` date/time arithmetic — cold/pure)
-- [ ] (LAST, separate, with the perf arbiter: the `string` pattern matcher)
 - [ ] CLOSE: PRs merged CI-green; board row updated
 
 ## P2a — math: coverage-precondition verdict (recon 2026-06-14)
@@ -319,6 +339,118 @@ than reflexively rewriting clean code.
 - Caveat: this is the strongest form of "leave load-bearing" — when even the
   fence-off refactor (regroup/rename) lacks a net to verify it, don't do it.
 
+### P2c — string (`string_lib`), 2026-06-14
+
+`crates/lua-stdlib/src/string_lib.rs` is a ~3150-line port of `lstrlib.c` and the
+HOT Phase-2 capstone — the FIRST module whose gate is the **perf arbiter (Ir +
+branch-sim) layered on top of the behavioral oracle**. The honest framing going
+in (and confirmed): the recursive pattern matcher is *already idiomatic Rust and
+CPI-load-bearing* — the `goto`→`'outer: loop` tail-call translation is correct
+and perf-critical, with NO perf-neutral idiomatization available inside it. So
+P2c is NOT a matcher rewrite. It is: strengthen the net for the matcher's weak
+spots, idiomatize the cold utilities around the hot core, leave the matcher
+load-bearing, and **prove the whole packet perf-neutral with the Ir/branch-sim
+veto gate**. The capstone deliverable is *demonstrating that veto loop running
+for real* — including catching and reverting a regression.
+
+---
+
+**Recipe: `the perf arbiter as a veto gate — idiomatize AROUND a hot load-bearing
+core, prove neutrality with Ir/branch-sim, revert any regression` (THE P2c point)**
+- Pattern: a module has a HOT core whose codegen is perf-critical (the matcher,
+  the analogue of math's xoshiro / table's quicksort). You must change *around*
+  it — net tests, version gates, cold-utility cleanup — without moving the hot
+  core's instruction count or branch behavior. The behavioral oracle says
+  "still correct"; it says NOTHING about "still fast." The perf arbiter is the
+  second, independent truth-teller, and it has VETO power.
+- Action, the loop that actually ran here:
+  1. **Freeze a release baseline BEFORE any edit** (`cp target/release/omnilua
+     /tmp/lua-rs-string-base`), record its sha. Ensure `Cargo.lock` exists (the
+     instr-count container mounts `/src:ro` and needs it).
+  2. Do the behavioral work (net + fixes + cold idiomatization), gating each
+     step behaviorally green.
+  3. **Run the Ir arbiter on the matcher-heavy workloads** (`instr-count.sh
+     --workloads string_ops,string_ops_long --branch-sim`) and diff the `rs`
+     row vs baseline. The first cut here came back **Ir +0.33–0.54%** — a real
+     regression.
+  4. **Establish the noise floor before believing a small delta.** Rebuild the
+     SAME baseline commit twice and measure the Ir spread (here **±0.01–0.09%**,
+     layout-only). +0.33% was 4–50× the floor → REAL, not rebuild noise. This
+     step is non-negotiable: Ir is "effectively exact" for a fixed binary, but
+     a rebuild reshuffles layout by up to ~0.5%, so a sub-floor delta is noise
+     and a supra-floor delta is signal — you cannot tell which without the floor.
+  5. **Localize and kill the regression** (this is the veto loop):
+     - The regression was per-MATCH work in `gmatch_aux`, which the Lua `for`
+       loop calls once per match (5M times on the long workload). Three causes,
+       fixed in order, each re-measured: (a) an added `MatchState` field that
+       shifted hot struct offsets — dropped (release layout restored); (b) a
+       `state.global()` **RefCell borrow** read per match — hoisted to iterator
+       creation; (c) the residual per-match runtime branch on the version flag —
+       killed by **specializing the step on a `const DEDUP: bool`** (two thin
+       closures, `gmatch_aux`/`gmatch_aux_legacy`, picked at creation) so
+       monomorphization folds the seam to constants and the 5.3+ step's codegen
+       is byte-identical to the single-version baseline; plus folding the
+       depth-bound select (`DEDUP=true ⟹ bound_depth=true`, a compile-time
+       constant) with `#[inline]` on `MatchState::new`.
+     - Final: **Ir −0.11% / −0.08%**, both WITHIN the rebuild floor → FLAT.
+       Confirmed stable across two final-branch builds (spread 0.003%/0.02%).
+- Invariant: the perf arbiter VERDICT (Ir flat within the measured rebuild floor,
+  Bc flat) is the second gate the module must pass, alongside the behavioral
+  suite. The number that enters the spec is re-measured by the supervisor on a
+  cold machine (the authoritative Ir + cold-wall arbiter).
+- Caveat — the const-generic specialization is the reusable trick: when a hot
+  path must branch on a per-instance-constant seam, lift the seam to a `const`
+  type parameter and bind it where the instance is created (here: which closure
+  to register), NOT a runtime field the hot loop re-reads. The compiler then
+  produces one specialized, branch-free path per value. This is how you gate
+  behavior by version on a hot path at ZERO instruction cost.
+
+**Recipe: `net-strengthening that catches a version-seam bug the matcher hid`**
+- Same shape as P2b's `table.remove` finding, on the matcher. The behavioral net
+  (pm.lua) exercises the matcher heavily but never HITS its danger-zone edges, so
+  the edges were unguarded — and two of them hid real 5.1/5.2 divergences:
+  - **`matchdepth` / "pattern too complex".** Pinning the bound across versions
+    exposed that our impl raised on **5.1**, where `lstrlib.c` `match()` has NO
+    depth counter (`MAXCCALLS` was a 5.2 addition; verified zero in the 5.1.5
+    source) and a too-deep pattern simply MATCHES. The test FAILED at baseline.
+  - **Empty-match advance (the 5.3.3 change).** Pinning `gsub(" *","-")` and
+    `gmatch("%a*")` per-version exposed that our impl applied the 5.3+
+    `e != lastmatch` de-dup to **5.1/5.2**, which lack it — so `gsub` should
+    DOUBLE to `-a--b--c-d-` and `gmatch` should emit spurious empty captures.
+    The test FAILED at baseline.
+  - **Capture overflow** (>32 → "too many captures"): NOT version-gated, green
+    at baseline — a clean tripwire.
+- Resolution (the discipline, same as P2b): pin REFERENCE, fix the impl, never
+  weaken the test to the impl's wrong output. Both fixes are single-source
+  version helpers (`matcher_bounds_depth`, `matcher_dedups_empty_match`); the
+  matcher recursion itself is untouched (the 5.1 no-bound case is `matchdepth`
+  initialized to a high sentinel, so the hot `< 0` check stays byte-identical).
+- Caveat — the `changed`/return-original gsub optimization (5.4+) is NOT
+  behaviorally observable (strings intern, so a rebuilt identical string is
+  `rawequal` to the original), so it is left applied to all versions: an
+  honest "this seam is real in C but invisible through the language, do not
+  bother gating it" — the inverse of the bugs above (seams that ARE observable).
+
+**Recipe: `treat the hot matcher as LOAD-BEARING — doc-comment only, prove it`**
+- Pattern: P2a fenced math's xoshiro into a private module; P2b left table's
+  quicksort entirely untouched. The matcher is a third point: it is the HOT inner
+  loop of every `string.*` pattern op, and unlike those two it is *exercised on a
+  perf-measured workload*, so "leave it alone" is enforced by the Ir arbiter, not
+  just by argument.
+- Action: the ONLY hot-path edits made were (a) an enriched `match_pat`
+  doc-comment recording the load-bearing contract in-place (do not extract
+  helpers / convert the loop / replace the dispatch) and (b) reframing one
+  helper's doc. NO code line in the matcher changed; no local was renamed (the
+  names — `b`/`e`, `cont`, `count`, `level`, `what`, `s`/`p`/`ep` — are already
+  clear and faithful, so renaming would be churn on the load-bearing core). The
+  Ir-flat verdict is the *proof* the matcher is untouched: a hot-core edit would
+  have moved string_ops_long's 21.8B-instruction count past the floor.
+- Caveat: the spec permitted local renames as "Ir-neutral by construction." The
+  honest finding is that even an admissible edit is not worth making on a clean
+  load-bearing core — the correct amount of change to the matcher was effectively
+  ZERO code, ONLY docs (the P2b "leave load-bearing alone" lesson, now with a
+  perf tripwire that would catch a violation).
+
 ## Verdict ledger
 (append per-module outcomes — graduated OR honest-negative-with-reason)
 
@@ -390,3 +522,65 @@ was a candidate to factor into a shared range-check helper. Declined: extracting
 it without a dedicated equivalence unit test (which the brief required as the
 precondition) would itself be unverified churn on edge-case logic the coarse net
 guards only partially. Left as-is.
+
+### P2c — string: GRADUATED (2026-06-14)
+
+Graduated — the HOT Phase-2 capstone, and the first module gated by the **perf
+arbiter (Ir + branch-sim) on top of the behavioral oracle**. The headline is not
+"the matcher was idiomatized" (it wasn't — it's already idiomatic and
+load-bearing) but **"the perf-arbiter veto loop ran end-to-end and worked."**
+
+Net strengthened FIRST: 3 `test(string)` commits (oracle 178 → 181), each pinning
+the version-suffixed reference binaries on a matcher danger-zone pm.lua doesn't
+exercise — pattern-too-complex, the 5.3.3 empty-match advance rule, capture
+overflow. TWO **FAILED at baseline**, catching real 5.1/5.2 pre-5.3.3 divergences
+(see the bug note below). Then: the version fixes via two single-source helpers;
+crutch removal on the cold surface (6 PORT NOTEs, 3 dead format consts, condensed
+trailer + module header); the hot matcher left load-bearing (doc-comment only, no
+code line moved). Final state: oracle 181, strings.lua + pm.lua PASS, check.sh
+5.1-5.5 at baseline 57/54/23/7/10 (0 fail), workspace green, wasm OK, **unsafe
+blocks 0**. Graduation doc: `crates/lua-stdlib/GRADUATED.md` "string". Branch
+`idiom/string` (supervisor verifies + runs the AUTHORITATIVE Ir/cold-wall arbiter
++ PRs).
+
+**The perf-arbiter VETO that fired (the capstone evidence):** the first cut of the
+empty-match fix regressed gmatch **Ir +0.33–0.54%** on `string_ops`/`string_ops_long`
+— a real per-match cost (a `state.global()` RefCell borrow + runtime version
+branches in `gmatch_aux`, which the Lua `for` loop calls once per match, 5M times
+on the long workload). The baseline-vs-baseline rebuild floor was measured at
+**±0.01–0.09%**, proving the +0.33% was signal not layout noise. It was driven
+FLAT (**Ir −0.11% / −0.08%**, within the floor, stable across two builds) by:
+restoring the `MatchState` release layout; hoisting the version reads to iterator
+creation; and **specializing `gmatch` on a `const DEDUP: bool` step** (two
+closures picked at creation) so the 5.3+ path's codegen is byte-identical to the
+single-version baseline — version-gating behavior on a hot path at ZERO
+instruction cost. This is the module's reusable trick and the literal
+demonstration of the gate's veto power.
+
+**Bug caught by the strengthened net (fixed in this packet):** our matcher applied
+two 5.2+/5.3+ behaviors to ALL versions. (1) The `MAXCCALLS` "pattern too complex"
+guard was added in **5.2** — 5.1's `lstrlib.c` `match()` has no depth counter, so
+a too-deep pattern MATCHES on 5.1; our impl raised. (2) The 5.3.3 `e != lastmatch`
+empty-match de-dup is absent on **5.1/5.2**, so `gsub(" *","-")` must double to
+`-a--b--c-d-` and `gmatch("%a*")` must emit spurious empty captures; our impl
+deduped everywhere. Both tests FAILED at baseline (pinning reference), both fixed
+in the same area via `matcher_bounds_depth`/`matcher_dedups_empty_match`, verified
+against all five reference binaries + the check.sh×5 baseline.
+
+**Honest-negative — the matcher is load-bearing, idiomatized AROUND not WITHIN
+(a SUCCESS, not a shortfall):** the recursive matcher (`match_pat` + helpers, the
+`goto`→`'outer: loop` tail-call translation, the per-byte dispatch) is already
+idiomatic Rust and CPI-critical. There is NO perf-neutral idiomatization inside
+it — the analogue of math's xoshiro and table's quicksort, but stronger because
+it's *exercised on a perf-measured workload*, so "leave it alone" is enforced by
+the Ir arbiter, not just argued. The packet idiomatized the cold utilities, gated
+the version seams off the hot path, and proved neutrality; the matcher's code is
+byte-for-byte unchanged (only doc-comments). The Ir-flat verdict IS the proof.
+
+**Honest-negative — a real C seam left ungated because it's unobservable:** the
+5.4+ `changed`/return-original gsub optimization (return the original string
+object when nothing changed) is not behaviorally observable — strings intern, so
+a rebuilt identical string is `rawequal` to the original. It is left applied to
+all versions (behavior-identical). This is the inverse of the two bugs above
+(observable seams that had to be gated): a seam that is real in C but invisible
+through the language, where the correct amount of gating is zero.

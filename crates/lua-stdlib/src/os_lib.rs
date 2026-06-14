@@ -124,22 +124,54 @@ fn get_bool_field(state: &mut LuaState, key: &[u8]) -> Result<i32, LuaError> {
     Ok(res)
 }
 
-///
-/// Reads an integer field from the table on top of the stack.
+/// Reads an integer field from the date table on top of the stack.
 ///
 /// * `d` — default when the field is absent; pass `d < 0` to make absence an
-///   error.
+///   error ("missing in date table").
 /// * `delta` — subtracted from the read value to convert from Lua's offset
 ///   representation back to C-library conventions (e.g. month−1, year−1900).
 ///
-/// PORT NOTE: Stack cleanup on error paths (pop before returning Err) is added
-/// vs. the C version where `luaL_error` never returns (longjmp).
+/// The validation behaviour is version-gated, faithful to `loslib.c`'s
+/// `getfield` evolution and pinned per version by
+/// `os_strengthen.rs::time_non_integer_field_is_unchecked_pre_5_3_crossversion`
+/// and `…out_of_bound…`:
+///
+/// * **5.1 / 5.2** (legacy): the field is read with `lua_(is)number` semantics —
+///   any value coercible to a number (including numeric strings and fractional
+///   floats) is accepted and **truncated** toward zero; a non-numeric value is
+///   treated as absent, falling back to the default `d` or raising "missing"
+///   when `d < 0`. There is no "is not an integer" check and no out-of-bound
+///   check (`lua_tointeger` truncates silently).
+/// * **5.3+**: a present non-nil non-integer raises "is not an integer", and an
+///   in-range integer that overflows the C `int` field raises "is out-of-bound".
+///
+/// Stack cleanup on the error paths (pop before returning `Err`) is added vs.
+/// the C version, where `luaL_error` never returns (longjmp).
 fn get_field(state: &mut LuaState, key: &[u8], d: i32, delta: i32) -> Result<i32, LuaError> {
+    let legacy = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
     let ty = state.get_field(-1, key)?;
-    let maybe_int = state.to_integer_x(-1);
-    let res: i32 = match maybe_int {
+
+    if legacy {
+        let res = match state.to_number_x(-1) {
+            Some(n) => (n as i64).wrapping_sub(delta as i64) as i32,
+            None if d < 0 => {
+                state.pop_n(1);
+                return Err(LuaError::runtime(format_args!(
+                    "field '{}' missing in date table",
+                    ByteDisplay(key),
+                )));
+            }
+            None => d,
+        };
+        state.pop_n(1);
+        return Ok(res);
+    }
+
+    let res: i32 = match state.to_integer_x(-1) {
         Some(res) => {
-            //        return luaL_error(L, "field '%s' is out-of-bound", key);
             let in_bounds = if res >= 0 {
                 res.saturating_sub(delta as i64) <= (i32::MAX as i64)
             } else {
@@ -832,6 +864,13 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
         state.create_table(0, 9)?;
         set_all_fields(state, &stm)?;
     } else {
+        // 5.1's `os_date` has no `checkoption`: a `%X` directive is built into a
+        // 3-byte `cc` and handed straight to `strftime` (unknown directives are
+        // implementation-defined, never a Lua error), and a trailing bare `%` is
+        // emitted literally. 5.2+ validate the directive against a fixed option
+        // set and raise "invalid conversion specifier". Pinned by
+        // `os_strengthen.rs::date_invalid_specifier_is_unvalidated_on_5_1_crossversion`.
+        let validate = !matches!(state.global().lua_version, lua_types::LuaVersion::V51);
         let mut result: Vec<u8> = Vec::new();
         let mut pos: usize = 0;
 
@@ -839,6 +878,17 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
             if s[pos] != b'%' {
                 result.push(s[pos]);
                 pos += 1;
+            } else if !validate {
+                if pos + 1 >= s.len() {
+                    result.push(b'%');
+                    pos += 1;
+                } else {
+                    let mut cc = [0u8; 4];
+                    cc[0] = b'%';
+                    cc[1] = s[pos + 1];
+                    strftime_one(&mut result, &cc, 1, &stm);
+                    pos += 2;
+                }
             } else {
                 pos += 1;
                 let mut cc = [0u8; 4];
@@ -851,9 +901,6 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
                 let after = check_strftime_option(state, conv, &mut cc)?;
                 let oplen = conv.len() - after.len();
                 pos += oplen;
-                // The `%%` specifier is data-independent: strftime emits a literal
-                // `%` byte regardless of the broken-down time, so it is correct to
-                // handle here even while the rest of strftime is stubbed.
                 strftime_one(&mut result, &cc, oplen, &stm);
                 let _ = SIZE_TIME_FMT;
             }
@@ -880,12 +927,34 @@ pub(crate) fn os_time(state: &mut LuaState) -> Result<usize, LuaError> {
         // sets an absolute stack index and would truncate the entire stack.
         lua_vm::api::set_top(state, 1)?;
 
-        let tm_year = get_field(state, b"year", -1, 1900)?;
-        let tm_mon = get_field(state, b"month", -1, 1)?;
-        let tm_mday = get_field(state, b"day", -1, 0)?;
-        let tm_hour = get_field(state, b"hour", 12, 0)?;
-        let tm_min = get_field(state, b"min", 0, 0)?;
-        let tm_sec = get_field(state, b"sec", 0, 0)?;
+        // The field-read ORDER is version-gated, faithful to `loslib.c`'s
+        // `os_time` evolution and pinned by
+        // `os_strengthen.rs::time_missing_field_names_first_unread_required_field_crossversion`.
+        // Field *values* are order-independent; the order matters only because a
+        // "field '…' missing in date table" error short-circuits on the FIRST
+        // absent required field. 5.1/5.2/5.3 read sec→min→hour→day→month→year,
+        // so an empty table reports `day` first; 5.4/5.5 read
+        // year→month→day→hour→min→sec, reporting `year` first.
+        let (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec) = if matches!(
+            state.global().lua_version,
+            lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+        ) {
+            let tm_sec = get_field(state, b"sec", 0, 0)?;
+            let tm_min = get_field(state, b"min", 0, 0)?;
+            let tm_hour = get_field(state, b"hour", 12, 0)?;
+            let tm_mday = get_field(state, b"day", -1, 0)?;
+            let tm_mon = get_field(state, b"month", -1, 1)?;
+            let tm_year = get_field(state, b"year", -1, 1900)?;
+            (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec)
+        } else {
+            let tm_year = get_field(state, b"year", -1, 1900)?;
+            let tm_mon = get_field(state, b"month", -1, 1)?;
+            let tm_mday = get_field(state, b"day", -1, 0)?;
+            let tm_hour = get_field(state, b"hour", 12, 0)?;
+            let tm_min = get_field(state, b"min", 0, 0)?;
+            let tm_sec = get_field(state, b"sec", 0, 0)?;
+            (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec)
+        };
         let tm_isdst = get_bool_field(state, b"isdst")?;
 
         let raw = TmFields {

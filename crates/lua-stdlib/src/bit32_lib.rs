@@ -1,26 +1,70 @@
-//! `bit32` — the Lua 5.2/5.3 32-bit bitwise library.
+//! `bit32` — the Lua 5.2/5.3 32-bit bitwise library (port of `lbitlib.c`).
 //!
-//! This library was present (default-on) in Lua 5.3 and removed in Lua 5.4
-//! (`specs/research/5.3-upstream-delta.md` delta #11). Its operations mask
-//! every operand and result to **32 bits**, which is distinct from 5.3's
-//! native 64-bit `&`/`|`/`~`/`<<`/`>>` operators (`5.3-upstream-delta.md`
-//! risk #5). We register it only under the 5.3 backend.
+//! `bit32` was introduced in Lua 5.2 and removed in 5.4 once native 64-bit
+//! bitwise operators (`&` `|` `~` `<<` `>>`) arrived in 5.3. In a stock build it
+//! is present in **both** 5.2 and 5.3 — 5.3 keeps it under the default-on
+//! `LUA_COMPAT_BITLIB` flag — so [`init`](crate::init) registers it under the
+//! `V52 | V53` gate. Verified against the reference binaries: `type(bit32)` is
+//! nil / table / table / nil for 5.1 / 5.2 / 5.3 / 5.4. That gate is
+//! load-bearing; narrowing it to 5.2-only would drop a 5.3 builtin.
 //!
-//! PRELIMINARY: this is a minimal, exploratory subset proving the per-version
-//! stdlib-roster seam — it implements the most common operations. The full
-//! 5.2/5.3 surface (`btest`, `extract`, `replace`, `lrotate`, `rrotate`,
-//! `arshift`) is left as a clear TODO below.
+//! Every operation masks its operands and result to **32 bits** (`mod 2^32`):
+//! this unsigned 32-bit window is the library's defining semantics and is what
+//! distinguishes it from 5.3's native 64-bit operators.
+//!
+//! ## Graduation (idiomatization sprint 2)
+//!
+//! The whole 5.2/5.3 surface is implemented and reference-pinned:
+//! `band` `bor` `bxor` `bnot` `btest` `lshift` `rshift` `arshift` `lrotate`
+//! `rrotate` `extract` `replace`. The behavioral net lives in
+//! `crates/lua-stdlib/tests/bit32_strengthen.rs` (pinned to lua5.2.4, with a
+//! lua5.3.6 contrast for the one version-specific behavior — see [`arg_u32`]).
 
 use crate::state_stub::{LuaState, LuaStateStubExt as _};
-use lua_types::{LuaError, LuaValue};
+use lua_types::{LuaError, LuaValue, NumberModel};
 
 type LuaCFunction = fn(&mut LuaState) -> Result<usize, LuaError>;
 
-/// Mask a Lua integer argument down to an unsigned 32-bit value, matching
-/// `bit32`'s `lua_Unsigned`-truncation semantics.
+/// Coerce a Lua number argument to its unsigned 32-bit image, matching
+/// `lbitlib.c`'s argument handling — which differs by host version:
+///
+/// - **5.2 (the `FloatOnly` number model):** `lbitlib.c` uses
+///   `luaL_checkunsigned` → `lua_tounsigned`, which rounds the number to the
+///   nearest integer (ties to even) and reduces it `mod 2^32`. A fractional
+///   float is therefore accepted, e.g. `bit32.band(1.5) == 2`.
+/// - **5.3 (the `Dual` model, under `LUA_COMPAT_BITLIB`):** `lbitlib.c` uses
+///   `luaL_checkinteger`, which rejects a non-integer-valued float with
+///   `number has no integer representation`.
+///
+/// A non-number argument raises `number expected, got <type>` in both, which is
+/// exactly what `check_number` / `check_integer` already produce.
 fn arg_u32(state: &mut LuaState, arg: i32) -> Result<u32, LuaError> {
-    let n = state.check_integer(arg)?;
-    Ok(n as u32)
+    let model = state.global().lua_version.number_model();
+    match model {
+        NumberModel::FloatOnly => {
+            let n = state.check_number(arg)?;
+            Ok(n.round_ties_even().rem_euclid(4_294_967_296.0) as u32)
+        }
+        NumberModel::Dual => {
+            let n = state.check_integer(arg)?;
+            Ok(n as u32)
+        }
+    }
+}
+
+/// Coerce a Lua number argument to a signed integer for `bit32`'s **count**
+/// arguments — the shift/rotate displacement and the `extract`/`replace` field
+/// and width. `lbitlib.c` reads these with `luaL_checkint`/`luaL_checkinteger`,
+/// which (unlike the operand path in [`arg_u32`]) **truncates toward zero**
+/// under 5.2's `FloatOnly` model — e.g. `bit32.lshift(1, 1.5)` shifts by 1, and
+/// `bit32.extract(0xAA, 1.5)` reads bit 1. 5.3 keeps `luaL_checkinteger`'s
+/// reject-on-fraction behavior.
+fn arg_int(state: &mut LuaState, arg: i32) -> Result<i64, LuaError> {
+    let model = state.global().lua_version.number_model();
+    match model {
+        NumberModel::FloatOnly => Ok(state.check_number(arg)?.trunc() as i64),
+        NumberModel::Dual => state.check_integer(arg),
+    }
 }
 
 /// Push an unsigned 32-bit result as a Lua integer.
@@ -35,7 +79,7 @@ fn fold(state: &mut LuaState, init: u32, op: fn(u32, u32) -> u32) -> Result<usiz
     for i in 1..=top {
         acc = op(acc, arg_u32(state, i)?);
     }
-    push_u32(state, acc & 0xFFFF_FFFF);
+    push_u32(state, acc);
     Ok(1)
 }
 
@@ -59,20 +103,20 @@ fn bit_bnot(state: &mut LuaState) -> Result<usize, LuaError> {
 
 fn bit_lshift(state: &mut LuaState) -> Result<usize, LuaError> {
     let a = arg_u32(state, 1)?;
-    let disp = state.check_integer(2)?;
+    let disp = arg_int(state, 2)?;
     push_u32(state, shift(a, disp));
     Ok(1)
 }
 
 fn bit_rshift(state: &mut LuaState) -> Result<usize, LuaError> {
     let a = arg_u32(state, 1)?;
-    let disp = state.check_integer(2)?;
+    let disp = arg_int(state, 2)?;
     push_u32(state, shift(a, -disp));
     Ok(1)
 }
 
 /// `bit32` logical shift: positive `disp` shifts left, negative shifts right;
-/// a displacement of 32 or more (in magnitude) yields 0, matching 5.3.
+/// a displacement of 32 or more (in magnitude) yields 0, matching the reference.
 fn shift(x: u32, disp: i64) -> u32 {
     if disp <= -32 || disp >= 32 {
         0
@@ -99,9 +143,9 @@ fn field_args(
     field_arg: i32,
     width_arg: i32,
 ) -> Result<(u32, u32), LuaError> {
-    let f = state.check_integer(field_arg)?;
+    let f = arg_int(state, field_arg)?;
     let w = if state.get_top() >= width_arg {
-        state.check_integer(width_arg)?
+        arg_int(state, width_arg)?
     } else {
         1
     };
@@ -154,7 +198,7 @@ fn bit_replace(state: &mut LuaState) -> Result<usize, LuaError> {
 /// negative `disp` shifts left.
 fn bit_arshift(state: &mut LuaState) -> Result<usize, LuaError> {
     let x = arg_u32(state, 1)?;
-    let disp = state.check_integer(2)?;
+    let disp = arg_int(state, 2)?;
     let r = if disp < 0 {
         shift(x, -disp)
     } else if disp >= 32 {
@@ -184,14 +228,14 @@ fn rotate(x: u32, disp: i64) -> u32 {
 
 fn bit_lrotate(state: &mut LuaState) -> Result<usize, LuaError> {
     let x = arg_u32(state, 1)?;
-    let disp = state.check_integer(2)?;
+    let disp = arg_int(state, 2)?;
     push_u32(state, rotate(x, disp));
     Ok(1)
 }
 
 fn bit_rrotate(state: &mut LuaState) -> Result<usize, LuaError> {
     let x = arg_u32(state, 1)?;
-    let disp = state.check_integer(2)?;
+    let disp = arg_int(state, 2)?;
     push_u32(state, rotate(x, -disp));
     Ok(1)
 }
@@ -222,11 +266,13 @@ pub fn open_bit32(state: &mut LuaState) -> Result<usize, LuaError> {
 // PORT STATUS
 //   source:        src/lbitlib.c (Lua 5.2/5.3)
 //   target_crate:  lua-stdlib
-//   confidence:    low (preliminary multiversion scaffold)
-//   todos:         1
+//   confidence:    high
+//   todos:         0
 //   port_notes:    0
 //   unsafe_blocks: 0
-//   notes:         Minimal 5.3-only bit32 subset (band/bor/bxor/bnot/lshift/
-//                  rshift) proving the per-version stdlib roster seam. The
-//                  remaining functions and exact error/range checks are TODO.
+//   notes:         Full 5.2/5.3 bit32 surface (band/bor/bxor/bnot/btest/lshift/
+//                  rshift/arshift/lrotate/rrotate/extract/replace), registered
+//                  under the V52|V53 gate. mod-2^32 masking and the version-
+//                  specific float coercion (5.2 rounds, 5.3 rejects fractions)
+//                  are reference-pinned in tests/bit32_strengthen.rs.
 // ──────────────────────────────────────────────────────────────────────────

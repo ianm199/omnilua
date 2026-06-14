@@ -160,17 +160,25 @@ fn arg_is_int(state: &mut LuaState, n: i32) -> bool {
     matches!(state.value_at(n), LuaValue::Int(_))
 }
 
-/// Convert `d` to integer and push it; push the float unchanged if it doesn't
-/// fit exactly in an i64.
+/// The smallest `f64` whose value equals an `i64` exactly: `i64::MIN` as a
+/// float (`-2^63`, exactly representable).
+const I64_MIN_AS_F64: f64 = i64::MIN as f64;
+
+/// One past the largest representable `i64`, as a float: `2^63`. `i64::MAX`
+/// (`2^63 - 1`) is not exactly representable in `f64`, so the in-range test
+/// uses a strict `<` against this boundary rather than `<= i64::MAX as f64`.
+const I64_MAX_PLUS_1_AS_F64: f64 = -(i64::MIN as f64);
+
+/// Push `d` as an `Int` when it has an integer value that fits exactly in an
+/// `i64`, otherwise push it as a `Float`.
 ///
-fn push_num_int(state: &mut LuaState, d: f64) {
-    //    else lua_pushnumber(L, d);
-    //
-    // lua_numbertointeger: d >= LUA_MININTEGER as float &&
-    //                      d <  -(LUA_MININTEGER as float)
-    let min_f = i64::MIN as f64; // -2^63
-    let max_plus1_f = -(i64::MIN as f64); // 2^63 (one past i64::MAX as float)
-    if d >= min_f && d < max_plus1_f {
+/// `floor`/`ceil`/`modf` use this to keep their result an integer subtype when
+/// it round-trips through `i64` without loss, falling back to a float for
+/// magnitudes outside the `i64` range. The bound check is half-open
+/// (`I64_MIN_AS_F64 <= d < I64_MAX_PLUS_1_AS_F64`) because `i64::MAX` itself is
+/// not exactly representable as an `f64`.
+fn push_int_or_float(state: &mut LuaState, d: f64) {
+    if d >= I64_MIN_AS_F64 && d < I64_MAX_PLUS_1_AS_F64 {
         state.push(LuaValue::Int(d as i64));
     } else {
         state.push(LuaValue::Float(d));
@@ -399,7 +407,7 @@ fn math_floor(state: &mut LuaState) -> Result<usize, LuaError> {
         lua_vm::api::set_top(state, 1)?;
     } else {
         let d = state.check_number(1)?.floor();
-        push_num_int(state, d);
+        push_int_or_float(state, d);
     }
     Ok(1)
 }
@@ -412,7 +420,7 @@ fn math_ceil(state: &mut LuaState) -> Result<usize, LuaError> {
         lua_vm::api::set_top(state, 1)?;
     } else {
         let d = state.check_number(1)?.ceil();
-        push_num_int(state, d);
+        push_int_or_float(state, d);
     }
     Ok(1)
 }
@@ -452,7 +460,7 @@ fn math_modf(state: &mut LuaState) -> Result<usize, LuaError> {
     } else {
         let n = state.check_number(1)?;
         let ip = if n < 0.0 { n.ceil() } else { n.floor() };
-        push_num_int(state, ip);
+        push_int_or_float(state, ip);
         let frac = if n == ip { 0.0 } else { n - ip };
         state.push(LuaValue::Float(frac));
     }

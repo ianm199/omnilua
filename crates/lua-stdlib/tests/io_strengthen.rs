@@ -102,13 +102,12 @@ impl LuaFileHandle for TestFsFile {
     }
 }
 
-/// The single scratch path the in-test hook reads from for the current test.
-///
-/// `file_open_hook` is a bare `fn` pointer (not a closure), so it cannot
-/// capture the per-test path; a thread-local carries it. Each test runs on its
-/// own thread under the cargo test harness and sets this before constructing
-/// `Lua`, so there is no cross-test interference.
 thread_local! {
+    /// The single scratch path the in-test hook reads from for the current
+    /// test. `file_open_hook` is a bare `fn` pointer (not a closure), so it
+    /// cannot capture the per-test path; this thread-local carries it. Each
+    /// test runs on its own thread under the cargo test harness and sets this
+    /// before constructing `Lua`, so there is no cross-test interference.
     static SCRATCH_PATH: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
 }

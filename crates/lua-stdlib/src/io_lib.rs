@@ -488,16 +488,22 @@ fn lstream_from_upvalue(state: &mut LuaState, idx: i32) -> Result<Rc<RefCell<LSt
 }
 
 /// Validate that argument 1 is an open file handle; error if closed.
+///
+/// The closed-file error is raised through `c_api_runtime` (the `luaL_error`
+/// analogue) so it carries the calling source-location prefix
+/// (`<source>:<line>:`), matching the reference `tofile` in `liolib.c`.
 fn tofile(state: &mut LuaState) -> Result<Rc<RefCell<LStream>>, LuaError> {
     let p_rc = get_lstream(state)?;
-    {
+    let closed = {
         let p = p_rc.borrow();
-        if p.is_closed() {
-            return Err(LuaError::runtime(format_args!(
-                "attempt to use a closed file"
-            )));
-        }
-        debug_assert!(p.file.is_some());
+        debug_assert!(p.is_closed() || p.file.is_some());
+        p.is_closed()
+    };
+    if closed {
+        return Err(lua_vm::debug::c_api_runtime(
+            state,
+            b"attempt to use a closed file".to_vec(),
+        ));
     }
     Ok(p_rc)
 }
@@ -602,18 +608,24 @@ fn aux_close(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ── io.type ──────────────────────────────────────────────────────────────────
 
-/// `io.type(x)` — return `"file"`, `"closed file"`, or `false`. C: `io_type`.
+/// `io.type(x)` — return `"file"`, `"closed file"`, or the fail value for a
+/// non-handle. C: `io_type`.
+///
+/// A non-handle pushes the `fail` value (`nil`) via the reference's
+/// `luaL_pushfail`, NOT `false`; `fail` is `nil` on every supported version.
+/// An unknown userdata still carrying the `FILE*` metatable but absent from the
+/// `LStream` side table is treated as closed (it cannot be an open stream).
 pub fn io_type(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_any(1)?;
     let maybe_userdata = state.test_arg_userdata(1, LUA_FILE_HANDLE);
     match maybe_userdata {
         None => {
-            state.push(LuaValue::Bool(false));
+            state.push(LuaValue::Nil);
         }
         Some(ud) => {
             let is_closed = match lookup_lstream(ud.identity()) {
                 Some(rc) => rc.borrow().is_closed(),
-                None => true, // unknown userdata with FILE* metatable: treat as closed
+                None => true,
             };
             if is_closed {
                 state.push_string(b"closed file")?;
@@ -1029,6 +1041,71 @@ fn read_chars(file: &mut dyn LuaFileHandle, n: usize) -> (Vec<u8>, bool) {
     (buf, nr > 0)
 }
 
+/// A validated `file:read`/`io.read` string format: the canonical option byte
+/// (`b'n'`/`b'l'`/`b'L'`/`b'a'`) after the leading `*` has been resolved.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadFormat {
+    Number,
+    Line,
+    LineWithEol,
+    All,
+}
+
+/// Whether the leading `*` on a read format is REQUIRED (5.1/5.2) or OPTIONAL
+/// (5.3+). The `*` was a mandatory marker in 5.1/5.2; 5.3 kept it accepted for
+/// compatibility but made it optional (`if (*p == '*') p++;` in `liolib.c`'s
+/// `g_read`). Single source of truth for that seam — verified empirically
+/// against the 5.1.5/5.2.4 vs 5.3.6/5.4.7/5.5.0 reference binaries.
+fn read_format_requires_star(version: lua_types::LuaVersion) -> bool {
+    matches!(
+        version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    )
+}
+
+/// Whether the `L` (line-with-end-of-line) format exists. `L` was added in 5.2;
+/// 5.1 has only `n`/`l`/`a`, so `*L` there is an invalid format. Single source of
+/// truth — verified against the 5.1.5 reference (`*L` → "invalid format") vs
+/// 5.2.4+ (`*L` reads the line including its newline).
+fn read_format_has_line_with_eol(version: lua_types::LuaVersion) -> bool {
+    version != lua_types::LuaVersion::V51
+}
+
+/// Resolve a read-format string against the version seam, returning the
+/// canonical [`ReadFormat`] or the exact `extramsg` the reference passes to
+/// `luaL_argerror`.
+///
+/// The two reference wordings encode the seam: a leading char that is not a
+/// valid format marker yields `"invalid option"`, while a recognised marker
+/// followed by an unknown option yields `"invalid format"`.
+///   * 5.1/5.2: the `*` is the required marker. No `*` ⇒ `"invalid option"`.
+///     After `*`, an unknown/absent option char ⇒ `"invalid format"`; on 5.1
+///     the `L` option does not exist, so `*L` ⇒ `"invalid format"`.
+///   * 5.3+: the `*` is optional. The option char is read directly (with or
+///     without a leading `*`); an unknown one ⇒ `"invalid format"`.
+fn resolve_read_format(
+    version: lua_types::LuaVersion,
+    fmt: &[u8],
+) -> Result<ReadFormat, &'static [u8]> {
+    let option = if read_format_requires_star(version) {
+        if fmt.first() != Some(&b'*') {
+            return Err(b"invalid option");
+        }
+        fmt.get(1).copied()
+    } else if fmt.first() == Some(&b'*') {
+        fmt.get(1).copied()
+    } else {
+        fmt.first().copied()
+    };
+    match option {
+        Some(b'n') => Ok(ReadFormat::Number),
+        Some(b'l') => Ok(ReadFormat::Line),
+        Some(b'L') if read_format_has_line_with_eol(version) => Ok(ReadFormat::LineWithEol),
+        Some(b'a') => Ok(ReadFormat::All),
+        _ => Err(b"invalid format"),
+    }
+}
+
 /// Dispatch one or more read formats; push results. C: `g_read(L, f, first)`.
 ///
 /// Takes an `Rc<RefCell<LStream>>` so each I/O step can borrow the file briefly,
@@ -1097,13 +1174,15 @@ fn g_read(
                 }
             } else {
                 let s: Vec<u8> = state.check_arg_string(n)?;
-                let pp: &[u8] = if s.first() == Some(&b'*') {
-                    &s[1..]
-                } else {
-                    &s[..]
+                let version = state.global().lua_version;
+                let format = match resolve_read_format(version, &s) {
+                    Ok(format) => format,
+                    Err(extramsg) => {
+                        return Err(lua_vm::debug::arg_error_impl(state, n, extramsg));
+                    }
                 };
-                match pp.first() {
-                    Some(&b'n') => {
+                match format {
+                    ReadFormat::Number => {
                         let bytes = {
                             let mut p = p_rc.borrow_mut();
                             let fh = p
@@ -1120,7 +1199,7 @@ fn g_read(
                             success = false;
                         }
                     }
-                    Some(&b'l') => {
+                    ReadFormat::Line => {
                         let (bytes, had) = {
                             let mut p = p_rc.borrow_mut();
                             let fh = p
@@ -1132,7 +1211,7 @@ fn g_read(
                         state.push_string(&bytes)?;
                         success = had;
                     }
-                    Some(&b'L') => {
+                    ReadFormat::LineWithEol => {
                         let (bytes, had) = {
                             let mut p = p_rc.borrow_mut();
                             let fh = p
@@ -1144,7 +1223,7 @@ fn g_read(
                         state.push_string(&bytes)?;
                         success = had;
                     }
-                    Some(&b'a') => {
+                    ReadFormat::All => {
                         let bytes = {
                             let mut p = p_rc.borrow_mut();
                             let fh = p
@@ -1155,9 +1234,6 @@ fn g_read(
                         };
                         state.push_string(&bytes)?;
                         success = true;
-                    }
-                    _ => {
-                        return Err(lua_vm::debug::arg_error_impl(state, n, b"invalid format"));
                     }
                 }
             }

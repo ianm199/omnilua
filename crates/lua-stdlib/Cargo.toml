@@ -15,3 +15,12 @@ unused_must_use = "deny"
 [dependencies]
 lua-types.workspace = true
 lua-vm.workspace = true
+
+# `omnilua` (the embedding crate) depends on `lua-stdlib`, so it can only appear
+# here as a DEV-dependency — dev-deps do not participate in the normal build
+# graph, so this does not form a build cycle. It is used by the white-box
+# behavioral tests in `tests/` that must inspect the raw `Value::Integer` vs
+# `Value::Number` distinction that Lua's own `type()` cannot observe under the
+# float-only (5.1/5.2) number model.
+[dev-dependencies]
+omnilua = { path = "../lua-rs-runtime" }

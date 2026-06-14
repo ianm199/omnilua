@@ -101,15 +101,21 @@ impl Default for LexBuffer {
     }
 }
 
-/// Placeholder for `ZIO` from `lua_vm::zio`.
-/// TODO(port): replace with `use lua_vm::zio::ZIO` in Phase B.
-/// types.tsv: Zio → ZIO
+/// Chunked byte source for the lexer.
+///
+/// Pulls successive byte chunks from a reader callback and hands them out one
+/// byte at a time as `i32`, with [`EOZ`] (`-1`) signalling end of stream. A
+/// reader is permitted to be re-polled after yielding an empty chunk: an empty
+/// chunk reports `EOZ` without committing it, so a later [`getc`](ZIO::getc)
+/// asks the reader again — that is how an interactive source distinguishes a
+/// momentary stall from a true end.
+///
+/// The byte position is a single cursor into the current chunk; "remaining" is
+/// derived as `chunk.len() - cursor`, not tracked as a separate counter.
 pub struct ZIO {
-    // TODO(port): full ZIO implementation lives in lua_vm::zio; this is a stub.
     reader: Box<dyn FnMut() -> Option<Vec<u8>>>,
-    n: usize,
-    p: usize,
-    current_chunk: Vec<u8>,
+    chunk: Vec<u8>,
+    cursor: usize,
 }
 
 impl ZIO {
@@ -117,9 +123,8 @@ impl ZIO {
     pub fn new(reader: Box<dyn FnMut() -> Option<Vec<u8>>>) -> Self {
         ZIO {
             reader,
-            n: 0,
-            p: 0,
-            current_chunk: Vec::new(),
+            chunk: Vec::new(),
+            cursor: 0,
         }
     }
 
@@ -129,30 +134,28 @@ impl ZIO {
         ZIO::new(Box::new(move || once.take()))
     }
 
-    /// macros.tsv: zgetc → z.getc()
+    /// Return the next byte as `i32`, or [`EOZ`] at end of stream.
     pub fn getc(&mut self) -> i32 {
-        if self.n > 0 {
-            self.n -= 1;
-            let b = self.current_chunk[self.p] as u8;
-            self.p += 1;
-            b as i32
-        } else {
-            self.fill()
+        match self.chunk.get(self.cursor) {
+            Some(&b) => {
+                self.cursor += 1;
+                b as i32
+            }
+            None => self.fill(),
         }
     }
 
+    /// Pull the next non-exhausted chunk and yield its first byte. An exhausted
+    /// reader (`None`) or an empty chunk both report `EOZ` without advancing the
+    /// cursor, so the reader may be asked again on the next [`getc`](ZIO::getc).
     fn fill(&mut self) -> i32 {
         match (self.reader)() {
-            None => EOZ,
-            Some(chunk) if chunk.is_empty() => EOZ,
-            Some(chunk) => {
-                self.n = chunk.len() - 1;
-                self.current_chunk = chunk;
-                self.p = 0;
-                let b = self.current_chunk[self.p] as u8;
-                self.p += 1;
-                b as i32
+            Some(chunk) if !chunk.is_empty() => {
+                self.chunk = chunk;
+                self.cursor = 1;
+                self.chunk[0] as i32
             }
+            _ => EOZ,
         }
     }
 }

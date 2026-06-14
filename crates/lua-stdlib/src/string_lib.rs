@@ -98,13 +98,13 @@ struct MatchState<'a> {
     /// Pattern string.
     pat: &'a [u8],
     /// Recursion depth counter; decremented on entry, incremented on return.
+    /// Initialized to `MAX_CC_CALLS` on 5.2+ (the "pattern too complex" guard)
+    /// or `NO_DEPTH_LIMIT` on 5.1, whose `lstrlib.c` `match()` has no depth
+    /// counter at all — there a too-deep pattern simply matches (only a
+    /// pathologically deep one overflows the native stack, exactly as the 5.1
+    /// reference does). The field is `i32` and the struct layout is identical to
+    /// the single-version baseline; only the initial value is version-selected.
     matchdepth: i32,
-    /// Value `matchdepth` is (re)initialized to per anchor attempt. `MAX_CC_CALLS`
-    /// on 5.2+ (the "pattern too complex" guard); a high sentinel on 5.1, whose
-    /// `lstrlib.c` `match()` has no depth counter at all — there a too-deep
-    /// pattern simply matches (and only a pathologically deep one overflows the
-    /// native stack, exactly as the 5.1 reference does).
-    initial_matchdepth: i32,
     /// Number of capture records currently in use.
     level: u8,
     /// Capture records indexed `0..level`.
@@ -126,7 +126,7 @@ impl<'a> MatchState<'a> {
     /// `MAX_CC_CALLS` "pattern too complex" guard) and `false` on 5.1 (no guard
     /// — 5.1's `match()` has no `matchdepth` field).
     fn new(src: &'a [u8], pat: &'a [u8], step_limit: u64, bound_depth: bool) -> Self {
-        let initial_matchdepth = if bound_depth {
+        let matchdepth = if bound_depth {
             MAX_CC_CALLS
         } else {
             NO_DEPTH_LIMIT
@@ -134,8 +134,7 @@ impl<'a> MatchState<'a> {
         MatchState {
             src,
             pat,
-            matchdepth: initial_matchdepth,
-            initial_matchdepth,
+            matchdepth,
             level: 0,
             captures: [Capture::default(); LUA_MAX_CAPTURES],
             steps: 0,
@@ -146,7 +145,7 @@ impl<'a> MatchState<'a> {
 
     fn reset_level(&mut self) {
         self.level = 0;
-        debug_assert!(self.matchdepth == self.initial_matchdepth);
+        debug_assert!(self.matchdepth == MAX_CC_CALLS || self.matchdepth == NO_DEPTH_LIMIT);
     }
 }
 

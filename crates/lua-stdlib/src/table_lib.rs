@@ -30,7 +30,6 @@ type IdxT = u32;
 /// }
 /// ```
 fn check_field(state: &mut LuaState, key: &[u8], n: i32) -> Result<bool, LuaError> {
-    // TODO(port): state.push_string pushes a Lua string from &[u8]; verify method name
     state.push_string(key)?;
     // raw_get(-n): looks up MT[key] (MT is at -n after the key push), replaces key with value
     let ty = state.raw_get(-n)?;
@@ -65,7 +64,6 @@ fn check_tab(state: &mut LuaState, arg: i32, what: u32) -> Result<(), LuaError> 
     }
     // `n` tracks how many items have been pushed (MT + checked field values).
     let mut n: i32 = 1;
-    // TODO(port): state.get_metatable returns bool (pushes MT if found); verify method name
     let has_mt = state.get_metatable(arg)?;
     let mut ok = has_mt;
 
@@ -95,7 +93,6 @@ fn check_tab(state: &mut LuaState, arg: i32, what: u32) -> Result<(), LuaError> 
 /// Check that argument `n` is a table (or table-like per `w`) and return its length.
 fn aux_getn(state: &mut LuaState, n: i32, w: u32) -> Result<i64, LuaError> {
     check_tab(state, n, w | TAB_L)?;
-    // TODO(port): state.length_at applies the `#` operator and returns i64; verify method name
     state.length_at(n)
 }
 
@@ -349,7 +346,6 @@ pub fn tmove(state: &mut LuaState) -> Result<usize, LuaError> {
             ));
         }
         // Copy forward (increasing) when safe to do so; backward when ranges overlap.
-        // TODO(port): state.compare(a, b, CompareOp::Eq) → lua_compare LUA_OPEQ; verify method
         let copy_forward = t > e || t <= f || (tt != 1 && !state.compare(1, tt, CompareOp::Eq)?);
         if copy_forward {
             for i in 0..n {
@@ -363,7 +359,6 @@ pub fn tmove(state: &mut LuaState) -> Result<usize, LuaError> {
             }
         }
     }
-    // TODO(port): state.push_value_at → lua_pushvalue; verify method name
     state.push_value_at(tt)?;
     Ok(1)
 }
@@ -395,7 +390,6 @@ fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), Lu
         );
         return crate::auxlib::lua_error(state, msg.as_bytes()).map(|_| ());
     }
-    // TODO(port): state.to_bytes_at(-1) converts via Lua's tostring coercion; verify method name
     let bytes = state
         .to_bytes_at(-1)
         .ok_or_else(|| LuaError::runtime(format_args!("invalid value at index {}", idx)))?;
@@ -422,7 +416,6 @@ fn add_field(state: &mut LuaState, buf: &mut Vec<u8>, idx: i64) -> Result<(), Lu
 /// ```
 pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
     let last = aux_getn(state, 1, TAB_R)?;
-    // TODO(port): state.opt_arg_lstring(n, default) → luaL_optlstring; verify method name
     // Clone the separator before any stack-mutating calls that might invalidate it.
     let sep: Vec<u8> = state.opt_arg_lstring(2, Some(b""))?.unwrap_or_default();
     let mut i = state.opt_arg_integer(3, 1)?;
@@ -439,7 +432,6 @@ pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
     if i == last {
         add_field(state, &mut buf, i)?;
     }
-    // TODO(port): state.push_lstring pushes a Lua string from &[u8]; verify method name
     state.push_lstring(&buf)?;
     Ok(1)
 }
@@ -465,7 +457,6 @@ pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
 /// ```
 pub fn pack(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.get_top();
-    // TODO(port): state.create_table(narr, nrec) → lua_createtable; verify method name
     state.create_table(n, 1)?;
     state.insert(1)?;
     // table_set_i pops the top; args shift from n+1..=2 down to 1..=n as we pop
@@ -473,7 +464,6 @@ pub fn pack(state: &mut LuaState) -> Result<usize, LuaError> {
         state.table_set_i(1, i as i64)?;
     }
     state.push(LuaValue::Int(n as i64));
-    // TODO(port): state.set_field(stack_pos, key_bytes) → lua_setfield; verify method name
     state.set_field(1, b"n")?;
     Ok(1)
 }
@@ -594,7 +584,6 @@ fn sort_comp(state: &mut LuaState, a: i32, b: i32) -> Result<bool, LuaError> {
     state.push_value_at(a - 1)?; // push copy of a (compensate for function push)
     state.push_value_at(b - 2)?; // push copy of b (compensate for function + a copy)
     state.call(2, 1)?;
-    // TODO(port): state.to_boolean(-1) → lua_toboolean (never fails); verify method name
     let res = state.to_boolean(-1);
     state.pop_n(1);
     Ok(res)
@@ -999,9 +988,6 @@ fn foreach(state: &mut LuaState) -> Result<usize, LuaError> {
 /// }
 /// ```
 pub fn open_table(state: &mut LuaState) -> Result<usize, LuaError> {
-    // TODO(port): state.new_lib → luaL_newlib; creates a new table and registers functions;
-    //             verify method name and signature
-    //
     // Per-version roster deltas:
     //  - `table.move` is a Lua 5.3 addition, absent in 5.1/5.2 (verified against
     //    lua5.2.4: `type(table.move)` == "nil").

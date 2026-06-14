@@ -1,17 +1,28 @@
-//! Lua `os` standard library.
+//! Lua `os` standard library — a pure-Rust port of `loslib.c`.
 //!
-//! Ports `src/loslib.c` (430 lines, 12 functions) to Rust.
+//! ## Graduation (Idiomatization Sprint 2, Phase 2 — 2026-06-14)
 //!
-//! ## Platform access limitations
+//! The **deterministic** half of this module (the `os.date`/`os.time` broken-down
+//! time arithmetic) is guarded by `crates/lua-stdlib/tests/os_strengthen.rs`,
+//! pinned against the version-suffixed reference binaries. Net-strengthening came
+//! FIRST and caught four real version divergences (our impl had applied the
+//! modern 5.3+/5.4+ field- and specifier-validation rules to ALL versions); they
+//! were fixed in `get_field`/`os_time`/`os_date`, single-source and version-gated.
+//! The version gates are load-bearing — keep them explicit.
 //!
-//! Several `os.*` functions require OS-level capabilities. File removal,
-//! rename, command execution, environment lookup, temporary-name generation,
-//! and wall-clock access route through `GlobalState` hooks supplied by the
-//! embedder where needed for sandboxed/WASM hosts.
+//! The time arithmetic is **pure Rust, no `unsafe`, no libc bridge**:
+//! [`decompose_utc`]/[`compose_utc`] implement Howard Hinnant's exact
+//! proleptic-Gregorian algorithms, and [`strftime_one`] formats specifiers
+//! directly. There is no `gmtime_r`/`mktime`/`strftime` FFI to keep.
 //!
-//! Time decomposition (`os.date`, `os.time`) requires C-library functions
-//! (`gmtime_r`, `localtime_r`, `mktime`, `strftime`).  Those call sites are
-//! flagged with `TODO(port)` and the stubs use a zero-initialised `TmFields`.
+//! ## Impure surface (host-dependent — not reference-pinnable)
+//!
+//! `os.getenv`/`tmpname`/`remove`/`rename`/`execute`/`exit` touch the real
+//! environment, filesystem, and process; `os.clock`/`os.time`'s absolute value
+//! and the locale/timezone specifiers (`%z`/`%Z`/`%c`/`%x`/`%X`/`%r`/`%p`/`%P`)
+//! depend on the host clock/zone/locale. Those route through `GlobalState` hooks
+//! (or `std`) for native/sandboxed/WASM hosts; only their arg-handling and
+//! error-shape are reference-pinned, never their effects.
 
 use crate::state_stub::{LuaState, LuaStateStubExt as _};
 use lua_types::{LuaError, LuaExit, LuaType, LuaValue};
@@ -34,12 +45,8 @@ const SIZE_TIME_FMT: usize = 250;
 ///
 /// Field conventions follow the C standard: `tm_year` is years since 1900,
 /// `tm_mon` ∈ [0, 11], `tm_wday` ∈ [0, 6] (Sunday = 0), `tm_isdst` is −1 when
-/// DST status is unknown.
-///
-/// TODO(port): In Phase B, replace with the `libc::tm` type (via the `libc` crate)
-/// or an equivalent from `chrono` / `time`.  Conversion from / to Unix timestamps
-/// is not implemented in Phase A — stubs that need a broken-down time use
-/// `TmFields::default()` (all zeros).
+/// DST status is unknown. This is a plain value type, not a libc binding — the
+/// conversions ([`decompose_utc`]/[`compose_utc`]) are pure Rust.
 #[derive(Debug, Default, Clone)]
 pub struct TmFields {
     pub tm_sec: i32,
@@ -124,22 +131,54 @@ fn get_bool_field(state: &mut LuaState, key: &[u8]) -> Result<i32, LuaError> {
     Ok(res)
 }
 
-///
-/// Reads an integer field from the table on top of the stack.
+/// Reads an integer field from the date table on top of the stack.
 ///
 /// * `d` — default when the field is absent; pass `d < 0` to make absence an
-///   error.
+///   error ("missing in date table").
 /// * `delta` — subtracted from the read value to convert from Lua's offset
 ///   representation back to C-library conventions (e.g. month−1, year−1900).
 ///
-/// PORT NOTE: Stack cleanup on error paths (pop before returning Err) is added
-/// vs. the C version where `luaL_error` never returns (longjmp).
+/// The validation behaviour is version-gated, faithful to `loslib.c`'s
+/// `getfield` evolution and pinned per version by
+/// `os_strengthen.rs::time_non_integer_field_is_unchecked_pre_5_3_crossversion`
+/// and `…out_of_bound…`:
+///
+/// * **5.1 / 5.2** (legacy): the field is read with `lua_(is)number` semantics —
+///   any value coercible to a number (including numeric strings and fractional
+///   floats) is accepted and **truncated** toward zero; a non-numeric value is
+///   treated as absent, falling back to the default `d` or raising "missing"
+///   when `d < 0`. There is no "is not an integer" check and no out-of-bound
+///   check (`lua_tointeger` truncates silently).
+/// * **5.3+**: a present non-nil non-integer raises "is not an integer", and an
+///   in-range integer that overflows the C `int` field raises "is out-of-bound".
+///
+/// Stack cleanup on the error paths (pop before returning `Err`) is added vs.
+/// the C version, where `luaL_error` never returns (longjmp).
 fn get_field(state: &mut LuaState, key: &[u8], d: i32, delta: i32) -> Result<i32, LuaError> {
+    let legacy = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
     let ty = state.get_field(-1, key)?;
-    let maybe_int = state.to_integer_x(-1);
-    let res: i32 = match maybe_int {
+
+    if legacy {
+        let res = match state.to_number_x(-1) {
+            Some(n) => (n as i64).wrapping_sub(delta as i64) as i32,
+            None if d < 0 => {
+                state.pop_n(1);
+                return Err(LuaError::runtime(format_args!(
+                    "field '{}' missing in date table",
+                    ByteDisplay(key),
+                )));
+            }
+            None => d,
+        };
+        state.pop_n(1);
+        return Ok(res);
+    }
+
+    let res: i32 = match state.to_integer_x(-1) {
         Some(res) => {
-            //        return luaL_error(L, "field '%s' is out-of-bound", key);
             let in_bounds = if res >= 0 {
                 res.saturating_sub(delta as i64) <= (i32::MAX as i64)
             } else {
@@ -222,13 +261,11 @@ fn check_strftime_option<'a>(
     Err(LuaError::arg_error(1, "invalid conversion specifier"))
 }
 
-///
 /// Reads argument `arg` as a Lua integer and returns it as a Unix timestamp.
 ///
-/// PORT NOTE: On 64-bit targets `time_t == i64 == lua_Integer`, so the range
-/// check in the C original (`(time_t)t == t`) is always satisfied.
-/// TODO(port): On hypothetical 32-bit `time_t` platforms the check would need
-/// to narrow `t` to `i32` and verify no truncation; flag for Phase B.
+/// On the 64-bit targets we support, `time_t == i64 == lua_Integer`, so the C
+/// original's representability check (`(time_t)t == t`) is always satisfied and
+/// is omitted here (it would only matter on a hypothetical 32-bit `time_t`).
 fn check_time(state: &mut LuaState, arg: i32) -> Result<i64, LuaError> {
     let t = state.check_arg_integer(arg)?;
     Ok(t)
@@ -322,16 +359,16 @@ fn host_temp_name(state: &LuaState) -> Result<Vec<u8>, LuaError> {
     }
 }
 
-/// Decompose a Unix timestamp (UTC) into broken-down time fields.
+/// Decompose a Unix timestamp (UTC) into broken-down time fields — the pure-Rust
+/// replacement for C's `gmtime_r`.
 ///
-/// Uses Howard Hinnant's `civil_from_days` algorithm (public domain, see
+/// Load-bearing: uses Howard Hinnant's `civil_from_days` algorithm (public
+/// domain, see
 /// <http://howardhinnant.github.io/date_algorithms.html#civil_from_days>),
-/// which is exact for all `i64` inputs across the proleptic Gregorian calendar.
-///
-/// PORT NOTE: C uses `gmtime_r(&t, &tmr)`.  Pure-Rust replacement because the
-/// crate forbids `unsafe` (required for libc FFI).  `tm_isdst` is always 0 for
-/// UTC.  `tm_wday` is 0-based with Sunday = 0 (matches POSIX).  `tm_yday` is
-/// 0-based (matches POSIX; `set_all_fields` adds 1 for the Lua-visible table).
+/// exact for all `i64` inputs across the proleptic Gregorian calendar and pinned
+/// by `os_strengthen.rs` (the `!*t`/`!%…` UTC pins, including a negative epoch).
+/// Conventions: `tm_isdst` is 0 for UTC; `tm_wday` is 0-based with Sunday = 0
+/// (POSIX); `tm_yday` is 0-based (`set_all_fields` adds 1 for the Lua table).
 fn decompose_utc(t: i64) -> TmFields {
     let days = t.div_euclid(86_400);
     let sod = t.rem_euclid(86_400) as i32;
@@ -397,17 +434,19 @@ fn compose_utc(tm: &TmFields) -> i64 {
     days * 86_400 + (tm.tm_hour as i64) * 3600 + (tm.tm_min as i64) * 60 + (tm.tm_sec as i64)
 }
 
-/// Append the formatted result of a single `strftime` conversion specifier.
+/// Append the formatted result of a single `strftime` conversion specifier — the
+/// pure-Rust replacement for delegating to the platform `strftime`.
 ///
 /// `cc` holds the canonical specifier bytes filled in by `check_strftime_option`:
 /// `cc[0] == b'%'`, `cc[1]` is the leading specifier char, and for 2-char
 /// specifiers `cc[2]` is the second char (an E/O modifier comes first in C, e.g.
 /// `%Ex` → `cc = "%Ex\0"`).  `oplen` is 1 or 2.
 ///
-/// PORT NOTE: C delegates to the platform `strftime`.  Pure-Rust replacement for
-/// the same reason as `decompose_utc`.  The E/O modifiers are stripped (POSIX
-/// allows the implementation to ignore them and fall back to the unmodified
-/// form) — the test suite only requires that they not error.
+/// Load-bearing: the host-independent specifiers (numeric/ISO + C-locale English
+/// day/month names) are pinned byte-for-byte by `os_strengthen.rs`. The E/O
+/// modifiers are stripped (POSIX permits ignoring them and falling back to the
+/// unmodified form); locale/zone specifiers (`%z`/`%Z`/`%c`/`%x`/`%X`/`%r`/`%p`/
+/// `%P`) are host-dependent in the C reference and so are not pinned.
 fn strftime_one(buf: &mut Vec<u8>, cc: &[u8; 4], oplen: usize, tm: &TmFields) {
     use std::io::Write as _;
     let spec = if oplen == 2 { cc[2] } else { cc[1] };
@@ -790,15 +829,14 @@ fn cpu_seconds(state: &LuaState) -> Result<f64, LuaError> {
     }
 }
 
-///
 /// Formats the current (or a specified) date/time.
 ///
 /// * Format starting with `'!'` → use UTC; otherwise local time.
 /// * Format `"*t"` → push a table with broken-down time fields.
 /// * Other format → push a formatted string, expanding `%`-specifiers via
-///   the C-library `strftime`.
+///   [`strftime_one`]. Specifier validation is version-gated (5.1 does not
+///   validate; 5.2+ raise "invalid conversion specifier").
 pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
-    // Clone to Vec<u8> so that `s` does not borrow from `state`.
     let format: Vec<u8> = state.opt_arg_lstring(1, Some(b"%c"))?.unwrap_or_default();
     let s: &[u8] = &format[..];
 
@@ -808,30 +846,33 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
         check_time(state, 2)?
     };
 
-    let (_use_utc, s): (bool, &[u8]) = if s.first() == Some(&b'!') {
+    let (use_utc, s): (bool, &[u8]) = if s.first() == Some(&b'!') {
         (true, &s[1..])
     } else {
         (false, s)
     };
 
-    // PORT NOTE: C distinguishes UTC (`gmtime_r`) from local time (`localtime_r`).
-    // The Rust port reproduces `localtime_r` by decomposing `t + offset`, where
-    // `offset` is the host timezone offset at `t` supplied by the
-    // `local_offset_hook` (lua-cli installs one via `localtime_r`; reading the
-    // timezone database needs `libc` FFI, banned in `lua-stdlib`). Without a hook
-    // the offset is 0 and local time degrades to UTC, keeping the
-    // `os.date`/`os.time` round-trip exact under bare WASM. `'!'`-prefixed formats
-    // request UTC explicitly and skip the offset.
-    let offset = if _use_utc { 0 } else { local_offset(state, t) };
+    // Local time is reproduced by decomposing `t + offset`, where `offset` is the
+    // host timezone offset at `t` from `local_offset_hook` (the host that needs
+    // local time installs one; reading the zone database itself needs libc FFI,
+    // banned here). Without a hook the offset is 0 and local time degrades to UTC,
+    // keeping the `os.date`/`os.time` round-trip exact (pinned by
+    // `os_strengthen.rs::time_local_round_trip_is_host_independent`). A `'!'`
+    // prefix requests UTC explicitly and skips the offset.
+    let offset = if use_utc { 0 } else { local_offset(state, t) };
     let stm = decompose_utc(t + offset);
-
-    //      return luaL_error(L, "date result cannot be represented in this installation");
-    // (Phase A stub is always valid — no null check needed.)
 
     if s == b"*t" {
         state.create_table(0, 9)?;
         set_all_fields(state, &stm)?;
     } else {
+        // 5.1's `os_date` has no `checkoption`: a `%X` directive is built into a
+        // 3-byte `cc` and handed straight to `strftime` (unknown directives are
+        // implementation-defined, never a Lua error), and a trailing bare `%` is
+        // emitted literally. 5.2+ validate the directive against a fixed option
+        // set and raise "invalid conversion specifier". Pinned by
+        // `os_strengthen.rs::date_invalid_specifier_is_unvalidated_on_5_1_crossversion`.
+        let validate = !matches!(state.global().lua_version, lua_types::LuaVersion::V51);
         let mut result: Vec<u8> = Vec::new();
         let mut pos: usize = 0;
 
@@ -839,6 +880,17 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
             if s[pos] != b'%' {
                 result.push(s[pos]);
                 pos += 1;
+            } else if !validate {
+                if pos + 1 >= s.len() {
+                    result.push(b'%');
+                    pos += 1;
+                } else {
+                    let mut cc = [0u8; 4];
+                    cc[0] = b'%';
+                    cc[1] = s[pos + 1];
+                    strftime_one(&mut result, &cc, 1, &stm);
+                    pos += 2;
+                }
             } else {
                 pos += 1;
                 let mut cc = [0u8; 4];
@@ -851,9 +903,6 @@ pub(crate) fn os_date(state: &mut LuaState) -> Result<usize, LuaError> {
                 let after = check_strftime_option(state, conv, &mut cc)?;
                 let oplen = conv.len() - after.len();
                 pos += oplen;
-                // The `%%` specifier is data-independent: strftime emits a literal
-                // `%` byte regardless of the broken-down time, so it is correct to
-                // handle here even while the rest of strftime is stubbed.
                 strftime_one(&mut result, &cc, oplen, &stm);
                 let _ = SIZE_TIME_FMT;
             }
@@ -880,12 +929,34 @@ pub(crate) fn os_time(state: &mut LuaState) -> Result<usize, LuaError> {
         // sets an absolute stack index and would truncate the entire stack.
         lua_vm::api::set_top(state, 1)?;
 
-        let tm_year = get_field(state, b"year", -1, 1900)?;
-        let tm_mon = get_field(state, b"month", -1, 1)?;
-        let tm_mday = get_field(state, b"day", -1, 0)?;
-        let tm_hour = get_field(state, b"hour", 12, 0)?;
-        let tm_min = get_field(state, b"min", 0, 0)?;
-        let tm_sec = get_field(state, b"sec", 0, 0)?;
+        // The field-read ORDER is version-gated, faithful to `loslib.c`'s
+        // `os_time` evolution and pinned by
+        // `os_strengthen.rs::time_missing_field_names_first_unread_required_field_crossversion`.
+        // Field *values* are order-independent; the order matters only because a
+        // "field '…' missing in date table" error short-circuits on the FIRST
+        // absent required field. 5.1/5.2/5.3 read sec→min→hour→day→month→year,
+        // so an empty table reports `day` first; 5.4/5.5 read
+        // year→month→day→hour→min→sec, reporting `year` first.
+        let (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec) = if matches!(
+            state.global().lua_version,
+            lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+        ) {
+            let tm_sec = get_field(state, b"sec", 0, 0)?;
+            let tm_min = get_field(state, b"min", 0, 0)?;
+            let tm_hour = get_field(state, b"hour", 12, 0)?;
+            let tm_mday = get_field(state, b"day", -1, 0)?;
+            let tm_mon = get_field(state, b"month", -1, 1)?;
+            let tm_year = get_field(state, b"year", -1, 1900)?;
+            (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec)
+        } else {
+            let tm_year = get_field(state, b"year", -1, 1900)?;
+            let tm_mon = get_field(state, b"month", -1, 1)?;
+            let tm_mday = get_field(state, b"day", -1, 0)?;
+            let tm_hour = get_field(state, b"hour", 12, 0)?;
+            let tm_min = get_field(state, b"min", 0, 0)?;
+            let tm_sec = get_field(state, b"sec", 0, 0)?;
+            (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec)
+        };
         let tm_isdst = get_bool_field(state, b"isdst")?;
 
         let raw = TmFields {
@@ -1012,13 +1083,9 @@ pub(crate) fn os_exit(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ── Registration table and entry point ───────────────────────────────────────
 
-/// Type alias for a Lua native function implementation in Rust.
-///
-/// TODO(port): align with the canonical `lua_CFunction` / `NativeFn` type defined
-/// in `lua-types` once that crate stabilises.
+/// Signature of a Lua native function (the `os.*` registration entries).
 pub type NativeFn = fn(&mut LuaState) -> Result<usize, LuaError>;
 
-///
 /// Mapping from Lua-visible names to the Rust implementations of each `os.*`
 /// function.
 pub const OS_LIB: &[(&[u8], NativeFn)] = &[
@@ -1035,12 +1102,8 @@ pub const OS_LIB: &[(&[u8], NativeFn)] = &[
     (b"tmpname", os_tmpname),
 ];
 
-///
 /// Opens the `os` library: creates a new table populated with `OS_LIB` and
 /// leaves it on the stack.
-///
-/// PORT NOTE: `register_lib` is the Rust equivalent of `luaL_newlib`; it creates
-/// a fresh table, fills it from the `(name, fn)` pair slice, and pushes it.
 pub fn open_os(state: &mut LuaState) -> Result<usize, LuaError> {
     state.register_lib(b"os", OS_LIB)?;
     Ok(1)
@@ -1048,19 +1111,24 @@ pub fn open_os(state: &mut LuaState) -> Result<usize, LuaError> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:        src/loslib.c  (430 lines, 12 functions)
+//   source:        src/loslib.c
 //   target_crate:  lua-stdlib
-//   confidence:    medium
-//   todos:         18
-//   port_notes:    4
-//   unsafe_blocks: 0
-//   notes:         Logic structure faithful. File/process/env/temp/time
-//                  operations route through host hooks where they need OS
-//                  capabilities for sandboxed and bare-WASM hosts.
-//                  Time formatting (os.date, os.time) needs libc or chrono in
-//                  Phase B.  os.clock routes through cpu_clock_hook with a
-//                  monotonic-wall fallback (no std CPU-time source).
-//                  os.exit needs a LuaError::Exit(i32)
-//                  variant.  check_strftime_option logic is fully translated.
-//                  os_getenv uses OsStr::from_bytes on Unix (no from_utf8).
+//   confidence:    high
+//   todos:         0 stale scaffolding (the Phase-A "needs libc/chrono in
+//                  Phase B" notes were false — date/time is complete pure Rust)
+//   port_notes:    the genuine per-version-behavior and correctness reasons are
+//                  kept in-place (version gates in get_field/os_time/os_date,
+//                  the Hinnant algorithm notes, the local-offset hook mechanism,
+//                  the time_t==i64 representability no-op)
+//   unsafe_blocks: 0  (no libc/strftime bridge — gmtime_r/mktime/strftime are
+//                  replaced by pure-Rust Hinnant algorithms + strftime_one)
+//   notes:         Idiomatization Sprint 2 / Phase 2 (cold module, no perf
+//                  arbiter). The deterministic date/time surface is pinned by
+//                  tests/os_strengthen.rs, which caught four version
+//                  divergences (5.1/5.2 field validation, 5.1/5.2/5.3 missing-
+//                  field order, 5.1 specifier validation) fixed here. The impure
+//                  surface (getenv/tmpname/remove/rename/execute/exit, os.clock,
+//                  os.time's absolute value, locale/zone specifiers) routes
+//                  through host hooks; only its arg-handling/error-shape is
+//                  pinned, never its effects. See GRADUATED.md "os".
 // ──────────────────────────────────────────────────────────────────────────

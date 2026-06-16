@@ -34,95 +34,39 @@
   </header>
 
   <main class="frame" id="top">
-    <section class="hero">
-      <h1 class="rise">Every Lua,<br><em>everywhere.</em></h1>
-      <p class="sub rise d1">One pure-Rust runtime for Lua <b>5.1, 5.2, 5.3, 5.4, and 5.5</b> — as a standalone interpreter, embedded in Rust, or in the browser. No C dependency, no unsafe FFI.</p>
-      <div class="hero-cta rise d2">
-        <a class="btn" href="#playground">Run it in your browser ▸</a>
-        <span class="cmd"><span class="pr">$</span> cargo install omnilua-cli</span>
+    <section class="hero hero-split">
+      <div class="hero-pitch">
+        <h1 class="rise">Every Lua,<br><em>everywhere.</em></h1>
+        <p class="sub rise d1">Pure-Rust Lua <b>5.1–5.5</b> — CLI, embeddable crate, or wasm. No C, no FFI.</p>
+        <div class="hero-cta rise d2">
+          <span class="cmd"><span class="pr">$</span> cargo install omnilua-cli</span>
+        </div>
+        <div class="proof rise d3">
+          <span>Passes the <b>PUC-Rio</b> suites</span>
+          <span>Runs <b>LuaRocks</b></span>
+          <span>Compiles to <b>wasm</b></span>
+          <span><b>Zero</b> unsafe outside the GC</span>
+        </div>
       </div>
-      <div class="proof rise d3">
-        <span>Passes the official <b>PUC-Rio</b> suites</span>
-        <span>Runs stock <b>LuaRocks</b> 3.11.1</span>
-        <span>Compiles to <b>wasm32</b></span>
-        <span>unsafe budget <b>zero</b> outside the GC</span>
+
+      <div class="hero-demo rise d2">
+        <div class="editor-shell">
+          <div class="editor-head">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span>snippet.lua</span>
+            <span class="grow"></span>
+            <span class="hint" id="run-hint">⌘ / Ctrl + Enter</span>
+            <button id="run" class="btn run-btn" type="button">Run ▸</button>
+          </div>
+          <div class="editor-area">
+            <pre class="editor-hl" id="code-hl" aria-hidden="true"></pre>
+            <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section id="capabilities">
-      <div class="sec-head">
-        <span class="sec-num">§&nbsp;01</span>
-        <h2>Capabilities</h2>
-        <span class="sec-rule"></span>
-      </div>
-
-      <p class="lead">One core compiled five ways. The same API and the same binary run every Lua version, selected per instance — the bytecode dispatch loop carries no per-version cost, so compute-bound code runs identically and version differences live only in cold-path seams. It builds natively and to <code>wasm32-unknown-unknown</code> from the same source.</p>
-
-      <div class="modes">
-        <div class="mode">
-          <div class="m-idx">i.</div>
-          <h3>Standalone</h3>
-          <div class="m-sub">the omnilua interpreter</div>
-          <p>A drop-in <code>lua</code> replacement. Run files, one-liners, or the REPL. Pick a version with <code>OMNILUA_VERSION=5.1…5.5</code>.</p>
-          <div class="m-cmd"><span class="pr">$</span> omnilua script.lua</div>
-        </div>
-        <div class="mode">
-          <div class="m-idx">ii.</div>
-          <h3>Embedded</h3>
-          <div class="m-sub">the omnilua crate</div>
-          <p>An embedding API shaped after <code>mlua</code> — pure Rust, no <code>liblua</code>, no C toolchain. Lend non-<code>'static</code> state with <code>scope</code>; cap untrusted scripts with the sandbox.</p>
-          <div class="m-cmd"><span class="pr">#</span> omnilua = "0.2"</div>
-        </div>
-        <div class="mode">
-          <div class="m-idx">iii.</div>
-          <h3>Browser</h3>
-          <div class="m-sub">npm · wasm</div>
-          <p>The whole runtime as one <code>.wasm</code> module — Lua in the page, no Emscripten, no bundled C interpreter.</p>
-          <div class="m-cmd"><span class="pr">$</span> npm install omnilua</div>
-        </div>
-        <div class="mode">
-          <div class="m-idx">iv.</div>
-          <h3>Node</h3>
-          <div class="m-sub">same package, server-side</div>
-          <p>Run Lua in Node from the same <code>.wasm</code> — <strong>no node-gyp, no native addon, no per-platform rebuild</strong>. Wherever JavaScript runs, this does too.</p>
-          <div class="m-cmd">import "omnilua/node"</div>
-        </div>
-      </div>
-
-      <div class="aside">
-        <p>If your Rust program — or your game — ships a wasm build, a C-backed Lua binding <b>can't follow it</b>. omniLua is pure Rust: the same scripting runtime compiles to <code>wasm32-unknown-unknown</code> with no Emscripten and no toolchain gymnastics. That is the thing a C binding cannot do.
-        <span class="src">— a Bevy demo drives an entity each frame from a Lua script and compiles to wasm32, in the <a href="https://github.com/ianm199/omnilua">project repository</a>.</span></p>
-      </div>
-
-      <div class="features">
-        <div class="feat"><b>Conformance you can check</b><span>5.4 passes the full upstream PUC-Rio suite; <code>./harness/run_official_all.sh</code> reports the live count against the unmodified tests.</span></div>
-        <div class="feat"><b>Sandboxing</b><span>Untrusted scripts get uncatchable CPU and memory caps with host access stripped — <code>Lua::sandboxed(SandboxConfig::strict())</code>, refillable per run.</span></div>
-        <div class="feat"><b>Scoped borrows</b><span><code>Lua::scope</code> lends a non-<code>'static</code> borrow (a game engine's <code>&mut World</code>) for one call; an escaped handle errors cleanly instead of dangling.</span></div>
-        <div class="feat"><b>LuaRocks</b><span>Runs the stock LuaRocks 3.11.1 client and installs pure-Lua rocks — <code>inspect</code>, <code>dkjson</code>, <code>argparse</code>, <code>middleclass</code>, <code>say</code>, <code>luassert</code>.</span></div>
-        <div class="feat"><b>Memory safety, measured</b><span>The unsafe budget stays at zero outside the GC, the dynamic-library loader, and the wasm pointer ABI — and the safety tax is measured, not assumed.</span></div>
-        <div class="feat"><b>One core, five versions</b><span>Float-only 5.1/5.2 (fenv and <code>_ENV</code> globals) through integer-aware 5.3/5.4/5.5 — selected at runtime, sharing one dispatch loop.</span></div>
-      </div>
-
-      <table class="spec">
-        <caption>Supported versions — verified against the reference, per version</caption>
-        <thead><tr><th>Version</th><th>Status</th><th>Verified against</th></tr></thead>
-        <tbody>
-          <tr><td>5.4</td><td><span class="pill stable">stable · production</span></td><td>Full upstream PUC-Rio suite</td></tr>
-          <tr><td>5.3 / 5.5</td><td><span class="pill beta">beta · long tails closed</span></td><td>Their own upstream test trees + reference binary</td></tr>
-          <tr><td>5.1 / 5.2</td><td><span class="pill beta">supported</span></td><td>Behavioral battery + upstream example programs</td></tr>
-        </tbody>
-      </table>
-      <p class="methodology">This is Lua source/runtime compatibility, not C&nbsp;API/ABI compatibility. 5.1/5.2 are float-only number families; <code>math.random</code> sequences differ from C (host PRNG). Native C rocks are not supported in LuaRocks yet — pure-Lua rocks are.</p>
-    </section>
-
-    <section id="playground">
-      <div class="sec-head">
-        <span class="sec-num">§&nbsp;02</span>
-        <h2>Playground</h2>
-        <span class="sec-rule"></span>
-      </div>
-      <p class="sec-intro">One chunk, five Luas. Edit the snippet and run it on every version at once — the same output diverges by version, live, in your browser. The shipped <code>.wasm</code> carries all five backends in one module.</p>
-
+    <section class="demo-output" id="playground" aria-label="Live output across versions">
       <div class="pg-bar">
         <div class="seg" role="tablist" aria-label="Run mode">
           <button id="mode-all" class="active" type="button">All versions</button>
@@ -139,20 +83,8 @@
           </select>
         </div>
         <div class="grow"></div>
+        <span class="out-note">one snippet · five Luas · the output diverges by version</span>
         <button id="share" class="btn ghost" type="button" title="Copy a permalink to this snippet">Share link</button>
-        <button id="run" class="btn" type="button">Run ▸</button>
-      </div>
-
-      <div class="editor-shell">
-        <div class="editor-head">
-          <span class="dots"><i></i><i></i><i></i></span>
-          <span>snippet.lua</span>
-          <span class="hint" id="run-hint">⌘ / Ctrl + Enter</span>
-        </div>
-        <div class="editor-area">
-          <pre class="editor-hl" id="code-hl" aria-hidden="true"></pre>
-          <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
-        </div>
       </div>
 
       <div id="cols" class="columns"></div>
@@ -162,24 +94,91 @@
           <span class="v" id="single-ver-label">Lua 5.4</span>
           <span class="tag live" id="single-tag">live</span>
         </div>
-        <pre id="single-pre"><span class="placeholder">Output appears here. Press Run, or ⌘/Ctrl + Enter.</span></pre>
+        <pre id="single-pre"><span class="placeholder">Press Run, or ⌘/Ctrl + Enter.</span></pre>
       </div>
 
       <p class="pg-foot">
-        <span><b>live</b> — your edited code, executed on that version's backend</span>
-        <span><b>ref</b> — verified reference output, shown only until the runtime finishes loading</span>
+        <span><b>live</b> — your code on each version's backend</span>
+        <span><b>ref</b> — reference output, shown until the runtime loads</span>
       </p>
 
       <div id="gallery" class="gallery"></div>
     </section>
 
+    <section id="capabilities">
+      <div class="sec-head">
+        <span class="sec-num">§&nbsp;01</span>
+        <h2>Capabilities</h2>
+        <span class="sec-rule"></span>
+      </div>
+
+      <p class="lead">One runtime, five Lua versions, chosen at startup. Same speed on every version. Builds native and to <code>wasm32</code> from the same source.</p>
+
+      <div class="modes">
+        <div class="mode">
+          <div class="m-idx">i.</div>
+          <h3>Standalone</h3>
+          <div class="m-sub">the omnilua interpreter</div>
+          <p>Drop-in <code>lua</code>: files, one-liners, REPL. Pick a version with <code>OMNILUA_VERSION</code>.</p>
+          <div class="m-cmd"><span class="pr">$</span> omnilua script.lua</div>
+        </div>
+        <div class="mode">
+          <div class="m-idx">ii.</div>
+          <h3>Embedded</h3>
+          <div class="m-sub">the omnilua crate</div>
+          <p>An <code>mlua</code>-shaped API, pure Rust — no <code>liblua</code>, no C toolchain. Borrow host state with <code>scope</code>; sandbox untrusted scripts.</p>
+          <div class="m-cmd"><span class="pr">#</span> omnilua = "0.2"</div>
+        </div>
+        <div class="mode">
+          <div class="m-idx">iii.</div>
+          <h3>Browser</h3>
+          <div class="m-sub">npm · wasm</div>
+          <p>The whole runtime as one <code>.wasm</code> module — Lua in the page, no Emscripten, no bundled C interpreter.</p>
+          <div class="m-cmd"><span class="pr">$</span> npm install omnilua</div>
+        </div>
+        <div class="mode">
+          <div class="m-idx">iv.</div>
+          <h3>Node</h3>
+          <div class="m-sub">same package, server-side</div>
+          <p>The same <code>.wasm</code>, server-side — <strong>no node-gyp, no native build, no per-platform rebuild</strong>. Anywhere JS runs, this runs.</p>
+          <div class="m-cmd">import "omnilua/node"</div>
+        </div>
+      </div>
+
+      <div class="aside">
+        <p>Pure Rust, so it compiles to wasm. Ship a game or app to the browser and the scripting layer comes with it — a C-backed Lua binding <b>can't</b>.
+        <span class="src">— a Bevy demo drives an entity from Lua each frame and builds to wasm32, in the <a href="https://github.com/ianm199/omnilua">repository</a>.</span></p>
+      </div>
+
+      <div class="features">
+        <div class="feat"><b>Conformance you can check</b><span>5.4 passes the full upstream PUC-Rio suite; <code>./harness/run_official_all.sh</code> reports the live count against the unmodified tests.</span></div>
+        <div class="feat"><b>Sandboxing</b><span>Untrusted scripts get uncatchable CPU and memory caps with host access stripped — <code>Lua::sandboxed(SandboxConfig::strict())</code>, refillable per run.</span></div>
+        <div class="feat"><b>Scoped borrows</b><span><code>Lua::scope</code> lends a non-<code>'static</code> borrow (a game engine's <code>&mut World</code>) for one call; an escaped handle errors cleanly instead of dangling.</span></div>
+        <div class="feat"><b>LuaRocks</b><span>Runs the stock LuaRocks 3.11.1 client and installs pure-Lua rocks — <code>inspect</code>, <code>dkjson</code>, <code>argparse</code>, <code>middleclass</code>, <code>say</code>, <code>luassert</code>.</span></div>
+        <div class="feat"><b>Memory safety, measured</b><span>Zero <code>unsafe</code> outside the GC, the dylib loader, and the wasm ABI. The safety tax is measured at ~0%, not assumed.</span></div>
+        <div class="feat"><b>One core, five versions</b><span>Float-only 5.1/5.2 through integer-aware 5.3/5.4/5.5 — one dispatch loop, chosen at runtime.</span></div>
+      </div>
+
+      <table class="spec">
+        <caption>Supported versions — verified against the reference, per version</caption>
+        <thead><tr><th>Version</th><th>Status</th><th>Verified against</th></tr></thead>
+        <tbody>
+          <tr><td>5.4</td><td><span class="pill stable">stable · production</span></td><td>Full upstream PUC-Rio suite</td></tr>
+          <tr><td>5.3 / 5.5</td><td><span class="pill beta">beta · long tails closed</span></td><td>Their own upstream test trees + reference binary</td></tr>
+          <tr><td>5.1 / 5.2</td><td><span class="pill beta">supported</span></td><td>Behavioral battery + upstream example programs</td></tr>
+        </tbody>
+      </table>
+      <p class="methodology">This is Lua source/runtime compatibility, not C&nbsp;API/ABI compatibility. 5.1/5.2 are float-only number families; <code>math.random</code> sequences differ from C (host PRNG). Native C rocks are not supported in LuaRocks yet — pure-Lua rocks are.</p>
+    </section>
+
+
     <section id="performance">
       <div class="sec-head">
-        <span class="sec-num">§&nbsp;03</span>
+        <span class="sec-num">§&nbsp;02</span>
         <h2>Performance</h2>
         <span class="sec-rule"></span>
       </div>
-      <p class="sec-intro">Competitive with reference C, not faster than it, and not LuaJIT. The numbers are tracked per-commit and the cost of memory safety is measured, not hand-waved.</p>
+      <p class="sec-intro">Competitive with reference C, not faster, not LuaJIT. Numbers tracked per-commit; the cost of safety is measured.</p>
 
       <div class="stats">
         <div class="stat"><div class="s-num">1.37<span class="x">×</span></div><div class="s-lbl">wall-time geomean<br>vs reference C (stock)</div></div>
@@ -188,7 +187,7 @@
         <div class="stat"><div class="s-num">1.72<span class="x">×</span></div><div class="s-lbl">peak memory geomean<br>vs reference C</div></div>
       </div>
 
-      <p class="lead" style="margin-top:40px">The residual gap to C is <em style="font-style:italic;color:var(--accent)">representation, not safety</em> — value layout and dispatch, both recoverable. Bounds checks and <code>RefCell</code> guards ablate to roughly zero wall time. Three workloads already beat the reference binary outright.</p>
+      <p class="lead" style="margin-top:40px">The gap to C is <em style="font-style:italic;color:var(--accent)">representation, not safety</em>. Bounds checks and <code>RefCell</code> guards cost ~0% of wall time; three workloads already beat C outright.</p>
       <div class="hero-cta">
         <a class="btn" href="./performance.html">Full benchmarks &amp; methodology ▸</a>
         <a class="btn ghost" href="./harness/bench/history/">Live per-commit dashboard ↗</a>
@@ -197,7 +196,7 @@
 
     <section id="install">
       <div class="sec-head">
-        <span class="sec-num">§&nbsp;04</span>
+        <span class="sec-num">§&nbsp;03</span>
         <h2>Get omniLua</h2>
         <span class="sec-rule"></span>
       </div>
@@ -240,7 +239,7 @@ lua.load(<span style="color:var(--good)">r#"print(greet("omniLua"))"#</span>).ex
         <a href="https://docs.rs/omnilua">docs.rs ↗</a>
         <a href="./performance.html">Performance</a>
       </div>
-      <p class="honesty">≈1.37× geomean of reference-C wall time across the tracked workloads (≈1.3× with PGO) — competitive, not faster, and not LuaJIT. If you need LuaJIT speed or a decades-mature binding, use <a href="https://github.com/mlua-rs/mlua">mlua</a>. The 5.4 backend is production-ready; the other versions are the newer surfaces.</p>
+      <p class="honesty">≈1.37× of reference-C wall time (≈1.3× with PGO). Not LuaJIT — if you need that speed or a mature binding, use <a href="https://github.com/mlua-rs/mlua">mlua</a>. 5.4 is production-ready; the rest are newer.</p>
       <p class="colophon">omniLua is a port of <a href="https://www.lua.org/">Lua</a>, created by Roberto Ierusalimschy, Luiz Henrique de Figueiredo, and Waldemar Celes at PUC-Rio. Lua and this port are both distributed under the MIT license. <em>Set in Fraunces, Spectral &amp; IBM&nbsp;Plex&nbsp;Mono.</em></p>
     </div>
   </footer>
@@ -599,7 +598,6 @@ end`,
           singlePre.textContent = isHero ? HERO_REF[v] : "loading runtime…";
         }
       }
-      writePermalink();
       if (ready) signalRan(performance.now() - t0);
     }
 
@@ -631,10 +629,15 @@ end`,
       });
     }
 
-    modeAll.addEventListener("click", () => { setMode("all"); run(); });
-    modeOne.addEventListener("click", () => { setMode("one"); run(); });
-    verSel.addEventListener("change", run);
-    runBtn.addEventListener("click", run);
+    /* The URL fragment is written only on an explicit run or share — never on
+       load, view toggles, or loading an example. Once a permalink exists, view
+       changes keep it fresh rather than creating one. */
+    function syncPermalink() { if (location.hash.length > 1) writePermalink(); }
+
+    modeAll.addEventListener("click", () => { setMode("all"); run(); syncPermalink(); });
+    modeOne.addEventListener("click", () => { setMode("one"); run(); syncPermalink(); });
+    verSel.addEventListener("change", () => { run(); syncPermalink(); });
+    runBtn.addEventListener("click", () => { run(); writePermalink(); });
     shareBtn.addEventListener("click", () => {
       const url = writePermalink();
       navigator.clipboard.writeText(url).then(
@@ -646,6 +649,7 @@ end`,
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         run();
+        writePermalink();
       }
     });
     codeEl.addEventListener("input", paintHighlight);

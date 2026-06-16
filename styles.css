@@ -94,6 +94,26 @@ section:first-of-type { border-top: 0; }
 .proof span::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 .proof b { color: var(--ink); font-weight: 600; }
 
+/* split hero: pitch left, live editor right (the "try it now" panel) */
+.hero-split { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.12fr); gap: 46px; align-items: center; padding: 52px 0 30px; }
+.hero-split .hero-pitch h1 { font-size: clamp(40px, 5.6vw, 66px); }
+.hero-split .sub { max-width: 460px; font-size: clamp(17px, 1.9vw, 20px); margin-top: 18px; }
+.hero-split .hero-cta { margin-top: 24px; }
+.hero-split .proof { margin-top: 26px; gap: 7px 18px; }
+.hero-demo { min-width: 0; }
+@media (max-width: 880px) { .hero-split { grid-template-columns: 1fr; gap: 26px; padding: 38px 0 18px; } .hero-split .sub { max-width: none; } }
+
+/* Run button lives in the editor header */
+.editor-head { justify-content: flex-start; gap: 9px; }
+.editor-head .grow { flex: 1 1 auto; }
+.editor-head .run-btn { background-image: none; padding: 5px 16px; font-family: var(--mono); font-size: 12.5px; font-weight: 500; flex: 0 0 auto; }
+
+/* full-width live-output band, directly under the hero */
+.demo-output { padding: 2px 0 44px; border-top: 0; }
+.demo-output .columns { margin-top: 4px; }
+.out-note { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+@media (max-width: 760px) { .out-note { display: none; } }
+
 /* ── buttons / code inset ─────────────────────────────────────────────── */
 .btn { font-family: var(--mono); font-size: 14px; font-weight: 500; padding: 11px 20px; border-radius: 2px; border: 1px solid var(--ink); background: var(--ink); color: var(--paper); cursor: pointer; transition: background 0.14s, color 0.14s, transform 0.1s; background-image: none; }
 .btn:hover { background: var(--accent); border-color: var(--accent); color: var(--paper); transform: translateY(-1px); }

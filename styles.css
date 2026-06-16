@@ -109,10 +109,28 @@ section:first-of-type { border-top: 0; }
 .editor-head .run-btn { background-image: none; padding: 5px 16px; font-family: var(--mono); font-size: 12.5px; font-weight: 500; flex: 0 0 auto; }
 
 /* full-width live-output band, directly under the hero */
-.demo-output { padding: 2px 0 44px; border-top: 0; }
-.demo-output .columns { margin-top: 4px; }
-.out-note { font-family: var(--mono); font-size: 12px; color: var(--faint); }
-@media (max-width: 760px) { .out-note { display: none; } }
+/* hero "use it four ways" tabbed code panel */
+.code-tabs { border: 1px solid var(--rule-strong); border-radius: 4px; overflow: hidden; background: var(--code-bg); box-shadow: 0 2px 0 var(--shadow); }
+.ct-tabs { display: flex; background: var(--paper-3); border-bottom: 1px solid var(--rule); }
+.ct-tab { flex: 1 1 auto; border: 0; background: transparent; color: var(--muted); font-family: var(--mono); font-size: 12.5px; padding: 10px 8px; cursor: pointer; background-image: none; border-bottom: 2px solid transparent; transition: color 0.12s, background 0.12s; }
+.ct-tab + .ct-tab { border-left: 1px solid var(--rule); }
+.ct-tab:hover { color: var(--ink); }
+.ct-tab.active { color: var(--ink); background: var(--paper-2); border-bottom-color: var(--accent); font-weight: 500; }
+.ct-code { margin: 0; padding: 18px 18px 16px; font-family: var(--mono); font-size: 13px; line-height: 1.62; color: var(--ink-soft); white-space: pre; overflow-x: auto; min-height: 132px; }
+.ct-code[hidden] { display: none; }
+.ct-code .kw { color: #9a3a1c; }
+.ct-code .str { color: #3c6f4a; }
+.ct-code .pr { color: var(--accent); user-select: none; }
+.ct-code .cm { color: var(--faint); }
+.ct-result { border-top: 1px solid var(--rule); padding: 11px 18px; font-family: var(--mono); font-size: 13px; color: var(--ink); background: var(--paper-2); }
+.ct-result .ct-arrow { color: var(--good); }
+
+/* full-width "Try it" playground band, below the hero */
+.demo-output { padding: 46px 0 52px; border-top: 1px solid var(--rule); }
+.pg-head { margin: 0 0 18px; }
+.pg-head .pg-title { font-family: var(--serif-display); font-weight: 600; font-size: clamp(24px, 3vw, 30px); letter-spacing: -0.01em; margin: 0; }
+.pg-head .pg-sub { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.demo-output .columns { margin-top: 16px; }
 
 /* ── buttons / code inset ─────────────────────────────────────────────── */
 .btn { font-family: var(--mono); font-size: 14px; font-weight: 500; padding: 11px 20px; border-radius: 2px; border: 1px solid var(--ink); background: var(--ink); color: var(--paper); cursor: pointer; transition: background 0.14s, color 0.14s, transform 0.1s; background-image: none; }

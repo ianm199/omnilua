@@ -37,7 +37,7 @@
     <section class="hero hero-split">
       <div class="hero-pitch">
         <h1 class="rise">Every Lua,<br><em>everywhere.</em></h1>
-        <p class="sub rise d1">Pure-Rust Lua <b>5.1–5.5</b> — CLI, embeddable crate, or wasm. No C, no FFI.</p>
+        <p class="sub rise d1">Pure-Rust Lua <b>5.1–5.5</b> — from the CLI, embedded in Rust, in the browser, or in Node. No C, no FFI.</p>
         <div class="hero-cta rise d2">
           <span class="cmd"><span class="pr">$</span> cargo install omnilua-cli</span>
         </div>
@@ -50,23 +50,51 @@
       </div>
 
       <div class="hero-demo rise d2">
-        <div class="editor-shell">
-          <div class="editor-head">
-            <span class="dots"><i></i><i></i><i></i></span>
-            <span>snippet.lua</span>
-            <span class="grow"></span>
-            <span class="hint" id="run-hint">⌘ / Ctrl + Enter</span>
-            <button id="run" class="btn run-btn" type="button">Run ▸</button>
+        <div class="code-tabs">
+          <div class="ct-tabs" role="tablist" aria-label="Use omniLua from">
+            <button class="ct-tab active" data-mode="cli" type="button">CLI</button>
+            <button class="ct-tab" data-mode="rust" type="button">Rust</button>
+            <button class="ct-tab" data-mode="browser" type="button">Browser</button>
+            <button class="ct-tab" data-mode="node" type="button">Node</button>
           </div>
-          <div class="editor-area">
-            <pre class="editor-hl" id="code-hl" aria-hidden="true"></pre>
-            <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
-          </div>
+          <pre class="ct-code" data-mode="cli"><span class="pr">$</span> omnilua -e <span class="str">'print(6 * 7)'</span></pre>
+          <pre class="ct-code" data-mode="rust" hidden><span class="kw">use</span> omnilua::Lua;
+
+<span class="kw">let</span> lua = Lua::new();
+lua.load(<span class="str">"print(6 * 7)"</span>).exec()?;</pre>
+          <pre class="ct-code" data-mode="browser" hidden><span class="kw">import</span> { loadLuaRs, luaRsWasmUrl } <span class="kw">from</span> <span class="str">"omnilua"</span>;
+
+<span class="kw">const</span> { lua } = <span class="kw">await</span> loadLuaRs(luaRsWasmUrl);
+lua.exec(<span class="str">"print(6 * 7)"</span>);</pre>
+          <pre class="ct-code" data-mode="node" hidden><span class="kw">import</span> { loadLuaRsNode } <span class="kw">from</span> <span class="str">"omnilua/node"</span>;
+
+<span class="kw">const</span> { lua } = <span class="kw">await</span> loadLuaRsNode();
+lua.exec(<span class="str">"print(6 * 7)"</span>);</pre>
+          <div class="ct-result"><span class="ct-arrow">→</span>&nbsp; 42</div>
         </div>
       </div>
     </section>
 
-    <section class="demo-output" id="playground" aria-label="Live output across versions">
+    <section class="demo-output" id="playground" aria-label="Live Lua playground">
+      <div class="pg-head">
+        <h2 class="pg-title">Try it — one snippet, five Luas</h2>
+        <span class="pg-sub">edit the code and run it live on every version; the output diverges</span>
+      </div>
+
+      <div class="editor-shell">
+        <div class="editor-head">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span>snippet.lua</span>
+          <span class="grow"></span>
+          <span class="hint" id="run-hint">⌘ / Ctrl + Enter</span>
+          <button id="run" class="btn run-btn" type="button">Run ▸</button>
+        </div>
+        <div class="editor-area">
+          <pre class="editor-hl" id="code-hl" aria-hidden="true"></pre>
+          <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
+        </div>
+      </div>
+
       <div class="pg-bar">
         <div class="seg" role="tablist" aria-label="Run mode">
           <button id="mode-all" class="active" type="button">All versions</button>
@@ -83,7 +111,6 @@
           </select>
         </div>
         <div class="grow"></div>
-        <span class="out-note">one snippet · five Luas · the output diverges by version</span>
         <button id="share" class="btn ghost" type="button" title="Copy a permalink to this snippet">Share link</button>
       </div>
 
@@ -657,6 +684,14 @@ end`,
       hlEl.scrollTop = codeEl.scrollTop;
       hlEl.scrollLeft = codeEl.scrollLeft;
     });
+
+    /* hero "use it four ways" tabbed code panel (CLI / Rust / Browser / Node) */
+    const ctTabs = document.querySelectorAll(".ct-tab");
+    const ctCodes = document.querySelectorAll(".ct-code");
+    ctTabs.forEach((tab) => tab.addEventListener("click", () => {
+      ctTabs.forEach((t) => t.classList.toggle("active", t === tab));
+      ctCodes.forEach((c) => { c.hidden = c.dataset.mode !== tab.dataset.mode; });
+    }));
 
     async function boot() {
       document.querySelectorAll('a[href^="http"]').forEach(a => { a.target = "_blank"; a.rel = "noopener"; });

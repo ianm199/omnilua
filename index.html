@@ -41,12 +41,7 @@
         <div class="hero-cta rise d2">
           <span class="cmd"><span class="pr">$</span> cargo install omnilua-cli</span>
         </div>
-        <div class="proof rise d3">
-          <span>Passes the <b>PUC-Rio</b> suites</span>
-          <span>Runs <b>LuaRocks</b></span>
-          <span>Compiles to <b>wasm</b></span>
-          <span><b>Zero</b> unsafe outside the GC</span>
-        </div>
+        <p class="proof rise d3">It passes the official PUC-Rio test suites, runs the stock LuaRocks client, and keeps <code>unsafe</code> out of everything but the garbage collector.</p>
       </div>
 
       <div class="hero-demo rise d2">
@@ -139,35 +134,35 @@ lua.exec(<span class="str">"print(6 * 7)"</span>);</pre>
         <span class="sec-rule"></span>
       </div>
 
-      <p class="lead">One runtime, five Lua versions, chosen at startup. Same speed on every version. Builds native and to <code>wasm32</code> from the same source.</p>
+      <p class="lead">It's one runtime underneath: the same code runs Lua 5.1 through 5.5, chosen at startup, and builds either natively or to <code>wasm32</code> from a single source.</p>
 
       <div class="modes">
         <div class="mode">
           <div class="m-idx">i.</div>
           <h3>Standalone</h3>
           <div class="m-sub">the omnilua interpreter</div>
-          <p>Drop-in <code>lua</code>: files, one-liners, REPL. Pick a version with <code>OMNILUA_VERSION</code>.</p>
+          <p>A drop-in <code>lua</code> for files, one-liners, and the REPL. Pick a version with <code>OMNILUA_VERSION</code>.</p>
           <div class="m-cmd"><span class="pr">$</span> omnilua script.lua</div>
         </div>
         <div class="mode">
           <div class="m-idx">ii.</div>
           <h3>Embedded</h3>
           <div class="m-sub">the omnilua crate</div>
-          <p>An <code>mlua</code>-shaped API, pure Rust — no <code>liblua</code>, no C toolchain. Borrow host state with <code>scope</code>; sandbox untrusted scripts.</p>
+          <p>An <code>mlua</code>-shaped API in pure Rust, with no <code>liblua</code> and no C toolchain. Borrow host state with <code>scope</code>, or sandbox untrusted scripts.</p>
           <div class="m-cmd"><span class="pr">#</span> omnilua = "0.2"</div>
         </div>
         <div class="mode">
           <div class="m-idx">iii.</div>
           <h3>Browser</h3>
           <div class="m-sub">npm · wasm</div>
-          <p>The whole runtime as one <code>.wasm</code> module — Lua in the page, no Emscripten, no bundled C interpreter.</p>
+          <p>The whole runtime as a single <code>.wasm</code> — Lua in the page, with no Emscripten and no bundled interpreter.</p>
           <div class="m-cmd"><span class="pr">$</span> npm install omnilua</div>
         </div>
         <div class="mode">
           <div class="m-idx">iv.</div>
           <h3>Node</h3>
           <div class="m-sub">same package, server-side</div>
-          <p>The same <code>.wasm</code>, server-side — <strong>no node-gyp, no native build, no per-platform rebuild</strong>. Anywhere JS runs, this runs.</p>
+          <p>The same <code>.wasm</code> on the server, with <strong>no node-gyp and no native build</strong>. It runs anywhere JavaScript does.</p>
           <div class="m-cmd">import "omnilua/node"</div>
         </div>
       </div>

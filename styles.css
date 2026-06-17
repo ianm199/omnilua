@@ -86,10 +86,8 @@ section:first-of-type { border-top: 0; }
 .hero .sub { max-width: 620px; font-size: clamp(19px, 2.2vw, 23px); color: var(--ink-soft); margin: 28px 0 0; line-height: 1.5; }
 .hero .sub b { font-weight: 600; color: var(--ink); }
 .hero-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; margin-top: 34px; }
-.proof { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--rule); font-family: var(--mono); font-size: 13px; color: var(--muted); }
-.proof span { display: inline-flex; align-items: center; gap: 8px; }
-.proof span::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
-.proof b { color: var(--ink); font-weight: 600; }
+.proof { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--rule); max-width: 460px; font-size: 16px; color: var(--muted); line-height: 1.55; }
+.proof code { font-family: var(--mono); font-size: 0.85em; background: var(--paper-2); padding: 1px 5px; border-radius: 2px; color: var(--ink-soft); }
 
 /* split hero: pitch left, live editor right (the "try it now" panel) */
 .hero-split { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.12fr); gap: 46px; align-items: center; padding: 52px 0 30px; }

@@ -49,6 +49,24 @@ const LUAC_INST_55: u32 = 0x12345678;
 
 const LUAC_NUM_55: f64 = -370.5;
 
+const LUAC_VERSION_51: u8 = 0x51;
+
+const LUAC_VERSION_52: u8 = 0x52;
+
+const LUAC_VERSION_53: u8 = 0x53;
+
+/// Legacy (5.1/5.2/5.3) header byte: `sizeof(int)` = 4.
+const C_INT_SIZE: u8 = size_of::<i32>() as u8;
+
+/// Legacy (5.1/5.2/5.3) header byte: `sizeof(size_t)`, the build target's pointer width.
+const C_SIZET_SIZE: u8 = size_of::<usize>() as u8;
+
+/// Legacy (5.1/5.2) endianness flag: 1 = little-endian (the build target).
+const LUAC_ENDIAN_LITTLE: u8 = 1;
+
+/// Legacy (5.1/5.2) integral flag: 0 = `lua_Number` is floating-point.
+const LUAC_INTEGRAL_FLOAT: u8 = 0;
+
 const INSTRUCTION_SIZE: u8 = size_of::<u32>() as u8;
 
 const LUA_INTEGER_SIZE: u8 = size_of::<i64>() as u8;
@@ -405,39 +423,66 @@ impl<'a> DumpState<'a> {
         // C expansion of sizeof("\x1bLua")-1 = 4 bytes.
         self.dump_block(LUA_SIGNATURE)?;
 
-        self.dump_byte(if matches!(self.version, LuaVersion::V55) {
-            LUAC_VERSION_55
-        } else {
-            LUAC_VERSION_54
-        })?;
+        match self.version {
+            LuaVersion::V51 => {
+                self.dump_byte(LUAC_VERSION_51)?;
+                self.dump_byte(LUAC_FORMAT)?;
+                self.dump_byte(LUAC_ENDIAN_LITTLE)?;
+                self.dump_byte(C_INT_SIZE)?;
+                self.dump_byte(C_SIZET_SIZE)?;
+                self.dump_byte(INSTRUCTION_SIZE)?;
+                self.dump_byte(LUA_NUMBER_SIZE)?;
+                self.dump_byte(LUAC_INTEGRAL_FLOAT)?;
+            }
+            LuaVersion::V52 => {
+                self.dump_byte(LUAC_VERSION_52)?;
+                self.dump_byte(LUAC_FORMAT)?;
+                self.dump_byte(LUAC_ENDIAN_LITTLE)?;
+                self.dump_byte(C_INT_SIZE)?;
+                self.dump_byte(C_SIZET_SIZE)?;
+                self.dump_byte(INSTRUCTION_SIZE)?;
+                self.dump_byte(LUA_NUMBER_SIZE)?;
+                self.dump_byte(LUAC_INTEGRAL_FLOAT)?;
+                self.dump_block(LUAC_DATA)?;
+            }
+            LuaVersion::V53 => {
+                self.dump_byte(LUAC_VERSION_53)?;
+                self.dump_byte(LUAC_FORMAT)?;
+                self.dump_block(LUAC_DATA)?;
+                self.dump_byte(C_INT_SIZE)?;
+                self.dump_byte(C_SIZET_SIZE)?;
+                self.dump_byte(INSTRUCTION_SIZE)?;
+                self.dump_byte(LUA_INTEGER_SIZE)?;
+                self.dump_byte(LUA_NUMBER_SIZE)?;
+                self.dump_integer(LUAC_INT)?;
+                self.dump_number(LUAC_NUM)?;
+            }
+            LuaVersion::V55 => {
+                self.dump_byte(LUAC_VERSION_55)?;
+                self.dump_byte(LUAC_FORMAT)?;
+                self.dump_block(LUAC_DATA)?;
+                self.dump_byte(size_of::<i32>() as u8)?;
+                self.dump_raw_i32(LUAC_INT_55 as i32)?;
 
-        self.dump_byte(LUAC_FORMAT)?;
+                self.dump_byte(INSTRUCTION_SIZE)?;
+                self.dump_raw_u32(LUAC_INST_55)?;
 
-        // b"\x19\x93\r\n\x1a\n" is &[u8; 6], matching sizeof(LUAC_DATA)-1 = 6 bytes.
-        self.dump_block(LUAC_DATA)?;
+                self.dump_byte(LUA_INTEGER_SIZE)?;
+                self.dump_integer(LUAC_INT_55)?;
 
-        if matches!(self.version, LuaVersion::V55) {
-            self.dump_byte(size_of::<i32>() as u8)?;
-            self.dump_raw_i32(LUAC_INT_55 as i32)?;
-
-            self.dump_byte(INSTRUCTION_SIZE)?;
-            self.dump_raw_u32(LUAC_INST_55)?;
-
-            self.dump_byte(LUA_INTEGER_SIZE)?;
-            self.dump_integer(LUAC_INT_55)?;
-
-            self.dump_byte(LUA_NUMBER_SIZE)?;
-            self.dump_number(LUAC_NUM_55)?;
-        } else {
-            self.dump_byte(INSTRUCTION_SIZE)?;
-
-            self.dump_byte(LUA_INTEGER_SIZE)?;
-
-            self.dump_byte(LUA_NUMBER_SIZE)?;
-
-            self.dump_integer(LUAC_INT)?;
-
-            self.dump_number(LUAC_NUM)?;
+                self.dump_byte(LUA_NUMBER_SIZE)?;
+                self.dump_number(LUAC_NUM_55)?;
+            }
+            _ => {
+                self.dump_byte(LUAC_VERSION_54)?;
+                self.dump_byte(LUAC_FORMAT)?;
+                self.dump_block(LUAC_DATA)?;
+                self.dump_byte(INSTRUCTION_SIZE)?;
+                self.dump_byte(LUA_INTEGER_SIZE)?;
+                self.dump_byte(LUA_NUMBER_SIZE)?;
+                self.dump_integer(LUAC_INT)?;
+                self.dump_number(LUAC_NUM)?;
+            }
         }
 
         Ok(())

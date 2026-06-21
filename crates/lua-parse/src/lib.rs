@@ -4715,9 +4715,10 @@ fn simpleexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Resul
         TK_DOTS => {
             let is_vararg = ls.fs.as_ref().unwrap().f.is_vararg;
             if !is_vararg {
-                return Err(LuaError::syntax(format_args!(
-                    "cannot use '...' outside a vararg function"
-                )));
+                return Err(lua_lex::syntax_error(
+                    &mut ls.lex,
+                    b"cannot use '...' outside a vararg function",
+                ));
             }
             let line = ls.lastline;
             let inst =

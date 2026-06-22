@@ -9,7 +9,7 @@ either, use `mlua`.
 
 ```toml
 [dependencies]
-omnilua = "0.3.1"
+omnilua = "0.3.2"
 ```
 
 ## Calling Rust from Lua

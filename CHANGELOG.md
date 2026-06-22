@@ -4,6 +4,20 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-06-22
+
+Same library code as 0.3.1 (all five Lua versions at 100%); this patch unblocks
+the **npm** publish. No runtime behavior change.
+
+### Fixed (release harness only)
+
+- The wasm package gate (`harness/check_wasm_package.sh`) asserted the old
+  `io.tmpfile()` / `file:read` failure return of `false`; the reference-faithful
+  value is `fail` (`nil`, via `luaL_pushfail`), which the 0.3.x runtime already
+  returns. Updated the wasm Node + low-level smoke scenarios
+  (`harness/wasm/smoke-scenario.mjs`, `crates/lua-wasm-smoke` — a `publish=false`
+  test crate) to assert `nil`. No change to any published library crate.
+
 ## [0.3.1] - 2026-06-22
 
 ### Multi-version: all five versions now pass their full official suites

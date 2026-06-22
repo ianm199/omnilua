@@ -447,7 +447,7 @@ assert(f:read("a") == "beta\n")
 assert(f:close())
 local dir = assert(io.open("./hosted-54/dir", "r"))
 local ok, msg, errno = dir:read("a")
-assert(ok == false)
+assert(ok == nil)
 assert(type(msg) == "string")
 assert(errno == 21)
 assert(dir:close())
@@ -518,7 +518,7 @@ assert(ok_tmpname == false)
 
     let tmpfile_script = br#"
 local f, err = io.tmpfile()
-assert(f == false and type(err) == "string")
+assert(f == nil and type(err) == "string")
 "#;
     if run_script(tmpfile_script, false, false, false).is_err() {
         return 50;

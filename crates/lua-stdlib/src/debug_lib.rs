@@ -43,7 +43,14 @@ const HOOKKEY: &[u8] = b"_HOOKKEY";
 /// Hook event names indexed by the raw event code stored in [`DebugInfo::event`].
 /// Order must match the `LUA_HOOK*` constants: Call=0, Return=1, Line=2, Count=3, TailCall=4.
 ///
+/// Event code 4 names a tail event whose wording is version-specific: Lua 5.1's
+/// `LUA_HOOKTAILRET` reports `"tail return"` on the return side, while 5.2+'s
+/// `LUA_HOOKTAILCALL` reports `"tail call"` on the call side. This table holds
+/// the 5.2+ name; [`hookf`] substitutes the 5.1 name for code 4.
 const HOOKNAMES: &[&[u8]; 5] = &[b"call", b"return", b"line", b"count", b"tail call"];
+
+/// Lua 5.1's name for hook event code 4 (`LUA_HOOKTAILRET`).
+const HOOKNAME_TAILRET_51: &[u8] = b"tail return";
 
 /// Bitmask constants for hook event selection.
 const MASK_CALL: u32 = 1 << 0;
@@ -730,7 +737,14 @@ pub(crate) fn hookf(state: &mut LuaState, event: i32, currentline: i32) -> Resul
     state.push_thread()?;
     if state.raw_get(-2)? == LuaType::Function {
         let event_idx = event.clamp(0, HOOKNAMES.len() as i32 - 1) as usize;
-        let event_str = state.intern_str(HOOKNAMES[event_idx])?;
+        let name = if event_idx == 4
+            && state.global().lua_version == lua_types::LuaVersion::V51
+        {
+            HOOKNAME_TAILRET_51
+        } else {
+            HOOKNAMES[event_idx]
+        };
+        let event_str = state.intern_str(name)?;
         state.push(LuaValue::Str(event_str));
 
         if currentline >= 0 {

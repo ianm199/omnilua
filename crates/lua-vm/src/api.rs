@@ -2096,9 +2096,30 @@ pub fn pcall_k(
 //                          const char *chunkname, const char *mode)
 // PORT NOTE: lua_Reader (void* callback) is replaced by Box<dyn FnMut>; mode
 // is &[u8].
+/// Whether the freshly loaded closure's first upvalue is the synthetic `_ENV`
+/// cell, used to decide if `load` should seed it with the globals table on
+/// Lua 5.1.
+///
+/// Lua 5.1 has no `_ENV` syntax — globals reach their environment through the
+/// running thread's `l_gt` (fenv model), not an injected upvalue. Our core
+/// nonetheless gives a source-loaded 5.1 chunk a synthetic `_ENV` upvalue at
+/// index 0 (the Option-B fenv model) so global access can route through
+/// `GETTABUP`. That synthetic cell must be seeded with the globals table. A
+/// function reconstructed from `string.dump` bytecode, by contrast, carries
+/// its real upvalues (e.g. `a`, `b`) at index 0 and must be left uninitialised
+/// (nil) to match the reference. Distinguishing them by whether upvalue 0 is
+/// named `_ENV` reproduces both behaviours.
+fn first_upvalue_is_env(lcl: &lua_types::closure::LuaLClosure) -> bool {
+    lcl.proto
+        .upvalues
+        .first()
+        .and_then(|uv| uv.name.as_ref())
+        .is_some_and(|s| s.as_bytes() == b"_ENV")
+}
+
 pub fn load(
     state: &mut LuaState,
-    reader: Box<dyn FnMut() -> Option<Vec<u8>>>,
+    reader: crate::zio::ChunkReader,
     chunkname: Option<&[u8]>,
     mode: Option<&[u8]>,
 ) -> Result<LuaStatus, LuaError> {
@@ -2109,10 +2130,10 @@ pub fn load(
         let top = state.top_idx();
         let func_val = state.get_at(top - 1);
         if let LuaValue::Function(LuaClosure::Lua(lcl)) = func_val {
-            let inject_env = if state.global().lua_version == lua_types::LuaVersion::V52 {
-                lcl.upvals.len() == 1
-            } else {
-                !lcl.upvals.is_empty()
+            let inject_env = match state.global().lua_version {
+                lua_types::LuaVersion::V51 => first_upvalue_is_env(&lcl),
+                lua_types::LuaVersion::V52 => lcl.upvals.len() == 1,
+                _ => !lcl.upvals.is_empty(),
             };
             if inject_env {
                 let gt = get_global_table(state);
@@ -2551,13 +2572,18 @@ fn aux_upvalue(state: &LuaState, fi: &LuaValue, n: i32) -> Option<(Vec<u8>, LuaV
             // The proto records the static name of each upvalue (e.g. "_ENV"
             // for the main chunk's environment upvalue). Stripped chunks have
             // no upvalue-name debug info; Lua reports those as "(no name)".
+            let no_name: &[u8] = if state.global().lua_version == lua_types::LuaVersion::V53 {
+                b"(*no name)"
+            } else {
+                b"(no name)"
+            };
             let name: Vec<u8> = lcl
                 .proto
                 .upvalues
                 .get((n - 1) as usize)
                 .and_then(|ud| ud.name.as_ref())
                 .map(|s| s.as_bytes().to_vec())
-                .unwrap_or_else(|| b"(no name)".to_vec());
+                .unwrap_or_else(|| no_name.to_vec());
             Some((name, val))
         }
         _ => None,

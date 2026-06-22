@@ -457,3 +457,38 @@ Branch `fix/multiversion-compat`, 76 commits, every wave oracle-gated, zero 5.4/
 - `crates/lua-rs-runtime/tests/dump_kit.rs`, `error_wording_kit.rs` — in-process golden kits (0.00s).
 - `harness/multiversion_diff_suite.sh` — per-version differential gate; `run_official_all.sh` wired for 5.1/5.2.
 - Official **5.1** + **5.2.2** test suites vendored (`reference/extra-tests/`); all five reference binaries in `/tmp/lua-refs/bin`.
+
+### Correction (2026-06-22, post-release) — NOT a "floor"; both 5.1 and 5.3 are reachable to 100%
+"Real-bug floor" was wrong framing. None of the remaining items are a hard limit — they are larger coordinated changes, all fixable:
+- **`all.lua@5.3` is NOT a bug** — it passes (`final OK !!!`, zero error markers) when run from the testdir with adequate time. It was a gate false-negative: `all.lua` runs the WHOLE suite, and the gate's 12s cap killed it mid-run. Fixed: `multiversion_diff_suite.sh` now gives `all`/`heavy`/`big`/`verybig` a 120s timeout.
+- **5.3 is effectively 26/27** — the ONLY real remaining item is `files.lua@415` (lazy-reader F6).
+- **5.1 is 18/21** — remaining: `calls.lua@250` (F6), `errors.lua` (xpcall+C-stack-overflow hang), `db.lua@366` ("tail return" hook events).
+Path to 100%: F6 (shared) → 5.3 = 100%, 5.1 = 19/21; + errors-hang → 20/21; + db-tail-return → 5.1 = 100%.
+
+### F6 reader-streaming LANDED (2026-06-22) — 5.3 to 100%
+- **files.lua@5.3 flipped → 5.3 = 100% (27/27).** Lazy reentrant `load()` reader streaming: unified the duplicate ZIO types (lua-lex now uses `lua_vm::zio::ZIO`), `ChunkReader = FnMut(&mut LuaState) -> Result<Option<Vec<u8>>>` threaded through ParserHook/parse so the lexer pulls on demand and stops at the first error. Reader-call-count repro now MATCHes (was 9, now 2). Public `omnilua::load()` signature unchanged (internal `lua_vm::api::load` only). Bonus: fixed a GC use-after-sweep (collectgarbage mid-parse) + io.lines arity (5.4-only 4th to-be-closed result). All-version load() regression clean.
+- files.lua@5.1 also flipped; calls.lua@5.1 advanced (F6 cleared) to a dump/undump-with-upvalues blocker at calls.lua:277.
+Tally: 5.1 18/21 (calls@277 dump/undump-upvalues, db@366 tail-return hooks, errors hang), 5.2 100%, **5.3 100%**, 5.4 100%, 5.5 100%.
+PERF: overall 1.46x vs C; _long workloads at parity (table_ops_long 0.43x); tall poles = table-set-same-key + method_calls (~2x).
+
+### CORRECTION (2026-06-22): 5.3 is 26/27, NOT 100% — db.lua@5.3 CIST_FIN hang
+F6 flipped files.lua@5.3, but 5.3's `all.lua` still FAILs (gate: TIMEOUT). Root cause confirmed: `all.lua` runs `db.lua` internally (`dofile('db.lua')`); it stalls at "testing debug library" because **db.lua@5.3 has a real hang** — the CIST_FIN finalizer-frame issue (db.lua:734 `repeat until name` never terminates; the __gc finalizer-invoking frame puts CIST_FIN on the finalizer's own frame instead of the caller, so `debug.getinfo` inside the finalizer loops). The standalone `db.wrap.lua@5.3` is masked as `both_fail` (the reference also fails the standalone wrap for a separate ltests reason), which hid this. The reference's `all.lua@5.3` reaches `final OK`; ours hangs — so this is a genuine omniLua bug. My prior "5.3 reaches 100%" note matched the reference's `final OK`, not ours — corrected here.
+**True remaining for 5.3 = 100%:** fix the db.lua@5.3 CIST_FIN finalizer-frame hang (vm.rs/debug.rs/state.rs). Then `all.lua@5.3` (and standalone db, modulo ltests) clears.
+Accurate tally: 5.1 19/21 (db@5.1 tail-return + errors hang in flight), 5.2 100%, **5.3 26/27** (all.lua blocked on db@5.3 CIST_FIN), 5.4 100%, 5.5 100%.
+
+### vmdebug landed (2026-06-22) — 5.1 to 20/21
+- **db.lua@5.1 flipped**: 5.1 'tail return' hook events (5.1 fires "call" then "return"+"tail return" per absorbed tail level; 5.2+ use call-side "tail call"). Reuses CallInfo.tailcalls; touches state.rs hook_call, do_.rs rethook, debug_lib.rs event-name mapping; V51-gated.
+- **errors.lua@5.1 HANG FIXED**: root cause was LUAI_MAXSTACK=1_000_000 instead of 5.1's faithful 65500 — deep recursion overflowed at ~1M frames and luaL_traceback's O(n²) middle-skip scan never returned. grow_stack now caps 5.1 at 65500 (5.2+ keep 1M). errors@5.1 no longer hangs; advances to a control-byte lexer token divergence at errors.lua:196.
+Tally: 5.1 **20/21** (only errors@5.1 control-byte token left), 5.2 100%, 5.3 26/27 (db@5.3 CIST_FIN), 5.4 100%, 5.5 100%.
+FINAL WAVE in flight (file-disjoint): lexer51 (lua-lex) → errors@5.1 control-byte raw-byte near-token; cistfin (vm/debug/state) → db.lua@5.3 CIST_FIN finalizer-frame hang. Both clean = all five versions at 100%.
+
+## ★ ALL FIVE VERSIONS AT 100% (2026-06-22)
+Final gate (ours vs real reference under the identical stock harness, all/heavy at 120s):
+| Version | our_pass / ref_pass | OUR_BUGS |
+|---|---|---|
+| 5.1 | 21/21 | **0** |
+| 5.2 | 24/24 | **0** |
+| 5.3 | 27/27 | **0** |
+| 5.4 | 44/44 | **0** |
+| 5.5 | 34/34 | **0** |
+omniLua passes 100% of every file the reference passes, on all five versions. Session arc: 5.1 40→100, 5.2 54→100, 5.3 74→100, 5.4/5.5 held 100. The final 5.1/5.3 push: F6 lazy reentrant reader + ZIO unification (files@5.1/5.3), 5.1 fenv/per-thread-l_gt/per-closure-env (closure/locals), implicit arg, db@5.1 tail-return hooks, errors@5.1 (MAXSTACK 65500 + control-byte token + syntax-levels + upvalue limit), calls@5.1 dump/undump _ENV gate, gc@5.1 collect-time userdata finalizability, db@5.3 CIST_FIN per-version naming + (*no name). Regression: 184 oracle, dump_kit/error_wording_kit, GC canaries, workspace build all green; 5.4/5.5 byte-identical throughout. Perf: 1.46x overall vs C, _long workloads at parity.

@@ -74,6 +74,11 @@ const LUA_MULTRET: i32 = -1;
 
 const MAX_UPVAL: u8 = 255;
 
+/// Lua 5.1's per-function upvalue ceiling (`LUAI_MAXUPVALUES` in 5.1's
+/// `luaconf.h`). Later versions raised this to [`MAX_UPVAL`] = 255; 5.1 caps it
+/// at 60. Enforced only on the [`lua_types::LuaVersion::V51`] path.
+const MAX_UPVAL_V51: i32 = 60;
+
 /// Largest value the 18-bit `Bx` instruction field can hold; the ceiling on a
 /// constant-table index reachable without an `EXTRAARG` prefix.
 const MAXARG_BX: i32 = (1 << 17) - 1;
@@ -535,36 +540,39 @@ const PARSER_MAX_C_CALLS: u32 = 200;
 
 /// Guards parser recursion depth, mirroring C's `enterlevel` / `nCcalls`.
 ///
-/// Lua 5.2 and 5.3 reported overrunning the limit as the syntax error
-/// `too many C levels (limit is 200) in <where>` (with a source location and
-/// `near '<token>'` suffix, the `checklimit`/`errorlimit` path of those
-/// versions' `lparser.c`). Lua 5.4 replaced that with a bare runtime
-/// `C stack overflow` with no location, which is what 5.4/5.5 keep. 5.1 has its
-/// own per-construct limits and never used this collective "C levels" message,
-/// so it also stays on the bare form here.
+/// Lua 5.1's `enterlevel` (lparser.c) raised the *lexer* error
+/// `chunk has too many syntax levels` (a source-located message with no
+/// `near '<token>'` suffix, the `luaX_lexerror(ls, msg, 0)` path) when the
+/// recursion counter passed `LUAI_MAXCCALLS`. Lua 5.2 and 5.3 replaced that
+/// with the syntax error `too many C levels (limit is 200) in <where>` (with a
+/// source location and `near '<token>'` suffix, the `checklimit`/`errorlimit`
+/// path of those versions' `lparser.c`). Lua 5.4 replaced *that* with a bare
+/// runtime `C stack overflow` with no location, which is what 5.4/5.5 keep.
 fn enter_level(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     ls.recursion_depth += 1;
     if ls.recursion_depth < PARSER_MAX_C_CALLS {
         return Ok(());
     }
-    if matches!(
-        state.global().lua_version,
-        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
-    ) {
-        let fs = ls.fs.as_ref().unwrap();
-        let where_clause: Vec<u8> = if fs.f.linedefined == 0 {
-            b"main function".to_vec()
-        } else {
-            format!("function at line {}", fs.f.linedefined).into_bytes()
-        };
-        let mut msg: Vec<u8> = Vec::new();
-        msg.extend_from_slice(b"too many C levels (limit is ");
-        msg.extend_from_slice(PARSER_MAX_C_CALLS.to_string().as_bytes());
-        msg.extend_from_slice(b") in ");
-        msg.extend_from_slice(&where_clause);
-        Err(lua_lex::syntax_error(&mut ls.lex, &msg))
-    } else {
-        Err(LuaError::syntax(format_args!("C stack overflow")))
+    match state.global().lua_version {
+        lua_types::LuaVersion::V51 => Err(lua_lex::sem_error(
+            &mut ls.lex,
+            b"chunk has too many syntax levels",
+        )),
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => {
+            let fs = ls.fs.as_ref().unwrap();
+            let where_clause: Vec<u8> = if fs.f.linedefined == 0 {
+                b"main function".to_vec()
+            } else {
+                format!("function at line {}", fs.f.linedefined).into_bytes()
+            };
+            let mut msg: Vec<u8> = Vec::new();
+            msg.extend_from_slice(b"too many C levels (limit is ");
+            msg.extend_from_slice(PARSER_MAX_C_CALLS.to_string().as_bytes());
+            msg.extend_from_slice(b") in ");
+            msg.extend_from_slice(&where_clause);
+            Err(lua_lex::syntax_error(&mut ls.lex, &msg))
+        }
+        _ => Err(LuaError::syntax(format_args!("C stack overflow"))),
     }
 }
 
@@ -2797,6 +2805,27 @@ fn check_limit(fs: &FuncState, v: i32, l: i32, what: &str) -> Result<(), LuaErro
     Ok(())
 }
 
+/// Constructs Lua 5.1's `errorlimit` message, which predates the modern
+/// `"too many %s (limit is %d) ..."` wording produced by [`error_limit`].
+///
+/// Lua 5.1's `lparser.c errorlimit` emits `"function at line %d has more than
+/// %d %s"` (or `"main function has more than %d %s"` when `linedefined == 0`),
+/// reporting the *limit* rather than the attempted count. The limit value also
+/// differs from later versions for upvalues: 5.1 caps a function at
+/// `LUAI_MAXUPVALUES = 60`, whereas 5.2+ allow `MAXUPVAL = 255`. Used only on
+/// the [`lua_types::LuaVersion::V51`] path so 5.2–5.5 stay byte-identical.
+fn error_limit_v51(fs: &FuncState, limit: i32, what: &str) -> LuaError {
+    let line = fs.f.linedefined;
+    if line == 0 {
+        LuaError::syntax(format_args!("main function has more than {} {}", limit, what))
+    } else {
+        LuaError::syntax(format_args!(
+            "function at line {} has more than {} {}",
+            line, limit, what
+        ))
+    }
+}
+
 // ── §2 Basic parse utilities ─────────────────────────────────────────────────
 
 /// If the current token matches `c`, consume it and return true.
@@ -3069,8 +3098,21 @@ fn search_upvalue(fs: &FuncState, name: &GcRef<LuaString>) -> i32 {
 }
 
 /// Grows upvalues array and returns index of the new slot.
-fn alloc_upvalue(fs: &mut FuncState) -> Result<usize, LuaError> {
-    if fs.nups as i32 + 1 > MAX_UPVAL as i32 {
+///
+/// `version` selects the upvalue ceiling and the limit-error wording: Lua 5.1
+/// caps a function at [`MAX_UPVAL_V51`] = 60 and reports it via
+/// [`error_limit_v51`] (`"function at line %d has more than 60 upvalues"`),
+/// while 5.2–5.5 keep [`MAX_UPVAL`] = 255 and the modern [`error_limit`]
+/// wording.
+fn alloc_upvalue(
+    fs: &mut FuncState,
+    version: lua_types::LuaVersion,
+) -> Result<usize, LuaError> {
+    if version == lua_types::LuaVersion::V51 {
+        if fs.nups as i32 + 1 > MAX_UPVAL_V51 {
+            return Err(error_limit_v51(fs, MAX_UPVAL_V51, "upvalues"));
+        }
+    } else if fs.nups as i32 + 1 > MAX_UPVAL as i32 {
         return Err(error_limit(fs, MAX_UPVAL as i32, "upvalues"));
     }
     let idx = fs.nups as usize;
@@ -3093,7 +3135,7 @@ fn new_upvalue(
     name: GcRef<LuaString>,
     v: &ExprDesc,
 ) -> Result<i32, LuaError> {
-    let idx = alloc_upvalue(fs)?;
+    let idx = alloc_upvalue(fs, ls.lex.version)?;
     let kind: u8 = if v.k == ExprKind::Local {
         let prev = fs
             .prev
@@ -6227,7 +6269,8 @@ fn mainfunc(
 
     let env_name = ls.envn.clone();
     {
-        let idx = alloc_upvalue(ls.fs.as_mut().unwrap())?;
+        let version = ls.lex.version;
+        let idx = alloc_upvalue(ls.fs.as_mut().unwrap(), version)?;
         let up = &mut ls.fs.as_mut().unwrap().f.upvalues[idx];
         up.instack = true;
         up.idx = 0;
@@ -6250,15 +6293,14 @@ fn mainfunc(
 pub fn parse(
     state: &mut LuaState,
     dyd: DynData,
-    source: &[u8],
+    z: &mut lua_vm::zio::ZIO,
     name: &[u8],
     firstchar: i32,
 ) -> Result<Box<LuaProto>, LuaError> {
     let source_str = state.intern_str(name)?;
     let envn_str = state.intern_str(lua_lex::LUA_ENV)?;
 
-    let rest_bytes: Vec<u8> = source.iter().skip(1).copied().collect();
-    let z = lua_lex::ZIO::from_bytes(rest_bytes);
+    let z = z.take();
 
     let lex_ls = lua_lex::LexState {
         current: firstchar,

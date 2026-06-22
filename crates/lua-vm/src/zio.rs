@@ -25,6 +25,16 @@ use lua_types::error::LuaError;
 /// End-of-stream sentinel returned by [`ZIO::getc`] and [`ZIO::fill`].
 pub(crate) const EOZ: i32 = -1;
 
+/// Reentrant chunk supplier for a [`ZIO`].
+///
+/// Mirrors C's `lua_Reader`: the reader is invoked with the live `lua_State`
+/// each time more bytes are needed, so a `load` reader written in Lua can call
+/// back into the interpreter mid-parse. `Ok(None)` signals end-of-stream; an
+/// `Err` aborts the parse with that error (the C reader equivalent is a
+/// longjmp). Bytes are owned (`Vec<u8>`) rather than borrowed because a `dyn`
+/// trait object cannot name the reader's internal-buffer lifetime.
+pub type ChunkReader = Box<dyn FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError>>;
+
 // ── LexBuffer (was Mbuffer in C) ───────────────────────────────────────────────
 
 /// Growable byte buffer used by the lexer for token text accumulation.
@@ -130,29 +140,18 @@ impl Default for LexBuffer {
 /// Zio           → ZIO
 /// .n            → usize         (bytes still unread in current_chunk)
 /// .p            → usize         (cursor index; was const char *)
-/// .reader+.data → Box<dyn FnMut() -> Option<Vec<u8>>>  (combined)
-/// .L            → removed; callers pass &mut LuaState to methods
+/// .reader+.data → ChunkReader   (combined)
+/// .L            → re-threaded as &mut LuaState parameters (the reader needs
+///                 it to call back into Lua), matching C's stored z->L.
 /// ```
-///
-/// PORT NOTE: The types.tsv entry for `Zio.reader` lists
-/// `Box<dyn FnMut() -> Option<&[u8]>>`, but `&[u8]` cannot name a lifetime
-/// in a `dyn Fn` trait object without HRTB and a pinned source.  Phase A uses
-/// `Option<Vec<u8>>` instead; the reader returns an owned chunk.  Phase B
-/// should evaluate whether a zero-copy `&[u8]` path is achievable (e.g. by
-/// making the reader hold a pinned internal buffer and returning a slice into
-/// it via HRTB).
 pub struct ZIO {
     n: usize,
     // PORT NOTE: raw pointer replaced by index into `current_chunk`.
     p: usize,
     // PORT NOTE: C reader function pointer + void *data collapsed into one
-    // closure; lua_State *L removed from the struct per types.tsv.
-    // TODO(port): decide in Phase B whether concrete readers need
-    // `&mut LuaState` as a parameter (e.g. for lapi's load callbacks that
-    // may call into Lua).  If so, the signature becomes
-    // `Box<dyn FnMut(&mut LuaState) -> Option<Vec<u8>>>` and fill/read must
-    // thread state through.
-    reader: Box<dyn FnMut() -> Option<Vec<u8>>>,
+    // closure. C stored `lua_State *L` in the ZIO; the Rust port threads it
+    // through fill/getc/read instead so the borrow checker sees the access.
+    reader: ChunkReader,
     // Owned current chunk returned by the reader.  Not present as a separate
     // field in C (C held a raw pointer into the reader's own internal buffer).
     current_chunk: Vec<u8>,
@@ -160,28 +159,39 @@ pub struct ZIO {
 
 impl ZIO {
     // macros.tsv: LUAI_FUNC → pub(crate)
-    /// Initialise a `ZIO` with the given reader callback.
+    /// Initialise a `ZIO` with the given reentrant reader callback.
     ///
     /// Corresponds to `luaZ_init` in `lzio.c`.  The C parameters `reader` and
-    /// `data` are combined into a single closure; `L` is no longer stored.
-    ///
-    /// # C source
-    /// ```c
-    ///
-    /// //   z->L = L;
-    /// //   z->reader = reader;
-    /// //   z->data = data;
-    /// //   z->n = 0;
-    /// //   z->p = NULL;
-    /// // }
-    /// ```
-    pub(crate) fn new(reader: Box<dyn FnMut() -> Option<Vec<u8>>>) -> Self {
+    /// `data` are combined into a single closure; `L` is threaded through the
+    /// fallible methods rather than stored on the struct.
+    pub fn new(reader: ChunkReader) -> Self {
         ZIO {
             n: 0,
             p: 0,
             current_chunk: Vec::new(),
             reader,
         }
+    }
+
+    /// Construct a `ZIO` that yields the supplied bytes once and then EOZ.
+    ///
+    /// Used for in-memory sources (a string chunk, or the lexer's own unit
+    /// tests) where there is no reader to call back into Lua. The state passed
+    /// to `getc`/`fill` is ignored by this reader.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let mut once = Some(bytes);
+        ZIO::new(Box::new(move |_state| Ok(once.take())))
+    }
+
+    /// Move this stream out, leaving an exhausted (empty) `ZIO` in its place.
+    ///
+    /// The parser owns the lexer's `LexState`, which owns its `ZIO`; the loader
+    /// only holds a `&mut ZIO`. This hands the live stream — its reader and any
+    /// bytes already buffered by [`getc`] — to the parser by value so the lexer
+    /// can keep pulling from the same reader (and the same `&mut LuaState`)
+    /// on demand. The original slot becomes an immediately-EOZ stream.
+    pub fn take(&mut self) -> ZIO {
+        std::mem::replace(self, ZIO::from_bytes(Vec::new()))
     }
 
     // macros.tsv: LUAI_FUNC → pub(crate)
@@ -208,12 +218,13 @@ impl ZIO {
     ///
     /// PORT NOTE: `lua_unlock`/`lua_lock` are no-ops in the default build and
     /// are dropped per macros.tsv.  `cast_uchar` → `as u8` per macros.tsv.
-    pub(crate) fn fill(&mut self) -> i32 {
-        let chunk_opt = (self.reader)();
+    /// A reader error propagates as `Err` (C longjmps out of the reader).
+    pub(crate) fn fill(&mut self, state: &mut LuaState) -> Result<i32, LuaError> {
+        let chunk_opt = (self.reader)(state)?;
 
         match chunk_opt {
-            None => EOZ,
-            Some(chunk) if chunk.is_empty() => EOZ,
+            None => Ok(EOZ),
+            Some(chunk) if chunk.is_empty() => Ok(EOZ),
             Some(chunk) => {
                 self.n = chunk.len() - 1;
                 self.current_chunk = chunk;
@@ -221,7 +232,7 @@ impl ZIO {
                 // cast_uchar → as u8  per macros.tsv
                 let byte = self.current_chunk[self.p] as u8;
                 self.p += 1;
-                byte as i32
+                Ok(byte as i32)
             }
         }
     }
@@ -243,14 +254,14 @@ impl ZIO {
     /// without decrementing.  The Rust translation preserves this: `if self.n > 0`
     /// followed by an explicit `self.n -= 1`.
     #[inline]
-    pub(crate) fn getc(&mut self) -> i32 {
+    pub fn getc(&mut self, state: &mut LuaState) -> Result<i32, LuaError> {
         if self.n > 0 {
             self.n -= 1;
             let byte = self.current_chunk[self.p] as u8;
             self.p += 1;
-            byte as i32
+            Ok(byte as i32)
         } else {
-            self.fill()
+            self.fill(state)
         }
     }
 
@@ -289,14 +300,14 @@ impl ZIO {
     /// length encodes the requested byte count.  `memcpy` becomes
     /// `copy_from_slice`.  The advancing pointer `b = (char *)b + m` is
     /// replaced by a `dst` index into `buf`.
-    pub(crate) fn read(&mut self, buf: &mut [u8]) -> usize {
+    pub(crate) fn read(&mut self, state: &mut LuaState, buf: &mut [u8]) -> Result<usize, LuaError> {
         let mut remaining = buf.len();
         let mut dst: usize = 0;
 
         while remaining > 0 {
             if self.n == 0 {
-                if self.fill() == EOZ {
-                    return remaining;
+                if self.fill(state)? == EOZ {
+                    return Ok(remaining);
                 } else {
                     // fill() advanced p by 1 and set n = chunk.len() - 1.
                     // Undoing that makes the whole chunk available to the
@@ -317,7 +328,7 @@ impl ZIO {
             remaining -= m;
         }
 
-        0
+        Ok(0)
     }
 }
 

@@ -392,7 +392,7 @@ pub trait LuaStateStubExt {
         mode: &M,
     ) -> Result<bool, LuaError>
     where
-        F: FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError>,
+        F: FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError> + 'static,
         M: AsRef<[u8]>,
     {
         let _ = (reader, name, mode);
@@ -843,7 +843,7 @@ impl LuaStateStubExt for LuaState {
 
     fn load(&mut self, chunk: &[u8], name: &[u8], mode: Option<&[u8]>) -> Result<bool, LuaError> {
         let mut remaining = Some(chunk.to_vec());
-        let reader: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || remaining.take());
+        let reader: lua_vm::zio::ChunkReader = Box::new(move |_state| Ok(remaining.take()));
         let status = lua_vm::api::load(self, reader, Some(name), mode)?;
         Ok(status == LuaStatus::Ok)
     }
@@ -1529,7 +1529,7 @@ impl LuaStateStubExt for LuaState {
         mode: Option<&[u8]>,
     ) -> Result<LuaStatus, LuaError> {
         let mut remaining = Some(buf.to_vec());
-        let reader: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || remaining.take());
+        let reader: lua_vm::zio::ChunkReader = Box::new(move |_state| Ok(remaining.take()));
         lua_vm::api::load(self, reader, Some(name), mode)
     }
 
@@ -1543,7 +1543,7 @@ impl LuaStateStubExt for LuaState {
         M: AsRef<[u8]>,
     {
         let mut remaining = Some(buf.to_vec());
-        let reader: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || remaining.take());
+        let reader: lua_vm::zio::ChunkReader = Box::new(move |_state| Ok(remaining.take()));
         let mode_bytes = mode.as_ref();
         let status = lua_vm::api::load(self, reader, Some(name), Some(mode_bytes))?;
         Ok(status == LuaStatus::Ok)
@@ -1767,58 +1767,27 @@ impl LuaStateStubExt for LuaState {
         Ok(())
     }
 
-    /// Pre-collect the chunks supplied by `reader` (a state-aware callback)
-    /// and forward the accumulated buffer to `lua_vm::api::load`. The streaming
-    /// loader in `lua_vm::api::load` consumes a `Box<dyn FnMut() -> Option<Vec<u8>>>`
-    /// that does not take a `&mut LuaState`, so the state-touching reader
-    /// (e.g. `generic_reader`, which calls a Lua function to produce each
-    /// chunk) is drained first. C-Lua streams chunks directly through
-    /// `lua_load`; the materialised path here is observable only for very
-    /// large source files and is intentional for the Phase-B shim.
+    /// Forward a state-aware reader straight to `lua_vm::api::load`, which pulls
+    /// chunks lazily during the parse.
+    ///
+    /// `reader` (e.g. `generic_reader`, which calls a Lua function per chunk)
+    /// is the reentrant `ChunkReader` the lexer drives byte by byte. C-Lua
+    /// streams chunks through `lua_load` the same way, so an early syntax error
+    /// stops the reader instead of draining it to EOF — the loader pulls only
+    /// what the parser actually needs. A reader error propagates into the
+    /// protected parse and surfaces as a failed load with the error on the
+    /// stack, matching C's `lua_load`.
     fn load_with_reader<F, M: ?Sized>(
         &mut self,
-        mut reader: F,
+        reader: F,
         name: &[u8],
         mode: &M,
     ) -> Result<bool, LuaError>
     where
-        F: FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError>,
+        F: FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError> + 'static,
         M: AsRef<[u8]>,
     {
-        let mut buf: Vec<u8> = Vec::new();
-        let mut reader_err: Option<LuaError> = None;
-        loop {
-            match reader(self) {
-                Err(e) => {
-                    reader_err = Some(e);
-                    break;
-                }
-                Ok(None) => break,
-                Ok(Some(piece)) => {
-                    if piece.is_empty() {
-                        break;
-                    }
-                    buf.extend_from_slice(&piece);
-                }
-            }
-        }
-        if let Some(e) = reader_err {
-            let msg_value = match e {
-                LuaError::Runtime(v) | LuaError::Syntax(v) => v,
-                LuaError::Memory => {
-                    let s = self.intern_str(b"not enough memory")?;
-                    LuaValue::Str(s)
-                }
-                _ => {
-                    let s = self.intern_str(b"error in reader function")?;
-                    LuaValue::Str(s)
-                }
-            };
-            self.push(msg_value);
-            return Ok(false);
-        }
-        let mut once = Some(buf);
-        let boxed: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || once.take());
+        let boxed: lua_vm::zio::ChunkReader = Box::new(reader);
         let mode_bytes = mode.as_ref();
         let status = lua_vm::api::load(self, boxed, Some(name), Some(mode_bytes))?;
         Ok(status == LuaStatus::Ok)

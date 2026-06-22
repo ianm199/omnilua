@@ -1235,9 +1235,14 @@ impl Collectable for LuaState {}
 /// The implementation lives in `lua-parse`; `lua-vm` cannot depend on it
 /// directly (that would form a cycle), so the parser is reached via this
 /// function pointer registered at startup.
+///
+/// The parser receives the live [`ZIO`](crate::zio::ZIO) (already positioned
+/// past `firstchar`) rather than a fully-materialised buffer, so it can pull
+/// reader chunks on demand and stop at the first syntax error — matching C's
+/// `lua_load`, where the lexer drives the `lua_Reader` byte by byte.
 pub type ParserHook = fn(
     state: &mut LuaState,
-    source: &[u8],
+    z: &mut crate::zio::ZIO,
     name: &[u8],
     firstchar: i32,
 ) -> Result<GcRef<lua_types::closure::LuaLClosure>, LuaError>;
@@ -4155,7 +4160,24 @@ impl LuaState {
     pub fn trace_exec(&mut self, _idx: CallInfoIdx, pc: u32) -> Result<bool, LuaError> {
         Ok(crate::debug::trace_exec(self, pc)? != 0)
     }
+    /// Fires the call hook for the frame at `idx`.
+    ///
+    /// On Lua 5.1 a tail call reuses the caller's frame but still fires an
+    /// ordinary `"call"` hook for the callee (the synthetic call event is on the
+    /// return side, as a `"tail return"`). 5.2+ instead report the call as a
+    /// `"tail call"` event, which `do_::hookcall` derives from the `CIST_TAIL`
+    /// callstatus bit. To get the 5.1 naming without disturbing `CIST_TAIL`
+    /// (which `debug.getinfo` still reads to report `what == "tail"`), the bit is
+    /// masked off across the `hookcall` call and restored afterwards, so on 5.1
+    /// the event is always `LUA_HOOKCALL`. 5.2+ takes the unchanged delegation.
     pub fn hook_call(&mut self, idx: CallInfoIdx) -> Result<(), LuaError> {
+        if self.global().lua_version == lua_types::LuaVersion::V51 {
+            let had_tail = self.call_info[idx.as_usize()].callstatus & CIST_TAIL;
+            self.call_info[idx.as_usize()].callstatus &= !CIST_TAIL;
+            let r = crate::do_::hookcall(self, idx);
+            self.call_info[idx.as_usize()].callstatus |= had_tail;
+            return r;
+        }
         crate::do_::hookcall(self, idx)
     }
     #[inline(always)]

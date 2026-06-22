@@ -896,25 +896,75 @@ fn collect_valid_lines(state: &mut LuaState, cl: Option<&LuaClosure>) -> Result<
 
 // ─── Function naming (symbolic execution) ────────────────────────────────────
 
-/// Tries to find a name for the function being called, based on the calling
-/// call frame `ci`. Returns `None` if the frame is tail-called or unavailable.
+/// Resolves the `name`/`namewhat` pair for the inspected frame `ci`, mirroring
+/// each reference version's `getfuncname` (and pre-5.3 `case 'n'`) verbatim.
 ///
+/// The finalizer-naming seam diverges sharply across versions and is
+/// load-bearing for `db.lua`. C 5.3 reports `CIST_FIN` on the frame that
+/// *carries* the flag (the C frame that invoked the finalizer), so the
+/// metamethod surfaces one level *above* the finalizer itself. C 5.4/5.5 moved
+/// the check to `funcnamefromcall(ci->previous)`, so the finalizer's own frame
+/// is named `__gc`. C 5.1/5.2 have no `CIST_FIN` naming case at all, so the
+/// finalizer-invoking frame keeps whatever name its own caller implies.
+///
+/// This runs only on `getinfo`'s cold `'n'` path, so the per-version branch is
+/// outside the hot dispatch loop.
 fn get_func_name<'a>(
     state: &'a LuaState,
     ci: Option<&CallInfo>,
     name: &mut Option<Vec<u8>>,
 ) -> Option<&'static [u8]> {
-    //      return funcnamefromcall(L, ci->previous, name);
-    //    else return NULL;
     let ci = ci?;
-    if ci.callstatus & CIST_TAIL != 0 {
+    match state.global().lua_version {
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 => {
+            if ci.callstatus & CIST_TAIL != 0 {
+                return None;
+            }
+            funcname_from_caller_code(state, ci, false, name)
+        }
+        lua_types::LuaVersion::V53 => {
+            if ci.callstatus & CIST_FIN != 0 {
+                *name = Some(b"__gc".to_vec());
+                return Some(b"metamethod");
+            }
+            if ci.callstatus & CIST_TAIL != 0 {
+                return None;
+            }
+            funcname_from_caller_code(state, ci, true, name)
+        }
+        lua_types::LuaVersion::V54 | lua_types::LuaVersion::V55 | _ => {
+            if ci.callstatus & CIST_TAIL != 0 {
+                return None;
+            }
+            let prev_ci = state.get_ci(ci.previous?).clone();
+            funcname_from_call(state, &prev_ci, name)
+        }
+    }
+}
+
+/// Resolves `ci`'s name from its caller's calling instruction, the
+/// pre-5.4 `getfuncname` tail: only when the caller (`ci->previous`) is a Lua
+/// frame is there a calling opcode to read; a C caller yields no name.
+///
+/// `check_hooked` mirrors that C 5.3 moved the `CIST_HOOKED` test *inside*
+/// `funcnamefromcode` (so it reads the caller's flag, after the `isLua`
+/// guard), whereas C 5.1/5.2 have no hook-naming case at all.
+fn funcname_from_caller_code<'a>(
+    state: &'a LuaState,
+    ci: &CallInfo,
+    check_hooked: bool,
+    name: &mut Option<Vec<u8>>,
+) -> Option<&'static [u8]> {
+    let prev_ci = state.get_ci(ci.previous?).clone();
+    if !prev_ci.is_lua() {
         return None;
     }
-    // TODO(port): ci->previous requires navigating call_stack by prev idx
-    // TODO(phase-b): get_prev_ci needs to accept &CallInfo or take the previous idx.
-    let prev_idx = ci.previous?;
-    let prev_ci = state.get_ci(prev_idx).clone();
-    funcname_from_call(state, &prev_ci, name)
+    if check_hooked && prev_ci.callstatus & CIST_HOOKED != 0 {
+        *name = Some(b"?".to_vec());
+        return Some(b"hook");
+    }
+    let proto = ci_lua_proto(&prev_ci, state);
+    funcname_from_code(state, &proto, current_pc(&prev_ci), name)
 }
 
 /// Fills `ar` with the requested debug information about closure `f` / frame `ci`.

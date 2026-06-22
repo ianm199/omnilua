@@ -120,9 +120,50 @@ registry handling; recorded here with the family. Lower priority (cosmetic).
 
 ---
 
-## F6 — `load()` with a function reader is not lazy (eager drain) — CROSS-VERSION
+## F6 — `load()` with a function reader is not lazy (eager drain) — ✅ FIXED 2026-06-22
 
 Date opened: 2026-06-22. Source: arch7-reader wave.
+
+**Outcome (fix/f6-reader).** The reader is now reentrant end-to-end and pulled
+on demand, so `load(reader_fn)` stops at the first syntax error and the
+reader-call count matches the reference (the canonical repro flipped `true 9` →
+`true 2` on 5.1, MATCH on all versions). The fix:
+
+- A single reentrant reader type `lua_vm::zio::ChunkReader =
+  Box<dyn FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError>>` threaded
+  through the whole chain. `lua-vm`'s `ZIO::getc`/`fill`/`read` now take
+  `&mut LuaState`; `api::load` takes a `ChunkReader`.
+- The two lexer `ZIO` types were unified — `lua-lex` now uses
+  `lua_vm::zio::ZIO` directly (its own duplicate `ZIO` was deleted). `advance`
+  and `check_next1` became fallible and take `&mut LuaState`, so the lexer
+  pulls a chunk (running the Lua reader) only when it needs the next byte.
+- `ParserHook` carries `&mut ZIO` instead of a materialised `&[u8]`;
+  `lua_parse::parse` takes ownership of the live `ZIO` (`ZIO::take`) and builds
+  the `LexState` over it. The eager drains in `state_stub::load_with_reader`
+  and `do_::parse_stub` were deleted. `load_with_reader` now hands the reader
+  straight to `api::load`; a reader error propagates into the protected parse
+  and surfaces as a failed load with the message on the stack (faithful to C).
+- **Rooting fallout fixed:** lazy pulling lets a Lua reader run
+  `collectgarbage()` mid-parse (calls.lua's `read1` does exactly this). The
+  parser builds its proto/closure tree in Rust-owned `Box<LuaProto>` values not
+  yet reachable from any GC root, so a mid-parse sweep collected interned
+  constants and child protos (use-after-sweep under `LUA_RS_GC_QUARANTINE`).
+  `protected_parser` now stops the collector over the parse window and restores
+  the prior flags after — C anchors the half-built closure on the stack; we
+  defer collection, same net effect.
+- **Surfaced + fixed a separate version bug:** clearing F6 advanced
+  files.lua@5.3 to `load(io.lines(file,"L"))`, which exposed that our
+  `io.lines(filename,...)` returned **four** values on every version. The
+  to-be-closed (4th) result is a 5.4 addition; 5.1–5.3 return only the
+  iterator. Gated via `LuaVersion::lines_returns_to_be_closed()` (true only for
+  5.4/5.5); arity now matches the reference on all five versions.
+
+**Result:** files.lua@5.3 **FAIL → PASS** (and files.lua@5.1 PASS). calls.lua
+F6 assertions (lines 250–267) now pass on all versions; calls.lua@5.1 advances
+to line 277 (an unrelated dump/undump-upvalues issue) and 5.2–5.5 calls PASS.
+Gates green: 184 multiversion_oracle, 36 GC canaries, lex/parse/vm/stdlib unit
+tests, full workspace build, wasm32, and load()-of-string parity byte-identical
+on all five versions. Original finding below.
 
 **Divergence.** `load(reader_fn)` where the chunk has an early syntax error: the
 reference stops pulling reader chunks the moment the lexer/parser detects the
@@ -227,9 +268,9 @@ change.
 1. **F1** (systemic arg-name resolver) — touches the most surfaces; one fix.
 2. **F2** (`__name` pre-5.3) — touches 23 sites incl. all type errors; one fix.
 3. **F3 / F4** (coroutine wording + registry) — coroutine-scoped.
-4. **F6** (lazy `load` reader) — cross-version; gates `calls.lua@5.1`,
-   `files.lua@5.1`, `files.lua@5.3`; needs a 10-file coordinated reentrant-reader
-   change (api.rs + zio.rs + 3 ParserHook installers beyond the usual 5).
+4. ~~**F6** (lazy `load` reader)~~ — ✅ FIXED 2026-06-22 (fix/f6-reader);
+   flipped `files.lua@5.1` + `files.lua@5.3` to PASS and cleared the F6
+   assertions on `calls.lua` across all versions.
 5. **F5** — cosmetic, stdlib-side, low priority.
 
 None of these block correctness on the dominant versions (5.4 default); they are

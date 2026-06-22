@@ -58,8 +58,11 @@ for ver in 5.1 5.2 5.3 5.4 5.5; do
     wrap="$wrapdir/$base.wrap.lua"
     { printf '%s\n' "$preamble"; printf 'dofile([[%s]])\n' "$tf"; } > "$wrap"
     case "$base" in all) cwd="$td";; *) cwd="$ROOT";; esac
+    save_timeout="$TIMEOUT"
+    case "$base" in all|heavy|big|verybig) TIMEOUT=120 ;; esac
     rstat=$(run_one "$ref" "$ver" "$wrap" "$cwd" "$lp")
     ostat=$(run_one "$OUR" "$ver" "$wrap" "$cwd" "$lp")
+    TIMEOUT="$save_timeout"
     printf '%s\t%s\t%s\n' "$base" "$rstat" "$ostat" >> "$tsv"
   done
   awk -F'\t' -v v="$ver" '{t++} $2=="PASS"{rp++} $3=="PASS"{op++}

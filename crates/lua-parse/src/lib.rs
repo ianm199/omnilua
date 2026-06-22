@@ -535,36 +535,39 @@ const PARSER_MAX_C_CALLS: u32 = 200;
 
 /// Guards parser recursion depth, mirroring C's `enterlevel` / `nCcalls`.
 ///
-/// Lua 5.2 and 5.3 reported overrunning the limit as the syntax error
-/// `too many C levels (limit is 200) in <where>` (with a source location and
-/// `near '<token>'` suffix, the `checklimit`/`errorlimit` path of those
-/// versions' `lparser.c`). Lua 5.4 replaced that with a bare runtime
-/// `C stack overflow` with no location, which is what 5.4/5.5 keep. 5.1 has its
-/// own per-construct limits and never used this collective "C levels" message,
-/// so it also stays on the bare form here.
+/// Lua 5.1's `enterlevel` (lparser.c) raised the *lexer* error
+/// `chunk has too many syntax levels` (a source-located message with no
+/// `near '<token>'` suffix, the `luaX_lexerror(ls, msg, 0)` path) when the
+/// recursion counter passed `LUAI_MAXCCALLS`. Lua 5.2 and 5.3 replaced that
+/// with the syntax error `too many C levels (limit is 200) in <where>` (with a
+/// source location and `near '<token>'` suffix, the `checklimit`/`errorlimit`
+/// path of those versions' `lparser.c`). Lua 5.4 replaced *that* with a bare
+/// runtime `C stack overflow` with no location, which is what 5.4/5.5 keep.
 fn enter_level(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     ls.recursion_depth += 1;
     if ls.recursion_depth < PARSER_MAX_C_CALLS {
         return Ok(());
     }
-    if matches!(
-        state.global().lua_version,
-        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
-    ) {
-        let fs = ls.fs.as_ref().unwrap();
-        let where_clause: Vec<u8> = if fs.f.linedefined == 0 {
-            b"main function".to_vec()
-        } else {
-            format!("function at line {}", fs.f.linedefined).into_bytes()
-        };
-        let mut msg: Vec<u8> = Vec::new();
-        msg.extend_from_slice(b"too many C levels (limit is ");
-        msg.extend_from_slice(PARSER_MAX_C_CALLS.to_string().as_bytes());
-        msg.extend_from_slice(b") in ");
-        msg.extend_from_slice(&where_clause);
-        Err(lua_lex::syntax_error(&mut ls.lex, &msg))
-    } else {
-        Err(LuaError::syntax(format_args!("C stack overflow")))
+    match state.global().lua_version {
+        lua_types::LuaVersion::V51 => Err(lua_lex::sem_error(
+            &mut ls.lex,
+            b"chunk has too many syntax levels",
+        )),
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => {
+            let fs = ls.fs.as_ref().unwrap();
+            let where_clause: Vec<u8> = if fs.f.linedefined == 0 {
+                b"main function".to_vec()
+            } else {
+                format!("function at line {}", fs.f.linedefined).into_bytes()
+            };
+            let mut msg: Vec<u8> = Vec::new();
+            msg.extend_from_slice(b"too many C levels (limit is ");
+            msg.extend_from_slice(PARSER_MAX_C_CALLS.to_string().as_bytes());
+            msg.extend_from_slice(b") in ");
+            msg.extend_from_slice(&where_clause);
+            Err(lua_lex::syntax_error(&mut ls.lex, &msg))
+        }
+        _ => Err(LuaError::syntax(format_args!("C stack overflow"))),
     }
 }
 

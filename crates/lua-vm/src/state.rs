@@ -1827,6 +1827,37 @@ pub struct GlobalState {
     /// at `1` because `0` is reserved for the main thread.
     pub next_thread_id: u64,
 
+    /// Lua 5.1 per-thread global table (`lua_State.l_gt`) for coroutine
+    /// threads, keyed by thread id.
+    ///
+    /// In 5.1 every thread has its own global table: `setfenv(0, t)` and
+    /// `getfenv(0)` read/write the *running* thread's `l_gt`, and a freshly
+    /// loaded top-level chunk takes the running thread's `l_gt` as its
+    /// environment. A coroutine inherits its creator's `l_gt` at creation,
+    /// after which the two are independent — a coroutine's `setfenv(0, t)`
+    /// must not clobber the main thread's globals.
+    ///
+    /// The main thread (`main_thread_id`) is the single exception: its `l_gt`
+    /// is the existing [`Self::globals`] field (single source of truth, never
+    /// duplicated here). Only coroutine ids appear as keys, seeded in
+    /// `new_thread`. Empty (and never read) on 5.2–5.5, where all threads
+    /// share one global table and this field is inert. Traced as a root and
+    /// pruned of dead-thread entries after each collection.
+    pub thread_globals: std::collections::HashMap<u64, LuaValue>,
+
+    /// Lua 5.1 per-closure environment for closures that carry no `_ENV`
+    /// upvalue, keyed by closure identity ([`GcRef::identity`]).
+    ///
+    /// The reused modern parser threads an `_ENV` upvalue only onto closures
+    /// that reference a free (global) name; a closure that references none has
+    /// no such upvalue. 5.1's `setfenv(f, t)` must still set such a closure's
+    /// environment and `getfenv(f)` must read it back, so the environment is
+    /// stored here, independent of the upvalue array. A closure that *does*
+    /// have an `_ENV` upvalue never appears here — its environment is that
+    /// upvalue's closed value. Empty (and never read) on 5.2–5.5. Traced as a
+    /// root and pruned of dead-closure entries after each collection.
+    pub closure_envs: std::collections::HashMap<usize, LuaValue>,
+
     // types.tsv: global_State.memerrmsg → GcRef<LuaString>
     pub memerrmsg: GcRef<LuaString>,
 
@@ -2345,6 +2376,39 @@ impl LuaState {
     /// Used in `new_thread` to give the child thread access to the same GlobalState.
     pub fn global_rc(&self) -> Rc<RefCell<GlobalState>> {
         Rc::clone(&self.global)
+    }
+
+    /// Lua 5.1 global table of the thread `id` (`lua_State.l_gt`).
+    ///
+    /// The main thread's `l_gt` is the shared [`GlobalState::globals`] field;
+    /// a coroutine's lives in [`GlobalState::thread_globals`] under its id,
+    /// seeded at creation in `new_thread`. A coroutine id that is missing from
+    /// the map is a `new_thread` seeding bug, not a recoverable state.
+    ///
+    /// 5.1 only. Other versions never call this — they share one global table.
+    pub fn v51_thread_lgt(&self, id: u64) -> LuaValue {
+        let g = self.global();
+        if id == g.main_thread_id {
+            g.globals.clone()
+        } else {
+            g.thread_globals
+                .get(&id)
+                .expect("v51 coroutine l_gt must be seeded in new_thread")
+                .clone()
+        }
+    }
+
+    /// Set the Lua 5.1 global table of thread `id` (`lua_State.l_gt`).
+    ///
+    /// Writes the main thread's `l_gt` through [`GlobalState::globals`] and a
+    /// coroutine's through [`GlobalState::thread_globals`]. 5.1 only.
+    pub fn v51_set_thread_lgt(&self, id: u64, t: LuaValue) {
+        let mut g = self.global_mut();
+        if id == g.main_thread_id {
+            g.globals = t;
+        } else {
+            g.thread_globals.insert(id, t);
+        }
     }
 
     /// Enable the ltests-style warning sink used by `LUA_RS_TESTC`.
@@ -4896,6 +4960,8 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(Vec::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
+        let alive_closure_env_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
         let dead_interned: std::cell::RefCell<Vec<(u32, usize)>> = std::cell::RefCell::new(Vec::new());
         let collect_ran = std::cell::Cell::new(false);
 
@@ -5057,6 +5123,14 @@ impl<'a> GcHandle<'a> {
                         }
                     }
                 }
+                {
+                    let mut alive = alive_closure_env_ids.borrow_mut();
+                    for id in global.closure_envs.keys() {
+                        if marker.is_visited(*id) {
+                            alive.insert(*id);
+                        }
+                    }
+                }
                 record_dead_interned_strings(&*global, marker, &dead_interned);
             };
             match mode {
@@ -5076,6 +5150,7 @@ impl<'a> GcHandle<'a> {
         let alive_set = alive_ids.into_inner();
         let promote: Vec<FinalizerObject> = newly_unreachable.into_inner();
         let alive_thread_ids = alive_thread_ids.into_inner();
+        let alive_closure_env_ids = alive_closure_env_ids.into_inner();
         let dead_interned = dead_interned.into_inner();
         let mut g = state_ref.global.borrow_mut();
         remove_dead_interned_strings(&mut *g, dead_interned);
@@ -5084,6 +5159,13 @@ impl<'a> GcHandle<'a> {
         g.threads.retain(|id, _| alive_thread_ids.contains(id));
         g.cross_thread_upvals
             .retain(|(id, _), _| *id == main_thread_id || alive_thread_ids.contains(id));
+        // Lua 5.1 side maps (empty on 5.2–5.5): drop a coroutine's per-thread
+        // global table once the coroutine is gone, and a closure's stored
+        // environment once that closure is no longer visited.
+        g.thread_globals
+            .retain(|id, _| alive_thread_ids.contains(id));
+        g.closure_envs
+            .retain(|id, _| alive_closure_env_ids.contains(id));
         // Move newly-unreachable finalizables from `pending_finalizers` to
         // `to_be_finalized`. The latter is rooted by `GlobalState::trace`,
         // so these tables remain alive until their `__gc` runs.
@@ -5218,6 +5300,8 @@ impl<'a> GcHandle<'a> {
         let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
+        let alive_closure_env_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
         let dead_interned: std::cell::RefCell<Vec<(u32, usize)>> = std::cell::RefCell::new(Vec::new());
         let atomic_ran = std::cell::Cell::new(false);
@@ -5367,6 +5451,14 @@ impl<'a> GcHandle<'a> {
                         }
                     }
                 }
+                {
+                    let mut alive = alive_closure_env_ids.borrow_mut();
+                    for id in global.closure_envs.keys() {
+                        if marker.is_visited(*id) {
+                            alive.insert(*id);
+                        }
+                    }
+                }
                 record_dead_interned_strings(&*global, marker, &dead_interned);
             };
             let budget = StepBudget::from_work(work_units);
@@ -5385,6 +5477,7 @@ impl<'a> GcHandle<'a> {
             let alive_set = alive_ids.into_inner();
             let promote: Vec<FinalizerObject> = newly_unreachable.into_inner();
             let alive_thread_ids = alive_thread_ids.into_inner();
+            let alive_closure_env_ids = alive_closure_env_ids.into_inner();
             let dead_interned = dead_interned.into_inner();
             let mut g = state_ref.global.borrow_mut();
             remove_dead_interned_strings(&mut *g, dead_interned);
@@ -5393,6 +5486,13 @@ impl<'a> GcHandle<'a> {
             g.threads.retain(|id, _| alive_thread_ids.contains(id));
             g.cross_thread_upvals
                 .retain(|(id, _), _| *id == main_thread_id || alive_thread_ids.contains(id));
+            // Lua 5.1 side maps (empty on 5.2–5.5): drop a coroutine's
+            // per-thread global table once the coroutine is gone, and a
+            // closure's stored environment once that closure is unvisited.
+            g.thread_globals
+                .retain(|id, _| alive_thread_ids.contains(id));
+            g.closure_envs
+                .retain(|id, _| alive_closure_env_ids.contains(id));
             let promoted = g.finalizers.promote_pending_to_finalized(promote);
             for object in &promoted {
                 if let Some(ptr) = object.heap_ptr() {
@@ -6010,6 +6110,20 @@ pub fn new_thread(state: &mut LuaState, initial_body: Option<LuaValue>) -> Resul
         id
     };
 
+    // Lua 5.1: a coroutine inherits its creator's global table (`l_gt`) at
+    // creation, after which the two are independent. Seed the new thread's
+    // `thread_globals` slot with the running thread's current `l_gt` so the
+    // coroutine's `setfenv(0, t)` and freshly-loaded chunks resolve through
+    // its own slot, never the main thread's `globals`. Inert on 5.2–5.5.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        let creator_id = state.global().current_thread_id;
+        let creator_lgt = state.v51_thread_lgt(creator_id);
+        state
+            .global_mut()
+            .thread_globals
+            .insert(reserved_id, creator_lgt);
+    }
+
     let mut new_thread = LuaState {
         status: LuaStatus::Ok as u8,
         allowhook: true,
@@ -6290,6 +6404,8 @@ pub fn new_state() -> Option<LuaState> {
         closing_thread_id: None,
         main_thread_id: 0,
         next_thread_id: 1,
+        thread_globals: std::collections::HashMap::new(),
+        closure_envs: std::collections::HashMap::new(),
         memerrmsg: placeholder_str.clone(),
         tmname: Vec::new(),
         mt: std::array::from_fn(|_| None),

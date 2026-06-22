@@ -816,17 +816,42 @@ fn fenv_env_upval_index(
 
 /// Read the environment of a resolved function value.
 ///
-/// A Lua closure's environment is its `_ENV` upvalue. A C/Rust function (or a
-/// Lua closure that references no globals, hence has no `_ENV` upvalue) is given
-/// the thread global table as its environment — matching the common 5.1 case
-/// and the documented `LUA_ENVIRONINDEX` gap (specs/followup/5.1-fenv.md §4).
+/// A Lua closure's environment is its `_ENV` upvalue. A Lua closure that
+/// references no globals has no `_ENV` upvalue; its environment lives in the
+/// `closure_envs` side map once `setfenv` has set one, otherwise it has never
+/// been given a distinct environment and resolves to the running thread's
+/// global table. A C/Rust function likewise reports the thread global table —
+/// the common 5.1 case and the documented `LUA_ENVIRONINDEX` gap
+/// (specs/followup/5.1-fenv.md §4).
 fn fenv_read(state: &LuaState, func: &LuaValue) -> LuaValue {
     if let LuaValue::Function(LuaClosure::Lua(lcl)) = func {
         if let Some(idx) = fenv_env_upval_index(lcl) {
             return state.upvalue_get(lcl, idx);
         }
+        if let Some(env) = state.global().closure_envs.get(&lcl.identity()) {
+            return env.clone();
+        }
     }
-    state.global().globals.clone()
+    let running = state.global().current_thread_id;
+    state.v51_thread_lgt(running)
+}
+
+/// Set the environment of a Lua closure that carries no `_ENV` upvalue.
+///
+/// Such a closure (the modern parser threads `_ENV` only onto closures that
+/// reference a free global name) has no upvalue slot to write, so 5.1's
+/// `setfenv` stores its environment in the `closure_envs` side map keyed by
+/// closure identity. A closure that *does* have an `_ENV` upvalue is handled by
+/// the upvalue-cell path and never reaches here.
+fn fenv_set_closure_env(
+    state: &mut LuaState,
+    lcl: &lua_types::gc::GcRef<lua_types::closure::LuaLClosure>,
+    new_env: LuaValue,
+) {
+    state
+        .global_mut()
+        .closure_envs
+        .insert(lcl.identity(), new_env);
 }
 
 /// `getfenv([f])` — Lua 5.1 only.
@@ -845,8 +870,9 @@ pub(crate) fn getfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
         LuaValue::Float(_) | LuaValue::Int(_) => {
             let level = fenv_level(&arg1);
             if level == 0 {
-                let g = state.global().globals.clone();
-                state.push(g);
+                let running = state.global().current_thread_id;
+                let lgt = state.v51_thread_lgt(running);
+                state.push(lgt);
                 return Ok(1);
             }
             fenv_getfunc(state, level)?
@@ -877,9 +903,13 @@ pub(crate) fn setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     let is_level_zero =
         matches!(&arg1, LuaValue::Int(0)) || matches!(&arg1, LuaValue::Float(f) if *f == 0.0);
     if is_level_zero {
-        // Level 0: replace the running thread's global table and return the
-        // running thread. Subsequently-loaded top-level chunks take this env.
-        state.global_mut().globals = new_env;
+        // Level 0: replace the *running thread's* global table (5.1's
+        // per-thread `l_gt`) and return the running thread. Subsequently
+        // loaded top-level chunks take this env. From inside a coroutine this
+        // touches only that coroutine's `l_gt`, never the main thread's
+        // globals.
+        let running = state.global().current_thread_id;
+        state.v51_set_thread_lgt(running, new_env);
         lua_vm::api::push_thread(state);
         return Ok(1);
     }
@@ -909,12 +939,15 @@ pub(crate) fn setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
                 let uv = state.new_upval_closed(new_env);
                 lcl.set_upval(idx, uv);
                 state.gc().obj_barrier(lcl, &uv);
+            } else {
+                // A Lua closure that references no free global name has no
+                // `_ENV` upvalue, so there is no upvalue cell to write. 5.1
+                // still sets its environment; store it in the `closure_envs`
+                // side map keyed by closure identity, where `getfenv(f)` /
+                // `getfenv(level)` reads it back.
+                let lcl = *lcl;
+                fenv_set_closure_env(state, &lcl, new_env);
             }
-            // A Lua closure that references no globals has no `_ENV` upvalue and
-            // nothing reads globals through it, so the set is inert; 5.1 still
-            // accepts it and returns the function. (Gap: a subsequent
-            // `getfenv` on such a closure returns the thread globals rather than
-            // the set table — see specs/followup/5.1-fenv.md §4.)
         }
         _ => {
             // C/Rust functions cannot have their environment changed. 5.1
@@ -947,6 +980,9 @@ pub(crate) fn set_func_env_at_level(
             let uv = state.new_upval_closed(new_env);
             lcl.set_upval(idx, uv);
             state.gc().obj_barrier(lcl, &uv);
+        } else {
+            let lcl = *lcl;
+            fenv_set_closure_env(state, &lcl, new_env);
         }
     }
     Ok(())
@@ -969,11 +1005,21 @@ pub(crate) fn debug_getfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> 
         return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
     }
     let obj = state.value_at(1);
-    if matches!(obj, LuaValue::Function(_)) {
-        let env = fenv_read(state, &obj);
-        state.push(env);
-    } else {
-        state.push(LuaValue::Nil);
+    match &obj {
+        LuaValue::Function(_) => {
+            let env = fenv_read(state, &obj);
+            state.push(env);
+        }
+        LuaValue::Thread(th) => {
+            // A thread's environment is its per-thread global table (`l_gt`):
+            // `debug.getfenv(co)` returns the global table that `co`'s freshly
+            // loaded chunks and `getfenv(0)` see (closure.lua@5.1).
+            let lgt = state.v51_thread_lgt(th.id);
+            state.push(lgt);
+        }
+        _ => {
+            state.push(LuaValue::Nil);
+        }
     }
     Ok(1)
 }
@@ -995,7 +1041,16 @@ pub(crate) fn debug_setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> 
                 let uv = state.new_upval_closed(new_env);
                 lcl.set_upval(idx, uv);
                 state.gc().obj_barrier(lcl, &uv);
+            } else {
+                let lcl = *lcl;
+                fenv_set_closure_env(state, &lcl, new_env);
             }
+        }
+        LuaValue::Thread(th) => {
+            // `debug.setfenv(co, t)` sets thread `co`'s per-thread global
+            // table (`l_gt`), the env its freshly loaded chunks and
+            // `getfenv(0)` resolve through (closure.lua@5.1).
+            state.v51_set_thread_lgt(th.id, new_env);
         }
         LuaValue::Function(_) => {
             return Err(

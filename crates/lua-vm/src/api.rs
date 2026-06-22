@@ -1304,6 +1304,17 @@ fn get_global_table(state: &LuaState) -> LuaValue {
     // array slot. init_registry now stashes globals in a direct
     // GlobalState field; read it from there until the LuaTable placeholder
     // reconciles with lua-vm::table::LuaTable.
+    //
+    // Lua 5.1 has a per-thread global table (`lua_State.l_gt`): a freshly
+    // loaded top-level chunk takes the *running* thread's `l_gt` as its
+    // environment, and `setfenv(0, t)` from inside a coroutine must affect
+    // only that coroutine, never the main thread's globals. Resolve through
+    // the running thread's `l_gt` on 5.1; every other version shares one
+    // global table and reads the `globals` field directly.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        let running = state.global().current_thread_id;
+        return state.v51_thread_lgt(running);
+    }
     state.global().globals.clone()
 }
 

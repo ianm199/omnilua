@@ -3183,8 +3183,29 @@ impl LuaState {
     pub fn set_hook(&mut self, h: Option<Box<dyn FnMut(&mut LuaState, &crate::debug::LuaDebug)>>) {
         self.hook = h;
     }
+    /// Fire a count or line hook on the currently executing frame.
+    ///
+    /// C-Lua's `luaG_traceexec` is the sole caller of `luaD_hook` for count and
+    /// line events, and it relies on `L->ci` being the same Lua frame after the
+    /// hook as before it: the bytecode dispatch loop in `luaV_execute` reads
+    /// `L->ci` (via `trace_exec`) on the next instruction and writes its
+    /// `savedpc`, which is only valid on a Lua frame. C maintains that invariant
+    /// implicitly — the unprotected `lua_call` inside the hook restores `L->ci`
+    /// via `luaD_poscall` on success, and on a hook error it `longjmp`s straight
+    /// to the nearest protected boundary, which resets `L->ci`, so a corrupted
+    /// `ci` never re-enters the dispatch loop.
+    ///
+    /// Our port reports hook-callback errors through a different path that can
+    /// leave `self.ci` advanced to the hook's own (C) frame instead of unwinding
+    /// it, so the invariant the dispatch loop depends on would be broken. Saving
+    /// `self.ci` here and restoring it after the hook reasserts exactly the
+    /// invariant C guarantees, so the next `trace_exec` writes `savedpc` on the
+    /// Lua frame it is actually executing rather than panicking on a C frame.
     pub fn call_hook_event(&mut self, event: i32, line: i32) -> Result<(), LuaError> {
-        crate::do_::hook(self, event, line, 0, 0)
+        let saved_ci = self.ci;
+        let r = crate::do_::hook(self, event, line, 0, 0);
+        self.ci = saved_ci;
+        r
     }
 
     pub fn registry_value(&self) -> LuaValue {

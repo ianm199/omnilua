@@ -562,9 +562,36 @@ fn upval_name(p: &LuaProto, uv: usize) -> &[u8] {
         .map_or(b"?" as &[u8], |s| s.as_bytes())
 }
 
-/// Finds the stack slot for vararg value number `n` (n is negative) in `ci`.
-/// Returns `Some(pos)` and the name `b"(vararg)"` if found, else `None`.
+/// Generic name reported by `debug.getlocal` for an unnamed-but-valid stack
+/// slot (a "temporary").
 ///
+/// The wording is version-gated. Lua 5.1–5.3 report a single `(*temporary)`
+/// for every valid slot, with no distinction between Lua and C frames
+/// (`getfuncname`/`luaG_findlocal` in their `ldebug.c`). Lua 5.4 split this
+/// into `(temporary)` for a Lua frame and `(C temporary)` for a C frame
+/// (`isLua(ci) ? "(temporary)" : "(C temporary)"`), and 5.5 kept that split.
+fn temporary_local_name(state: &LuaState, ci_is_lua: bool) -> &'static [u8] {
+    match state.global().lua_version {
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => {
+            b"(*temporary)"
+        }
+        _ => {
+            if ci_is_lua {
+                b"(temporary)"
+            } else {
+                b"(C temporary)"
+            }
+        }
+    }
+}
+
+/// Finds the stack slot for vararg value number `n` (n is negative) in `ci`.
+/// Returns `Some(pos)` and the generic vararg name if found, else `None`.
+///
+/// The generic name is version-gated: Lua 5.2 and 5.3 report `(*vararg)`
+/// (`findvararg` in their `ldebug.c`), while 5.4 and 5.5 dropped the asterisk
+/// to `(vararg)`. 5.1 has no `findvararg` (it exposes varargs through the `arg`
+/// table, not `debug.getlocal`), so it never reaches this path.
 ///
 /// PORT NOTE: C sets `*pos` as an out-parameter. Rust returns an Option of the
 /// stack index alongside the name.
@@ -576,7 +603,11 @@ fn find_vararg(state: &LuaState, ci: &CallInfo, n: i32) -> Option<(StackIdx, &'s
             // PORT NOTE: pointer arithmetic converted to index arithmetic.
             // ci->func.p is the function slot; varargs are at func - nextra - 1 .. func - 1
             let pos = ci.func - (nextra + n + 1);
-            return Some((pos, b"(vararg)" as &[u8]));
+            let name: &'static [u8] = match state.global().lua_version {
+                lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => b"(*vararg)",
+                _ => b"(vararg)",
+            };
+            return Some((pos, name));
         }
     }
     None
@@ -629,11 +660,7 @@ pub(crate) fn find_local(
                 .unwrap_or_else(|| state.top_idx().0)
         };
         if n > 0 && limit.saturating_sub(base.0) >= n as u32 {
-            name = Some(if ci.is_lua() {
-                b"(temporary)".to_vec()
-            } else {
-                b"(C temporary)".to_vec()
-            });
+            name = Some(temporary_local_name(state, ci.is_lua()).to_vec());
         } else {
             return None;
         }

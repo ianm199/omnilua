@@ -535,7 +535,7 @@ impl LuaState {
     /// trait default so the `todo!()` shim never fires.
     pub fn check_arg_any(&mut self, arg: i32) -> Result<(), LuaError> {
         if lua_type_at(self, arg) == LuaType::None {
-            return Err(LuaError::arg_error(arg, "value expected"));
+            return Err(crate::debug::arg_error_impl(self, arg, b"value expected"));
         }
         Ok(())
     }

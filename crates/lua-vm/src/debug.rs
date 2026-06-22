@@ -214,6 +214,51 @@ fn find_func_name_in_loaded(state: &LuaState, func_val: &LuaValue) -> Option<Vec
     find_func_in_table(&*loaded_table, func_val, b"", 1)
 }
 
+/// Per-version `pushglobalfuncname` (C `lauxlib.c`): resolve the C function at
+/// the current call frame to a name by searching `package.loaded` by identity.
+///
+/// The version seam (the F1 funcname resolver):
+/// - **5.1** recorded no names for C functions — PUC-Rio 5.1 has no
+///   `pushglobalfuncname`, so `luaL_argerror` falls straight through to `'?'`.
+///   We return `None` here so the caller emits `'?'`.
+/// - **5.2** searches the *global table* (`lua_pushglobaltable`) and does **not**
+///   strip the `_G.` prefix (PUC-Rio 5.2's `pushglobalfuncname` has no strip).
+///   A bare global resolved through the `_G` module therefore renders
+///   `'_G.<name>'`; a module member (`coroutine.resume`) carries its own dotted
+///   name and is unaffected. We keep the `_G.` prefix for V52.
+/// - **5.3+** searches `package.loaded` and explicitly strips a leading `_G.`
+///   (C: `strncmp(name, LUA_GNAME ".", 3)`), reporting the bare `<name>`.
+///
+/// PORT NOTE: PUC-Rio 5.2's exact `_G.`-vs-bare choice is *also*
+/// hash-iteration-order-dependent and non-deterministic across runs of the
+/// reference binary itself: the global table contains `_G._G` (a self-reference),
+/// so `findfield` reaches e.g. `next` either directly under `_G` (→ `'next'`) or
+/// one level deeper through the self-reference (→ `'_G.next'`), and which it hits
+/// first depends on hash-iteration order. The same global can print `'next'` on
+/// one run and `'_G.next'` on the next. We pin the deterministic `'_G.<name>'`
+/// form for V52 globals (always reachable via the `_G` module), which is one of
+/// the two valid reference outputs; the `error_wording_kit` doc-comment records
+/// this for the entries it pins.
+fn arg_error_global_name(
+    state: &LuaState,
+    ar: &LuaDebug,
+    version: lua_types::LuaVersion,
+) -> Option<Vec<u8>> {
+    if version == lua_types::LuaVersion::V51 {
+        return None;
+    }
+    let keeps_global_prefix = version == lua_types::LuaVersion::V52;
+    let ci_idx = ar.i_ci?;
+    let func_slot = state.get_ci(ci_idx).func;
+    let func_val = state.get_at(func_slot).clone();
+    let found = find_func_name_in_loaded(state, &func_val)?;
+    if !keeps_global_prefix && found.starts_with(b"_G.") {
+        Some(found[3..].to_vec())
+    } else {
+        Some(found)
+    }
+}
+
 /// Equivalent of C `luaL_argerror`: build an arg-type error with function name
 /// (from debug info) and caller source location. Handles method calls by
 /// producing "calling 'f' on bad self ..." when arg==1 and namewhat=="method".
@@ -240,20 +285,11 @@ pub fn arg_error_impl(state: &mut LuaState, mut arg: i32, extramsg: &[u8]) -> Lu
             return c_api_runtime(state, msg.into_bytes());
         }
     }
+    let version = state.global().lua_version;
     let fname = ar
         .name
         .clone()
-        .or_else(|| {
-            let ci_idx = ar.i_ci?;
-            let func_slot = state.get_ci(ci_idx).func;
-            let func_val = state.get_at(func_slot).clone();
-            let found = find_func_name_in_loaded(state, &func_val)?;
-            if found.starts_with(b"_G.") {
-                Some(found[3..].to_vec())
-            } else {
-                Some(found)
-            }
-        })
+        .or_else(|| arg_error_global_name(state, &ar, version))
         .unwrap_or_else(|| b"?".to_vec());
     let msg = format!(
         "bad argument #{} to '{}' ({})",

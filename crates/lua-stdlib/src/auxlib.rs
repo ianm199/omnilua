@@ -137,6 +137,9 @@ fn find_field(state: &mut LuaState, objidx: i32, level: i32) -> Result<bool, Lua
 /// Returns `true` and leaves name string on top (at `top+1`) if found.
 ///
 fn push_global_func_name(state: &mut LuaState, ar: &mut LuaDebug) -> Result<bool, LuaError> {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return Ok(false);
+    }
     let top = state.top_count();
     state.get_info(b"f", ar)?;
     state.get_field(LUA_REGISTRYINDEX, LUA_LOADED_TABLE)?;
@@ -167,6 +170,9 @@ fn push_global_func_name_from_target(
     target: &mut LuaState,
     ar: &mut LuaDebug,
 ) -> Result<bool, LuaError> {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return Ok(false);
+    }
     let top = state.top_count();
     target.get_info(b"f", ar)?;
     let func = target.get_at(target.top_idx() - 1);
@@ -694,7 +700,7 @@ pub fn check_type(state: &mut LuaState, arg: i32, t: LuaType) -> Result<(), LuaE
 ///
 pub fn check_any(state: &mut LuaState, arg: i32) -> Result<(), LuaError> {
     if state.type_at(arg) == LuaType::None {
-        return Err(LuaError::arg_error(arg, "value expected"));
+        arg_error(state, arg, b"value expected")?;
     }
     Ok(())
 }
@@ -754,10 +760,7 @@ pub fn opt_number(state: &mut LuaState, arg: i32, def: f64) -> Result<f64, LuaEr
 /// return type; `!` (never) is nightly-only so we use `Result<usize, LuaError>`.
 fn int_error(state: &mut LuaState, arg: i32) -> Result<usize, LuaError> {
     if state.is_number(arg) {
-        Err(LuaError::arg_error(
-            arg,
-            "number has no integer representation",
-        ))
+        arg_error(state, arg, b"number has no integer representation")
     } else {
         tag_error(state, arg, LuaType::Number)?;
         unreachable!("tag_error always returns Err")

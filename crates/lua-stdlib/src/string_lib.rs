@@ -387,6 +387,8 @@ pub fn str_upper(state: &mut LuaState) -> Result<usize, LuaError> {
 
 /// `string.rep(s, n [, sep])` — return `n` copies of `s` separated by `sep`.
 ///
+/// The separator argument was added in Lua 5.2; 5.1's `string.rep(s, n)` ignores
+/// any 3rd argument, so the separator is unconditionally empty on 5.1.
 ///
 /// Borrow `s` through `to_lua_string`. The previous version did the
 /// `check_arg_string` copy and then a second redundant `s.to_vec()` inside the
@@ -402,7 +404,11 @@ pub fn str_rep(state: &mut LuaState) -> Result<usize, LuaError> {
     let s: &[u8] = s_ref.as_bytes();
     let l = s.len();
     let n = state.check_arg_integer(2)?;
-    let sep_owned = state.opt_arg_string(3, b"")?;
+    let sep_owned = if state.global().lua_version == lua_types::LuaVersion::V51 {
+        Vec::new()
+    } else {
+        state.opt_arg_string(3, b"")?
+    };
     let sep: &[u8] = &sep_owned;
     let lsep = sep.len();
 
@@ -1493,6 +1499,10 @@ fn add_s(
 /// Add the replacement value (string, table lookup, or function call) to `buf`.
 /// Returns `true` if the original text was changed.
 ///
+/// C `lstrlib.c` accepts any string-coercible result: `!lua_isstring(L, -1)` is
+/// the rejection test, and `lua_isstring` is true for numbers as well as strings.
+/// A returned number (integer or float) is therefore converted to its textual
+/// form; only `false`/`nil` keep the original match.
 fn add_value(
     state: &mut LuaState,
     ms: &MatchState,
@@ -1527,14 +1537,18 @@ fn add_value(
         buf.extend_from_slice(&ms.src[s..e]);
         return Ok(false);
     }
-    if state.type_at(-1) != LuaType::String {
+    let ty = state.type_at(-1);
+    if ty != LuaType::String && ty != LuaType::Number {
         let tname = state.type_name_at(-1).to_owned();
         return Err(LuaError::runtime(format_args!(
             "invalid replacement value (a {})",
             tname.escape_ascii()
         )));
     }
-    let v = state.to_bytes(-1).unwrap_or_default();
+    let v = match state.to_string_coerced(-1) {
+        Some(b) => b,
+        None => Vec::new(),
+    };
     state.pop();
     buf.extend_from_slice(&v);
     Ok(true)
@@ -1789,20 +1803,38 @@ fn frexp(x: f64) -> (f64, i32) {
 
 /// Convert float `n` to a Lua-readable literal (hex or special representation).
 ///
-fn quotefloat(n: f64) -> Vec<u8> {
+/// Lua 5.4/5.5 emit round-trippable literals for the non-finite values
+/// (`1e9999`/`-1e9999`/`(0/0)`); Lua 5.3's `%q` predates that and falls through
+/// to the platform `%g` text (`inf`/`-inf`/`nan`).
+fn quotefloat(n: f64, version: lua_types::LuaVersion) -> Vec<u8> {
     if n == f64::INFINITY {
-        return b"1e9999".to_vec();
+        return if version == lua_types::LuaVersion::V53 {
+            b"inf".to_vec()
+        } else {
+            b"1e9999".to_vec()
+        };
     } else if n == f64::NEG_INFINITY {
-        return b"-1e9999".to_vec();
+        return if version == lua_types::LuaVersion::V53 {
+            b"-inf".to_vec()
+        } else {
+            b"-1e9999".to_vec()
+        };
     } else if n.is_nan() {
-        return b"(0/0)".to_vec();
+        return if version == lua_types::LuaVersion::V53 {
+            b"nan".to_vec()
+        } else {
+            b"(0/0)".to_vec()
+        };
     }
     // Rust formats with a `.` decimal point regardless of locale, so unlike C's
     // `lua_number2strx` there is no locale separator to rewrite to `.`.
     num2straux(n)
 }
 
-/// Add a quoted Lua string literal to `buf`.
+/// Add a quoted Lua string literal to `buf` using the Lua 5.2+ escaping rules:
+/// `"`/`\`/newline are backslash-escaped, every other control byte becomes a
+/// decimal escape (`\d`, or `\ddd` when followed by a digit), and other bytes
+/// pass through.
 ///
 fn addquoted(buf: &mut Vec<u8>, s: &[u8]) {
     buf.push(b'"');
@@ -1820,6 +1852,28 @@ fn addquoted(buf: &mut Vec<u8>, s: &[u8]) {
             buf.extend_from_slice(formatted.as_bytes());
         } else {
             buf.push(c);
+        }
+    }
+    buf.push(b'"');
+}
+
+/// Add a quoted Lua string literal to `buf` using the Lua 5.1 escaping rules.
+///
+/// 5.1's `addquoted` differs from 5.2+: only `"`/`\`/newline are
+/// backslash-escaped, NUL becomes the 3-digit decimal escape `\000`, carriage
+/// return becomes the named escape `\r`, and every other byte (including other
+/// control characters) is emitted literally.
+fn addquoted_51(buf: &mut Vec<u8>, s: &[u8]) {
+    buf.push(b'"');
+    for &c in s.iter() {
+        match c {
+            b'"' | b'\\' | b'\n' => {
+                buf.push(b'\\');
+                buf.push(c);
+            }
+            b'\r' => buf.extend_from_slice(b"\\r"),
+            0 => buf.extend_from_slice(b"\\000"),
+            _ => buf.push(c),
         }
     }
     buf.push(b'"');
@@ -1843,8 +1897,9 @@ fn addliteral(state: &mut LuaState, buf: &mut Vec<u8>, arg: i32) -> Result<(), L
                 };
                 buf.extend_from_slice(formatted.as_bytes());
             } else {
+                let version = state.global().lua_version;
                 let n = state.to_number(arg).unwrap_or(0.0);
-                let hex = quotefloat(n);
+                let hex = quotefloat(n, version);
                 buf.extend_from_slice(&hex);
             }
         }
@@ -2149,8 +2204,14 @@ fn format_float(n: f64, conv: u8, spec: &FmtSpec) -> Vec<u8> {
     }
 }
 
+/// Format `n` in `%e` style with `prec` fractional digits.
+///
+/// The zero branch preserves the sign of negative zero (C `printf` emits
+/// `-0.0` as `-0e+00`); `n == 0.0` is also true for `-0.0`, so the sign bit is
+/// the only way to distinguish them.
 fn format_exp(n: f64, prec: usize, _upper: bool, alt: bool) -> Vec<u8> {
     if n == 0.0 {
+        let neg = if n.is_sign_negative() { "-" } else { "" };
         let mantissa: String = if prec == 0 {
             if alt {
                 "0.".to_string()
@@ -2160,7 +2221,7 @@ fn format_exp(n: f64, prec: usize, _upper: bool, alt: bool) -> Vec<u8> {
         } else {
             format!("0.{}", "0".repeat(prec))
         };
-        return format!("{}e+00", mantissa).into_bytes();
+        return format!("{}{}e+00", neg, mantissa).into_bytes();
     }
     let abs = n.abs();
     let exp = abs.log10().floor() as i32;
@@ -2202,12 +2263,18 @@ fn format_exp(n: f64, prec: usize, _upper: bool, alt: bool) -> Vec<u8> {
     format!("{}e{}{:02}", mant_out, sign, exp_final.abs()).into_bytes()
 }
 
+/// Format `n` in `%g` style with `prec` significant digits.
+///
+/// The zero branch preserves the sign of negative zero (C `printf` emits `-0.0`
+/// as `-0`); `n == 0.0` is also true for `-0.0`, so the sign bit distinguishes
+/// them.
 fn format_g(n: f64, prec: usize, alt: bool) -> Vec<u8> {
     if n == 0.0 {
+        let neg = if n.is_sign_negative() { "-" } else { "" };
         return if alt {
-            format!("0.{}", "0".repeat(prec.saturating_sub(1))).into_bytes()
+            format!("{}0.{}", neg, "0".repeat(prec.saturating_sub(1))).into_bytes()
         } else {
-            b"0".to_vec()
+            format!("{}0", neg).into_bytes()
         };
     }
     let abs = n.abs();
@@ -2293,6 +2360,36 @@ fn format_int_arg(state: &mut LuaState, arg: i32) -> Result<i64, LuaError> {
             "number has no integer representation",
         ))
     }
+}
+
+/// Fetch the unsigned argument for a `%u`/`%o`/`%x`/`%X` conversion.
+///
+/// On the dual-number versions (5.3+) this is the bit pattern of the checked
+/// integer, identical to `format_int_arg(...) as u64`.
+///
+/// On the float-only versions there is no integer subtype, so the C reference
+/// casts the `double` to an unsigned word:
+/// - Lua 5.1 casts unconditionally; the platform `fptoui` saturates, so a
+///   negative value yields `0`, `inf`/values above `2^64` yield `u64::MAX`, and
+///   positive fractions truncate toward zero. Rust's `as u64` saturating cast
+///   reproduces this exactly.
+/// - Lua 5.2 first range-checks `0 <= n <= 2^64`, raising `not a non-negative
+///   number in proper range` otherwise, then casts the same way.
+fn format_uint_arg(state: &mut LuaState, arg: i32) -> Result<u64, LuaError> {
+    if state.global().lua_version.number_model() != lua_types::NumberModel::FloatOnly {
+        return Ok(format_int_arg(state, arg)? as u64);
+    }
+    let n = state.check_arg_number(arg)?;
+    if state.global().lua_version == lua_types::LuaVersion::V52
+        && !(n >= 0.0 && n <= 18446744073709551616.0)
+    {
+        return Err(lua_vm::debug::arg_error_impl(
+            state,
+            arg,
+            b"not a non-negative number in proper range",
+        ));
+    }
+    Ok(n as u64)
 }
 
 pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
@@ -2390,25 +2487,25 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
             }
             b'u' => {
                 check_conv_spec(state, form, FMT_FLAGS_U, true)?;
-                let n = format_int_arg(state, arg)? as u64;
+                let n = format_uint_arg(state, arg)?;
                 let (prefix, digits) = unsigned_int_parts(n, 10, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'o' => {
                 check_conv_spec(state, form, FMT_FLAGS_X, true)?;
-                let n = format_int_arg(state, arg)? as u64;
+                let n = format_uint_arg(state, arg)?;
                 let (prefix, digits) = unsigned_int_parts(n, 8, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'x' => {
                 check_conv_spec(state, form, FMT_FLAGS_X, true)?;
-                let n = format_int_arg(state, arg)? as u64;
+                let n = format_uint_arg(state, arg)?;
                 let (prefix, digits) = unsigned_int_parts(n, 16, false, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
             b'X' => {
                 check_conv_spec(state, form, FMT_FLAGS_X, true)?;
-                let n = format_int_arg(state, arg)? as u64;
+                let n = format_uint_arg(state, arg)?;
                 let (prefix, digits) = unsigned_int_parts(n, 16, true, &spec);
                 pad_int(&mut buf, &prefix, &digits, &spec);
             }
@@ -2483,16 +2580,33 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
                 );
             }
             b'q' => {
-                if form.len() > 2 {
-                    return Err(LuaError::runtime(format_args!(
-                        "specifier '%q' cannot have modifiers"
-                    )));
+                if matches!(
+                    state.global().lua_version,
+                    lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+                ) {
+                    let s = state.check_arg_string(arg)?;
+                    if state.global().lua_version == lua_types::LuaVersion::V51 {
+                        addquoted_51(&mut buf, &s);
+                    } else {
+                        addquoted(&mut buf, &s);
+                    }
+                } else {
+                    if form.len() > 2 {
+                        return Err(LuaError::runtime(format_args!(
+                            "specifier '%q' cannot have modifiers"
+                        )));
+                    }
+                    addliteral(state, &mut buf, arg)?;
                 }
-                addliteral(state, &mut buf, arg)?;
             }
             b's' => {
                 check_conv_spec(state, form, FMT_FLAGS_C, true)?;
-                let s = state.to_display_string(arg)?;
+                let pushed = matches!(state.global().lua_version, lua_types::LuaVersion::V51);
+                let s = if pushed {
+                    state.check_arg_string(arg)?
+                } else {
+                    state.to_display_string(arg)?
+                };
                 let has_modifiers = spec.width != 0 || spec.precision.is_some();
                 if has_modifiers && s.contains(&0u8) {
                     return Err(lua_vm::debug::arg_error_impl(
@@ -2502,7 +2616,9 @@ pub fn str_format(state: &mut LuaState) -> Result<usize, LuaError> {
                     ));
                 }
                 pad_str(&mut buf, &s, &spec);
-                state.pop_n(1);
+                if !pushed {
+                    state.pop_n(1);
+                }
             }
             _ => {
                 let verb: &[u8] = if state.global().lua_version == lua_types::LuaVersion::V53 {
@@ -3166,6 +3282,14 @@ pub const STRING_LIB: &[(&[u8], lua_CFunction)] = &[
     (b"reverse", str_reverse),
     (b"sub", str_sub),
     (b"upper", str_upper),
+];
+
+/// Pack/unpack entries (`string.pack`, `string.packsize`, `string.unpack`).
+///
+/// These were introduced in Lua 5.3; they are absent in 5.1 and 5.2, so they
+/// are registered conditionally in `luaopen_string` rather than living in the
+/// unconditional `STRING_LIB` array.
+const STRING_PACK_LIB: &[(&[u8], lua_CFunction)] = &[
     (b"pack", str_pack),
     (b"packsize", str_packsize),
     (b"unpack", str_unpack),
@@ -3215,6 +3339,14 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
         state.push_c_function(gmatch)?;
         state.set_field(-2, b"gfind")?;
     }
+    if state.global().lua_version != lua_types::LuaVersion::V51
+        && state.global().lua_version != lua_types::LuaVersion::V52
+    {
+        for (name, f) in STRING_PACK_LIB {
+            state.push_c_function(*f)?;
+            state.set_field(-2, name)?;
+        }
+    }
     createmetatable(state)?;
     Ok(1)
 }
@@ -3237,7 +3369,15 @@ pub fn luaopen_string(state: &mut LuaState) -> Result<usize, LuaError> {
 //                  strings.lua + pm.lua, check.sh 5.1-5.5. Version seams are
 //                  single-sourced in matcher_bounds_depth (5.1 has no MAXCCALLS
 //                  recursion guard) and matcher_dedups_empty_match (the 5.3.3
-//                  `e != lastmatch` rule, absent on 5.1/5.2).
+//                  `e != lastmatch` rule, absent on 5.1/5.2). Further per-version
+//                  seams: pack/packsize/unpack are registered only for 5.3+
+//                  (STRING_PACK_LIB in luaopen_string); string.rep ignores the
+//                  separator on 5.1; `%q` strict-string-coerces on 5.1/5.2
+//                  (addquoted_51 for 5.1's NUL/`\r`/literal-control rules) and
+//                  emits inf/nan literally on 5.3 (quotefloat); `%s` is strict on
+//                  5.1; `%u`/`%o`/`%x`/`%X` cast the float-only number per
+//                  version (format_uint_arg: 5.1 saturating fptoui, 5.2 range
+//                  check); `%g`/`%e` preserve negative-zero on every version.
 //   perf:          the cold API fns borrow source bytes through to_lua_string
 //                  (GcRef) rather than copying via check_arg_string; num_to_str
 //                  stringifies small integers into a stack buffer. string_ops

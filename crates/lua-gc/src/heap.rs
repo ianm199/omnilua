@@ -230,6 +230,31 @@ impl GcAge {
     }
 }
 
+/// A Lua 5.1 collect-time finalizability probe for a single userdata.
+///
+/// Lua 5.1 decides which userdata need finalization at collection time, not
+/// at `setmetatable` time: `luaC_separateudata` (`lgc.c`) walks every
+/// userdata and, for each white non-finalized one, reads its **live**
+/// metatable for `__gc`. This is observably different from 5.2+, where
+/// `luaC_checkfinalizer` makes the decision eagerly at `setmetatable` and a
+/// `__gc` added to a shared metatable afterwards never takes effect.
+///
+/// The collector cannot read a userdata's metatable (a VM concept), so the VM
+/// supplies one probe per userdata. The collector only stores probes and
+/// prunes dead ones via [`is_alive`](Self::is_alive); the VM drives the
+/// metatable read and the actual finalizer registration. Probes are erased
+/// behind [`std::any::Any`] so the VM can downcast back to its concrete type
+/// without the collector naming a VM type.
+pub trait Udata51Probe: std::any::Any {
+    /// True while the backing userdata box has not yet been swept. Backed by
+    /// a weak handle on the VM side, so this is safe to call after a sweep
+    /// freed the box.
+    fn is_alive(&self) -> bool;
+
+    /// Erased self for VM-side downcast.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
 /// Minimal metadata a finalizable VM object must expose for collector-owned
 /// finalizer-list bookkeeping.
 pub trait FinalizerEntry: Clone {
@@ -1437,6 +1462,13 @@ pub struct Heap {
     /// raw pointer because the cell lives inside a `GcHeader` (Cell, not Cell<Cell>).
     /// `None` means: sweep starts from `self.head`.
     sweep_prev_next: Cell<Option<NonNull<Cell<Option<NonNull<GcBox<dyn Trace>>>>>>>,
+    /// Lua 5.1 only: every userdata that has ever carried a metatable, so the
+    /// collect-time finalizability scan (`luaC_separateudata`) can re-read its
+    /// live metatable for a late-added `__gc`. Empty on 5.2–5.5, where
+    /// finalizability is decided eagerly at `setmetatable`. Probes hold weak
+    /// handles, so they never root the userdata; dead ones are pruned by
+    /// [`scan_v51_finalizable`](Self::scan_v51_finalizable).
+    v51_udata_roster: RefCell<Vec<std::rc::Rc<dyn Udata51Probe>>>,
 }
 
 impl Default for Heap {
@@ -1479,6 +1511,7 @@ impl Heap {
             marker: RefCell::new(None),
             marker_pool: RefCell::new(None),
             sweep_prev_next: Cell::new(None),
+            v51_udata_roster: RefCell::new(Vec::new()),
         }
     }
 
@@ -1889,6 +1922,31 @@ impl Heap {
             cursor = self.header_from_ptr(ptr).gray_next.get();
         }
         count
+    }
+
+    /// Record a userdata in the Lua 5.1 collect-time finalizability roster.
+    ///
+    /// Called by the VM for every userdata that receives a metatable on 5.1.
+    /// The probe holds a weak handle, so the roster never roots the userdata.
+    /// No-op for the collector beyond storage; the VM reads metatables and
+    /// registers finalizers via [`scan_v51_finalizable`](Self::scan_v51_finalizable).
+    pub fn register_v51_udata(&self, probe: std::rc::Rc<dyn Udata51Probe>) {
+        self.v51_udata_roster.borrow_mut().push(probe);
+    }
+
+    /// Drain the Lua 5.1 finalizability roster of dead entries and return the
+    /// still-live probes for the VM to inspect.
+    ///
+    /// Mirrors the enumeration half of C 5.1 `luaC_separateudata`: the VM
+    /// caller then reads each probe's live metatable for `__gc` and registers
+    /// the finalizable ones. Dead probes (their userdata already swept) are
+    /// dropped here so the roster stays bounded. The returned probes are kept
+    /// in the roster too (still live), so an already-finalized userdata that
+    /// outlives its `__gc` is naturally pruned on a later scan once swept.
+    pub fn scan_v51_finalizable(&self) -> Vec<std::rc::Rc<dyn Udata51Probe>> {
+        let mut roster = self.v51_udata_roster.borrow_mut();
+        roster.retain(|probe| probe.is_alive());
+        roster.clone()
     }
 
     /// Return the current heap token for an allocation identity, or `None` when

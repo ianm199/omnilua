@@ -127,6 +127,19 @@ impl Trace for GlobalState {
         self.globals.trace(m);
         self.loaded.trace(m);
 
+        // Lua 5.1 per-thread and per-closure environments are GC roots: a
+        // coroutine's global table and a no-`_ENV`-upvalue closure's
+        // environment are reachable from the live thread / closure but stored
+        // off to the side, so they must be traced here to survive collection.
+        // Both maps are empty on 5.2–5.5, making these loops no-ops there.
+        // Dead-thread / dead-closure keys are pruned after each collection.
+        for value in self.thread_globals.values() {
+            value.trace(m);
+        }
+        for value in self.closure_envs.values() {
+            value.trace(m);
+        }
+
         if let Some(t) = &self.mainthread {
             t.trace(m);
         }

@@ -476,6 +476,19 @@ pub fn str2num(s: &[u8], o: &mut LuaValue) -> usize {
     0
 }
 
+/// Float-only string-to-number, faithful to the 5.1/5.2 `lua_str2number`, which
+/// has no integer subtype and parses every numeral through `strtod` (including
+/// hexadecimal). Skipping `str2int` is what keeps an over-`u64` hex literal
+/// (e.g. `"0x"` followed by 150 `f`s) at its rounded double magnitude instead of
+/// the wrapped `Int(-1)` the dual-number path produces.
+pub fn str2num_float_only(s: &[u8], o: &mut LuaValue) -> usize {
+    if let Some((n, end)) = str2d(s) {
+        *o = LuaValue::Float(n);
+        return end + 1;
+    }
+    0
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // UTF-8 encoder
 // ──────────────────────────────────────────────────────────────────────────

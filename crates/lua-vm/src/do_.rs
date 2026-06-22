@@ -297,7 +297,10 @@ pub(crate) fn grow_stack(
     // Stack overflow — allocate error extension so we can raise a message.
     realloc_stack(state, ERRORSTACKSIZE, raise_error)?;
     if raise_error {
-        return Err(LuaError::runtime(format_args!("stack overflow")));
+        return Err(crate::debug::prefixed_runtime_pub(
+            state,
+            b"stack overflow".to_vec(),
+        ));
     }
     Ok(false)
 }

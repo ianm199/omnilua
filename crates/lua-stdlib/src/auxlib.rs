@@ -137,6 +137,9 @@ fn find_field(state: &mut LuaState, objidx: i32, level: i32) -> Result<bool, Lua
 /// Returns `true` and leaves name string on top (at `top+1`) if found.
 ///
 fn push_global_func_name(state: &mut LuaState, ar: &mut LuaDebug) -> Result<bool, LuaError> {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return Ok(false);
+    }
     let top = state.top_count();
     state.get_info(b"f", ar)?;
     state.get_field(LUA_REGISTRYINDEX, LUA_LOADED_TABLE)?;
@@ -167,6 +170,9 @@ fn push_global_func_name_from_target(
     target: &mut LuaState,
     ar: &mut LuaDebug,
 ) -> Result<bool, LuaError> {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return Ok(false);
+    }
     let top = state.top_count();
     target.get_info(b"f", ar)?;
     let func = target.get_at(target.top_idx() - 1);
@@ -197,11 +203,32 @@ fn push_global_func_name_from_target(
 
 /// Push a human-readable name for the function described by `ar`.
 ///
+/// Lua 5.2's `pushfuncname` predates the global-name lookup
+/// (`pushglobalfuncname`/`findfield`), which was introduced in 5.3. It renders a
+/// named function as `function 'name'` directly from `namewhat`/`name`, so a C
+/// function reached by a `debug.traceback`-style call shows the unqualified
+/// `function 'traceback'` rather than the 5.3+ qualified `function
+/// 'debug.traceback'`. 5.1 has its own traceback path (`traceback_51`).
 fn push_func_name(
     state: &mut LuaState,
     ar: &mut LuaDebug,
     global_lookup_target: Option<&mut LuaState>,
 ) -> Result<(), LuaError> {
+    if state.global().lua_version == lua_types::LuaVersion::V52 {
+        if !ar.namewhat.is_empty() {
+            let name = ar.name.clone().unwrap_or_else(|| b"?".to_vec());
+            state.push_fstring(format_args!("function '{}'", BStr(&name)))?;
+        } else if ar.what == b'm' {
+            state.push_string(b"main chunk")?;
+        } else if ar.what == b'C' {
+            state.push_string(b"?")?;
+        } else {
+            let src = ar.short_src.clone();
+            let line = ar.linedefined;
+            state.push_fstring(format_args!("function <{}:{}>", BStr(&src), line))?;
+        }
+        return Ok(());
+    }
     // Lua 5.5 reordered `pushfuncname` to prefer the `namewhat`
     // (`global`/`field`/`method`/`local`/`upvalue`) over the global-name
     // lookup, so a global C/Lua function renders `in global 'name'` rather than
@@ -694,7 +721,7 @@ pub fn check_type(state: &mut LuaState, arg: i32, t: LuaType) -> Result<(), LuaE
 ///
 pub fn check_any(state: &mut LuaState, arg: i32) -> Result<(), LuaError> {
     if state.type_at(arg) == LuaType::None {
-        return Err(LuaError::arg_error(arg, "value expected"));
+        arg_error(state, arg, b"value expected")?;
     }
     Ok(())
 }
@@ -754,10 +781,7 @@ pub fn opt_number(state: &mut LuaState, arg: i32, def: f64) -> Result<f64, LuaEr
 /// return type; `!` (never) is nightly-only so we use `Result<usize, LuaError>`.
 fn int_error(state: &mut LuaState, arg: i32) -> Result<usize, LuaError> {
     if state.is_number(arg) {
-        Err(LuaError::arg_error(
-            arg,
-            "number has no integer representation",
-        ))
+        arg_error(state, arg, b"number has no integer representation")
     } else {
         tag_error(state, arg, LuaType::Number)?;
         unreachable!("tag_error always returns Err")

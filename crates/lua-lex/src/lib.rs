@@ -583,10 +583,21 @@ pub fn token2str(ls: &LexState, token: i32) -> Vec<u8> {
 /// `<name>`, …) returned for `token >= TK_EOS` end up quoted. 5.2 leaves those
 /// bare and quotes only symbols/reserved/literals, so for 5.2+ the `>= TK_EOS`
 /// arm stays unquoted. (Issue #105.)
+///
+/// `version` also gates the rendering of a non-printable single byte. Lua 5.2's
+/// `luaX_token2str` formats such a byte as the bare label `char(%d)` (the
+/// surrounding `near '...'` quoting is suppressed for tokens whose text starts
+/// with `char(`), whereas 5.3+ render it as the quoted `'<\\%d>'`.
 fn token2str_raw(token: i32, version: lua_types::LuaVersion) -> Vec<u8> {
     if token < FIRST_RESERVED {
         if is_print(token) {
             vec![b'\'', token as u8, b'\'']
+        } else if version == lua_types::LuaVersion::V52 {
+            let mut v: Vec<u8> = Vec::new();
+            v.extend_from_slice(b"char(");
+            let _ = write!(&mut v, "{}", token);
+            v.push(b')');
+            v
         } else {
             let mut v: Vec<u8> = Vec::new();
             v.extend_from_slice(b"'<\\");
@@ -774,21 +785,50 @@ fn read_numeral(
 
     save_and_next(ls, state)?;
 
-    if first == b'0' as i32 && check_next2(ls, state, b"xX")? {
+    let is_hex = first == b'0' as i32 && check_next2(ls, state, b"xX")?;
+
+    // Lua 5.1 has no hexadecimal-aware number scanner: it never recognizes a
+    // binary (`Pp`) exponent, a signed binary exponent, or a fractional `.`
+    // inside a hex literal. Its scanner reads decimal digits/`.`, an optional
+    // `Ee` exponent, then swallows the rest of the alphanumeric run (the hex
+    // body) and hands the whole token to `strtod`/`strtoul`. So:
+    //   * `0x1p4`  -> the `p4` rides the alphanumeric tail -> strtod -> 16
+    //   * `0x1p-2` -> the tail stops at `-`, leaving `0x1p` -> malformed
+    //   * `0x1.8p0`-> the main loop stops at `.`, leaving `0x1` (=1); `.8p0`
+    //                 then lexes as a fresh, malformed decimal numeral.
+    // 5.2+ added the hex-aware scanner (`Pp` exponent + signed exponent +
+    // fractional `.`), so the hex-special path below is gated off for V51.
+    let is_v51 = matches!(state.global().lua_version, lua_types::LuaVersion::V51);
+    let hex_aware = is_hex && !is_v51;
+    if hex_aware {
         expo = b"Pp";
     }
 
-    loop {
+    // For a 5.1 hex literal the digit-scanning main loop is skipped entirely so
+    // its `Ee`-exponent probe cannot mistake a hex `e`/`E` digit for a decimal
+    // exponent (`0x1e2` is 482, not `0x1` × 10^2); the whole hex body rides the
+    // alphanumeric tail below, exactly as 5.1's scanner does.
+    let scan_digits = !(is_hex && is_v51);
+    while scan_digits {
         if check_next2(ls, state, expo)? {
             check_next2(ls, state, b"-+")?;
-        } else if is_xdigit(ls.current) || ls.current == b'.' as i32 {
+        } else if is_xdigit(ls.current) || (ls.current == b'.' as i32 && (!is_hex || hex_aware)) {
             save_and_next(ls, state)?;
         } else {
             break;
         }
     }
 
-    if is_lalpha(ls.current) {
+    // Numeral "touching a letter" handling. 5.2+ append a single trailing letter
+    // to force a malformed-number error (the alphanumeric run after it lexes
+    // separately). Lua 5.1's scanner instead swallows the *entire* alphanumeric
+    // (and `_`) run into the numeral, so a malformed 5.1 numeral reports the full
+    // run in its `near '...'` snippet (`.8p0`, `3xyz`), not just its first letter.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        while is_lalnum(ls.current) {
+            save_and_next(ls, state)?;
+        }
+    } else if is_lalpha(ls.current) {
         save_and_next(ls, state)?;
     }
 
@@ -798,7 +838,16 @@ fn read_numeral(
         None => Err(lex_error(ls, b"malformed number", TK_FLT)),
         Some(lua_types::LuaValue::Int(i)) => {
             if is_float_only(state) {
-                *seminfo = TokenValue::Float(i as f64);
+                // The float-only family (5.1/5.2) has no integer subtype: every
+                // numeral becomes a float. A hex integer literal is read through
+                // C's `strtoul(.., 16)`, an *unsigned* 64-bit conversion, so an
+                // overflowing hex literal (top bit set) becomes a large positive
+                // double — `0xFFFFFFFFFFFFFFFF` is `1.844674407371e+19`, not -1.
+                // `str2int` wraps into `i64`, so reinterpret the bit pattern as
+                // `u64` before widening; for any non-overflowing literal this is
+                // identical to `i as f64`.
+                let widened = if is_hex { (i as u64) as f64 } else { i as f64 };
+                *seminfo = TokenValue::Float(widened);
                 Ok(TK_FLT)
             } else {
                 *seminfo = TokenValue::Int(i);
@@ -872,9 +921,14 @@ fn read_long_string(
                 let mut msg: Vec<u8> = Vec::new();
                 msg.extend_from_slice(b"unfinished long ");
                 msg.extend_from_slice(what);
-                msg.extend_from_slice(b" (starting at line ");
-                let _ = write!(&mut msg, "{}", line);
-                msg.push(b')');
+                // The "(starting at line N)" clause was added in 5.3. The
+                // float-only family (5.1/5.2) reports the bare
+                // "unfinished long string"/"unfinished long comment".
+                if !is_float_only(state) {
+                    msg.extend_from_slice(b" (starting at line ");
+                    let _ = write!(&mut msg, "{}", line);
+                    msg.push(b')');
+                }
                 return Err(lex_error(ls, &msg, TK_EOS));
             }
             c if c == b']' as i32 => {
@@ -929,23 +983,57 @@ fn esc_check(
     Ok(())
 }
 
+/// Build a Lua 5.2-family escape-sequence error whose `near '...'` snippet is
+/// the backslash plus the offending escape characters (`'\j'`, `'\256'`,
+/// `'\xZ'`), not the buffer collected so far.
+///
+/// This mirrors 5.2's `escerror`, which resets the token buffer and saves `'\\'`
+/// followed by the escape characters before raising. (5.3+ leaves the whole
+/// buffer in place, so its snippet keeps the opening quote and prior content —
+/// that path stays on [`esc_check`].) Trailing `EOZ` markers in `chars` are
+/// dropped, matching `escerror`'s `c[i] != EOZ` guard.
+fn esc_error_legacy(ls: &mut LexState, chars: &[i32], msg: &[u8]) -> LuaError {
+    ls.buff.clear();
+    ls.buff.push_byte(b'\\');
+    for &c in chars {
+        if c == EOZ {
+            break;
+        }
+        ls.buff.push_byte(c as u8);
+    }
+    lex_error(ls, msg, TK_STRING)
+}
+
 /// Save-and-advance, then verify the new current char is a hex digit; return
 /// its numeric value (0-15).
-fn get_hexa(state: &mut LuaState, ls: &mut LexState) -> Result<u32, LuaError> {
+///
+/// On failure the `near '...'` snippet is version-gated. 5.2 reports `\x` plus
+/// the characters read so far (`'\xZ'`, `'\x1Z'`), built by resetting the buffer
+/// (mirroring `escerror`); `chars` carries the hex characters already consumed by
+/// the enclosing `\x` escape so the snippet can be rebuilt. 5.3+ report the whole
+/// buffer-so-far via the save-and-next inside `esc_check`. (5.2 has no `\u`, so a
+/// hex-digit error here always belongs to a `\x` escape.)
+fn get_hexa(state: &mut LuaState, ls: &mut LexState, chars: &mut Vec<i32>) -> Result<u32, LuaError> {
     save_and_next(ls, state)?;
-    esc_check(
-        state,
-        ls,
-        is_xdigit(ls.current),
-        b"hexadecimal digit expected",
-    )?;
+    if !is_xdigit(ls.current) {
+        if matches!(state.global().lua_version, lua_types::LuaVersion::V52) {
+            let mut esc: Vec<i32> = Vec::with_capacity(chars.len() + 2);
+            esc.push(b'x' as i32);
+            esc.extend_from_slice(chars);
+            esc.push(ls.current);
+            return Err(esc_error_legacy(ls, &esc, b"hexadecimal digit expected"));
+        }
+        esc_check(state, ls, false, b"hexadecimal digit expected")?;
+    }
+    chars.push(ls.current);
     Ok(hex_value_stub(ls.current))
 }
 
 /// Scan a `\xNN` hex escape; return the decoded byte value.
 fn read_hex_esc(state: &mut LuaState, ls: &mut LexState) -> Result<u32, LuaError> {
-    let r = get_hexa(state, ls)?;
-    let r = (r << 4) + get_hexa(state, ls)?;
+    let mut chars: Vec<i32> = Vec::with_capacity(2);
+    let r = get_hexa(state, ls, &mut chars)?;
+    let r = (r << 4) + get_hexa(state, ls, &mut chars)?;
     ls.buff.truncate_by(2);
     Ok(r)
 }
@@ -958,7 +1046,10 @@ fn read_utf8_esc(state: &mut LuaState, ls: &mut LexState) -> Result<u32, LuaErro
 
     esc_check(state, ls, ls.current == b'{' as i32, b"missing '{'")?;
 
-    let mut r = get_hexa(state, ls)?;
+    // `\u{...}` exists only on 5.3+, so the 5.2 reset-buffer error branch in
+    // `get_hexa` is never taken from here; the accumulator is unused.
+    let mut hex_chars: Vec<i32> = Vec::new();
+    let mut r = get_hexa(state, ls, &mut hex_chars)?;
 
     // The codepoint upper bound is version-gated, and the digit-accumulation
     // order differs between the families:
@@ -1017,22 +1108,40 @@ fn utf8_esc(state: &mut LuaState, ls: &mut LexState) -> Result<(), LuaError> {
 fn read_dec_esc(state: &mut LuaState, ls: &mut LexState) -> Result<u32, LuaError> {
     let mut i: usize = 0;
     let mut r: u32 = 0;
+    let mut digits: Vec<i32> = Vec::with_capacity(3);
 
     while i < 3 && is_digit(ls.current) {
         r = 10 * r + (ls.current as u32 - b'0' as u32);
+        digits.push(ls.current);
         save_and_next(ls, state)?;
         i += 1;
     }
 
-    // UCHAR_MAX = 255 = u8::MAX. Lua 5.1 spells this `escape sequence too
-    // large` (the `decimal escape too large` wording is 5.2+). Verified against
-    // lua5.1.5; see specs/followup/5.1-roster-syntax.md §2.
-    let too_large_msg: &[u8] = if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
-        b"escape sequence too large"
-    } else {
-        b"decimal escape too large"
-    };
-    esc_check(state, ls, r <= u8::MAX as u32, too_large_msg)?;
+    if r > u8::MAX as u32 {
+        // The "too large" message and `near '...'` snippet are version-gated:
+        //   * 5.1: spelled "escape sequence too large"; its scanner saves
+        //     neither the backslash nor the digits, so the snippet is just the
+        //     opening quote (`'"'`). The shared decode path *did* buffer them
+        //     here, so trim the backslash + `i` digits back off before raising.
+        //   * 5.2: "decimal escape too large", snippet is `\` + the digits
+        //     (`'\256'`), built by resetting the buffer (see `esc_error_legacy`).
+        //   * 5.3+: "decimal escape too large", snippet is the buffer collected
+        //     so far (opening quote + content + `\` + digits + the trailing char
+        //     `esc_check` save-and-nexts on).
+        let version = state.global().lua_version;
+        match version {
+            lua_types::LuaVersion::V51 => {
+                ls.buff.truncate_by(i + 1);
+                return Err(lex_error(ls, b"escape sequence too large", TK_STRING));
+            }
+            lua_types::LuaVersion::V52 => {
+                return Err(esc_error_legacy(ls, &digits, b"decimal escape too large"));
+            }
+            _ => {
+                esc_check(state, ls, false, b"decimal escape too large")?;
+            }
+        }
+    }
 
     ls.buff.truncate_by(i);
     Ok(r)
@@ -1080,6 +1189,10 @@ fn read_string(
                 // standard letter/quote/newline escapes still work. Verified
                 // against lua5.1.5; see specs/followup/5.1-roster-syntax.md §2.
                 let is_v51 = matches!(state.global().lua_version, lua_types::LuaVersion::V51);
+                // The `\u{...}` escape is a 5.3 addition. 5.1 has no `\u` at all
+                // (silently drops the backslash); 5.2 added `\x` and `\z` but NOT
+                // `\u`, so on the float-only family `\u` is an invalid escape.
+                let has_u_escape = !is_float_only(state);
 
                 // Inner switch on the escape character
                 let esc = match ls.current {
@@ -1094,7 +1207,7 @@ fn read_string(
                         let decoded = read_hex_esc(state, ls)?;
                         EscapeResult::ReadSave(decoded as i32)
                     }
-                    c if c == b'u' as i32 && !is_v51 => {
+                    c if c == b'u' as i32 && has_u_escape => {
                         utf8_esc(state, ls)?;
                         EscapeResult::NoSave
                     }
@@ -1123,7 +1236,20 @@ fn read_string(
                         EscapeResult::ReadSave(c)
                     }
                     _ => {
-                        esc_check(state, ls, is_digit(ls.current), b"invalid escape sequence")?;
+                        if !is_digit(ls.current) {
+                            // 5.2 reports the invalid escape as `\` + the offending
+                            // char (`'\j'`, `'\u'`) by resetting the buffer; 5.3+
+                            // report the whole buffer-so-far (`'"\j'`) via the
+                            // save-and-next inside `esc_check`.
+                            if matches!(state.global().lua_version, lua_types::LuaVersion::V52) {
+                                return Err(esc_error_legacy(
+                                    ls,
+                                    &[ls.current],
+                                    b"invalid escape sequence",
+                                ));
+                            }
+                            esc_check(state, ls, false, b"invalid escape sequence")?;
+                        }
                         let decoded = read_dec_esc(state, ls)?;
                         EscapeResult::OnlySave(decoded as i32)
                     }

@@ -120,12 +120,117 @@ registry handling; recorded here with the family. Lower priority (cosmetic).
 
 ---
 
+## F6 — `load()` with a function reader is not lazy (eager drain) — CROSS-VERSION
+
+Date opened: 2026-06-22. Source: arch7-reader wave.
+
+**Divergence.** `load(reader_fn)` where the chunk has an early syntax error: the
+reference stops pulling reader chunks the moment the lexer/parser detects the
+error; we drain the reader to EOF first, then parse. Reproduces on **every**
+version (5.1–5.5):
+
+```
+local i=0
+local function r(x) return function() i=i+1; return string.sub(x,i,i) end end
+local a,b = load(r("*a = 123")); print(not a, i)
+-- reference: true  2     (reads '*' as firstchar, then 'a', errors)
+-- ours:      true  9     (drains all 8 chars + EOF, then parses)
+```
+
+Valid chunks are unaffected — they read to EOF on both sides, so the count
+matches (`diff_one 5.4 'load(r("return 1+2"))'` → MATCH). The bug is isolated to
+the *early-error* reader-call count.
+
+**Reference truth.** C's `lua_load` installs `lua_Reader` on the `ZIO`; the lexer
+pulls chunks **on demand** via `zgetc`/`luaZ_fill`, which call back into the
+reader (with `L`) only when a byte is needed. The first syntax error long-jumps
+out of the parser before the rest of the stream is ever requested.
+
+**Owner.** `lua-vm` — the reader plumbing, specifically the *type of the reader
+threaded through the ZIO*. It must become reentrant: `FnMut(&mut LuaState) ->
+Result<Option<Vec<u8>>, LuaError>` so a chunk can be fetched mid-parse (the
+reader calls a Lua function, which needs `&mut LuaState`).
+
+**Touched by.** `calls.lua@5.1` line 250 (`assert(not a and ... and i == 2)`),
+and the reader-based `load` cases in `files.lua@5.1`/`files.lua@5.3`. The error
+case is the only one that pins the *count*, so it is the gating assertion.
+
+**Root cause — the exact chain (file:line).**
+1. `crates/lua-stdlib/src/state_stub.rs` `load_with_reader` (~line 1787) drains
+   the `F: FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, …>` reader into a
+   `Vec<u8>` **before** parsing — this is where all N reader calls happen (the 9
+   in the repro), because it loops calling `generic_reader` (→ the Lua reader fn)
+   until `None`. It then wraps the buffer in a once-`Box<dyn FnMut() ->
+   Option<Vec<u8>>>` and hands it to `api::load`.
+2. `crates/lua-vm/src/api.rs` `load` (~line 1982) takes
+   `reader: Box<dyn FnMut() -> Option<Vec<u8>>>` (NON-reentrant — no `&mut
+   LuaState`) and builds the vm `ZIO` via `crate::zio::ZIO::new(reader)`.
+3. `crates/lua-vm/src/do_.rs` `parse_stub` (~line 37) then drains the vm `ZIO`
+   (`z.getc()` loop) into another `Vec<u8>` `source` and calls the hook with
+   `&[u8]`. (This second drain copies the already-materialized buffer; it does
+   NOT call the Lua reader, so it does not add to the count — but it does make
+   the chain eager-by-construction.)
+4. `crates/lua-vm/src/state.rs` `ParserHook` (~line 1227) is typed
+   `fn(&mut LuaState, source: &[u8], name, firstchar)` — a fully-materialized
+   buffer, so the parser can be no lazier than its input.
+5. `crates/lua-parse/src/lib.rs` `parse` (~line 6238) builds
+   `lua_lex::ZIO::from_bytes(rest_bytes)` from the full buffer. The lua-lex
+   `ZIO` (`crates/lua-lex/src/lib.rs` ~line 139) *already* pulls lazily from a
+   `Box<dyn FnMut() -> Option<Vec<u8>>>` reader and stops at the first error —
+   it is the only correct link; it is simply fed a once-buffer.
+
+**Needed change (the real fix, end-to-end lazy).**
+- Make the reader type **reentrant** through the whole chain:
+  `FnMut(&mut LuaState) -> Result<Option<Vec<u8>>, LuaError>`, with the vm `ZIO`
+  (`crates/lua-vm/src/zio.rs`) `getc`/`fill` taking `&mut LuaState`, and
+  `api::load` (`crates/lua-vm/src/api.rs`) accepting that reader instead of the
+  state-less `Box<dyn FnMut() -> Option<Vec<u8>>>`.
+- Change `ParserHook` (`state.rs`) to carry the streaming source (the vm `ZIO`
+  /reader) rather than `&[u8]`, and update `lua_parse::parse` to build its
+  `lua_lex::ZIO` from a reader that pulls from the vm side on demand (the
+  lua-lex `ZIO` already supports this).
+- Delete the eager drains in `load_with_reader` (state_stub.rs) and `parse_stub`
+  (do_.rs).
+
+**Why deferred / not landed in this wave.** The fix is genuinely cross-crate but
+its required edits fall **outside the arch7-reader edit boundary** (which was
+`state_stub.rs`, `do_.rs`, `state.rs::ParserHook`, `lua-parse/lib.rs`,
+`lua-lex/lib.rs`):
+- The reentrant reader type must change `crates/lua-vm/src/api.rs` (`load`
+  signature + `ZIO::new` call) and `crates/lua-vm/src/zio.rs` (the `ZIO` reader
+  field type and `getc`/`fill` taking `&mut LuaState`). Both are **not** in the
+  boundary, and `api::load` is the only `pub` parse entry reachable from
+  lua-stdlib (`protected_parser` is `pub(crate)`), so there is no in-boundary
+  path to a reentrant reader.
+- Changing `ParserHook`'s fn-pointer signature forces edits to its **three
+  installers** — `crates/lua-cli/src/main.rs` (~866), `crates/lua-rs-runtime/
+  src/lib.rs` (~3498), `crates/lua-hlua-shim/src/lib.rs` (~163) — all outside
+  the boundary.
+- The "smaller correct step" (make the lexer stop pulling early) does **not**
+  help here, because the offending reader calls happen in `load_with_reader`'s
+  drain *before the lexer ever runs*; removing that drain is exactly what
+  requires the reentrant-reader threading above.
+
+The honest in-boundary outcome was therefore a precise documented diagnosis (this
+finding) with no half-applied edits. A future wave should be scoped to include
+`api.rs`, `zio.rs`, and the three ParserHook installers as one coordinated
+change.
+
+**Touched files for the future fix:** `state_stub.rs`, `api.rs`, `zio.rs`,
+`do_.rs`, `state.rs` (ParserHook), `lua-parse/lib.rs`, `lua-lex/lib.rs`,
+`lua-cli/main.rs`, `lua-rs-runtime/lib.rs`, `lua-hlua-shim/lib.rs`.
+
+---
+
 ## Priority
 
 1. **F1** (systemic arg-name resolver) — touches the most surfaces; one fix.
 2. **F2** (`__name` pre-5.3) — touches 23 sites incl. all type errors; one fix.
 3. **F3 / F4** (coroutine wording + registry) — coroutine-scoped.
-4. **F5** — cosmetic, stdlib-side, low priority.
+4. **F6** (lazy `load` reader) — cross-version; gates `calls.lua@5.1`,
+   `files.lua@5.1`, `files.lua@5.3`; needs a 10-file coordinated reentrant-reader
+   change (api.rs + zio.rs + 3 ParserHook installers beyond the usual 5).
+5. **F5** — cosmetic, stdlib-side, low priority.
 
 None of these block correctness on the dominant versions (5.4 default); they are
 pre-5.4 fidelity gaps that the stdlib's per-version net made visible. Fixing F1

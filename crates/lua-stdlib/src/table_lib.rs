@@ -806,8 +806,9 @@ fn setn(state: &mut LuaState) -> Result<usize, LuaError> {
 }
 
 /// `table.maxn(t)` — the largest positive numeric key (0 if none). Iterates the
-/// raw table via `next`, tracking the max numeric key. Mirrors `maxn` in 5.1
-/// `ltablib.c`.
+/// raw table via `next`, tracking the max numeric key. Mirrors `maxn` in the 5.1
+/// and 5.2 `ltablib.c`; removed in 5.3. Registered for both V51 and V52 by
+/// [`open_table`].
 fn maxn(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_type(1, LuaType::Table)?;
     let mut max: f64 = 0.0;
@@ -910,6 +911,13 @@ pub fn open_table(state: &mut LuaState) -> Result<usize, LuaError> {
             .copied()
             .collect();
         state.new_lib(&without_move)?;
+        // `table.maxn` survives into 5.2 (it is removed in 5.3). The legacy
+        // `getn`/`setn`/`foreach`/`foreachi` roster, by contrast, is 5.1-only.
+        // Verified against lua5.2.4: `type(table.maxn)` == "function" but
+        // `type(table.getn)` == "nil".
+        const V52_LEGACY: &[(&[u8], fn(&mut LuaState) -> Result<usize, LuaError>)] =
+            &[(b"maxn", maxn)];
+        state.set_funcs_with_upvalues(V52_LEGACY, 0)?;
     } else {
         state.new_lib(TABLE_FUNCS)?;
     }

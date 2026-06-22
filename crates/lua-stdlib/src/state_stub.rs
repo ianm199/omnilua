@@ -90,6 +90,7 @@ impl LuaDebug {
             b'L' => b"Lua",
             b'C' => b"C",
             b'm' => b"main",
+            b't' => b"tail",
             _ => b"?",
         }
     }
@@ -1964,6 +1965,7 @@ fn copy_lvm_debug_to_stub_selective(
                     Some(b"Lua") => b'L',
                     Some(b"C") => b'C',
                     Some(b"main") => b'm',
+                    Some(b"tail") => b't',
                     _ => 0,
                 };
                 dst.source = src.source.clone().unwrap_or_default();

@@ -214,6 +214,51 @@ fn find_func_name_in_loaded(state: &LuaState, func_val: &LuaValue) -> Option<Vec
     find_func_in_table(&*loaded_table, func_val, b"", 1)
 }
 
+/// Per-version `pushglobalfuncname` (C `lauxlib.c`): resolve the C function at
+/// the current call frame to a name by searching `package.loaded` by identity.
+///
+/// The version seam (the F1 funcname resolver):
+/// - **5.1** recorded no names for C functions — PUC-Rio 5.1 has no
+///   `pushglobalfuncname`, so `luaL_argerror` falls straight through to `'?'`.
+///   We return `None` here so the caller emits `'?'`.
+/// - **5.2** searches the *global table* (`lua_pushglobaltable`) and does **not**
+///   strip the `_G.` prefix (PUC-Rio 5.2's `pushglobalfuncname` has no strip).
+///   A bare global resolved through the `_G` module therefore renders
+///   `'_G.<name>'`; a module member (`coroutine.resume`) carries its own dotted
+///   name and is unaffected. We keep the `_G.` prefix for V52.
+/// - **5.3+** searches `package.loaded` and explicitly strips a leading `_G.`
+///   (C: `strncmp(name, LUA_GNAME ".", 3)`), reporting the bare `<name>`.
+///
+/// PORT NOTE: PUC-Rio 5.2's exact `_G.`-vs-bare choice is *also*
+/// hash-iteration-order-dependent and non-deterministic across runs of the
+/// reference binary itself: the global table contains `_G._G` (a self-reference),
+/// so `findfield` reaches e.g. `next` either directly under `_G` (→ `'next'`) or
+/// one level deeper through the self-reference (→ `'_G.next'`), and which it hits
+/// first depends on hash-iteration order. The same global can print `'next'` on
+/// one run and `'_G.next'` on the next. We pin the deterministic `'_G.<name>'`
+/// form for V52 globals (always reachable via the `_G` module), which is one of
+/// the two valid reference outputs; the `error_wording_kit` doc-comment records
+/// this for the entries it pins.
+fn arg_error_global_name(
+    state: &LuaState,
+    ar: &LuaDebug,
+    version: lua_types::LuaVersion,
+) -> Option<Vec<u8>> {
+    if version == lua_types::LuaVersion::V51 {
+        return None;
+    }
+    let keeps_global_prefix = version == lua_types::LuaVersion::V52;
+    let ci_idx = ar.i_ci?;
+    let func_slot = state.get_ci(ci_idx).func;
+    let func_val = state.get_at(func_slot).clone();
+    let found = find_func_name_in_loaded(state, &func_val)?;
+    if !keeps_global_prefix && found.starts_with(b"_G.") {
+        Some(found[3..].to_vec())
+    } else {
+        Some(found)
+    }
+}
+
 /// Equivalent of C `luaL_argerror`: build an arg-type error with function name
 /// (from debug info) and caller source location. Handles method calls by
 /// producing "calling 'f' on bad self ..." when arg==1 and namewhat=="method".
@@ -240,20 +285,11 @@ pub fn arg_error_impl(state: &mut LuaState, mut arg: i32, extramsg: &[u8]) -> Lu
             return c_api_runtime(state, msg.into_bytes());
         }
     }
+    let version = state.global().lua_version;
     let fname = ar
         .name
         .clone()
-        .or_else(|| {
-            let ci_idx = ar.i_ci?;
-            let func_slot = state.get_ci(ci_idx).func;
-            let func_val = state.get_at(func_slot).clone();
-            let found = find_func_name_in_loaded(state, &func_val)?;
-            if found.starts_with(b"_G.") {
-                Some(found[3..].to_vec())
-            } else {
-                Some(found)
-            }
-        })
+        .or_else(|| arg_error_global_name(state, &ar, version))
         .unwrap_or_else(|| b"?".to_vec());
     let msg = format!(
         "bad argument #{} to '{}' ({})",
@@ -486,6 +522,9 @@ pub fn get_stack(state: &LuaState, level: i32, ar: &mut LuaDebug) -> bool {
     if level < 0 {
         return false;
     }
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return get_stack_51(state, level, ar);
+    }
     let mut remaining = level;
     let mut ci_idx = state.current_ci_idx();
     loop {
@@ -510,7 +549,71 @@ pub fn get_stack(state: &LuaState, level: i32, ar: &mut LuaDebug) -> bool {
     }
 }
 
+/// Lua 5.1 `lua_getstack`: the level walk that accounts for "lost" tail calls.
+///
+/// 5.1 reuses a frame on a tail call (like every later version) but exposes the
+/// lost frames to the debug API as synthetic `(tail call)` levels. Each Lua
+/// frame contributes its own level plus one extra per accumulated tail call
+/// (`ci.tailcalls`). When `level` lands inside that synthetic span the C code
+/// sets `ar->i_ci = 0` (the base-CI index) as a sentinel; we mirror that with
+/// `Some(CallInfoIdx(0))`, which `get_info` reads as "emit a tail frame". The
+/// base CI is never a real `getinfo` target, so that index is free to overload
+/// exactly as C overloads it.
+///
+/// C reference (`ldebug.c`):
+/// ```c
+/// for (ci = L->ci; level > 0 && ci > L->base_ci; ci--) {
+///   level--;
+///   if (f_isLua(ci)) level -= ci->tailcalls;
+/// }
+/// if (level == 0 && ci > L->base_ci) { i_ci = ci - base_ci; }
+/// else if (level < 0) { i_ci = 0; }  // a lost tail call
+/// else status = 0;
+/// ```
+fn get_stack_51(state: &LuaState, level: i32, ar: &mut LuaDebug) -> bool {
+    let mut remaining = level;
+    let mut ci_idx = state.current_ci_idx();
+    loop {
+        if remaining <= 0 || state.is_base_ci(ci_idx) {
+            break;
+        }
+        remaining -= 1;
+        let ci = state.get_ci(ci_idx);
+        if ci.is_lua() {
+            remaining -= ci.tailcalls as i32;
+        }
+        match state.prev_ci(ci_idx) {
+            Some(prev) => ci_idx = prev,
+            None => break,
+        }
+    }
+    if remaining == 0 && !state.is_base_ci(ci_idx) {
+        ar.i_ci = Some(ci_idx);
+        true
+    } else if remaining < 0 {
+        ar.i_ci = Some(CallInfoIdx(0));
+        true
+    } else {
+        false
+    }
+}
+
 // ─── Upvalue and local variable name lookup ───────────────────────────────────
+
+/// Counts the user-visible upvalues of a Lua function under Lua 5.1 semantics.
+///
+/// Lua 5.1 has no `_ENV`: globals compile to `GETGLOBAL`/`SETGLOBAL`, so a
+/// function that only touches globals reports `nups == 0`. Our core uses the
+/// Option-B fenv model and carries a synthetic `_ENV` upvalue regardless. Since
+/// 5.1 has no `_ENV` syntax, any upvalue named `_ENV` on a 5.1 instance is that
+/// synthetic cell, so excluding it reproduces the reference count
+/// (`debug.getinfo(g).nups` in db.lua:184).
+fn visible_upvalue_count_51(p: &LuaProto) -> usize {
+    p.upvalues
+        .iter()
+        .filter(|uv| uv.name.as_ref().map_or(true, |s| s.as_bytes() != LUA_ENV))
+        .count()
+}
 
 /// Returns the name of upvalue `uv` in proto `p` (as a byte slice), or `b"?"`.
 ///
@@ -526,9 +629,36 @@ fn upval_name(p: &LuaProto, uv: usize) -> &[u8] {
         .map_or(b"?" as &[u8], |s| s.as_bytes())
 }
 
-/// Finds the stack slot for vararg value number `n` (n is negative) in `ci`.
-/// Returns `Some(pos)` and the name `b"(vararg)"` if found, else `None`.
+/// Generic name reported by `debug.getlocal` for an unnamed-but-valid stack
+/// slot (a "temporary").
 ///
+/// The wording is version-gated. Lua 5.1–5.3 report a single `(*temporary)`
+/// for every valid slot, with no distinction between Lua and C frames
+/// (`getfuncname`/`luaG_findlocal` in their `ldebug.c`). Lua 5.4 split this
+/// into `(temporary)` for a Lua frame and `(C temporary)` for a C frame
+/// (`isLua(ci) ? "(temporary)" : "(C temporary)"`), and 5.5 kept that split.
+fn temporary_local_name(state: &LuaState, ci_is_lua: bool) -> &'static [u8] {
+    match state.global().lua_version {
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => {
+            b"(*temporary)"
+        }
+        _ => {
+            if ci_is_lua {
+                b"(temporary)"
+            } else {
+                b"(C temporary)"
+            }
+        }
+    }
+}
+
+/// Finds the stack slot for vararg value number `n` (n is negative) in `ci`.
+/// Returns `Some(pos)` and the generic vararg name if found, else `None`.
+///
+/// The generic name is version-gated: Lua 5.2 and 5.3 report `(*vararg)`
+/// (`findvararg` in their `ldebug.c`), while 5.4 and 5.5 dropped the asterisk
+/// to `(vararg)`. 5.1 has no `findvararg` (it exposes varargs through the `arg`
+/// table, not `debug.getlocal`), so it never reaches this path.
 ///
 /// PORT NOTE: C sets `*pos` as an out-parameter. Rust returns an Option of the
 /// stack index alongside the name.
@@ -540,7 +670,11 @@ fn find_vararg(state: &LuaState, ci: &CallInfo, n: i32) -> Option<(StackIdx, &'s
             // PORT NOTE: pointer arithmetic converted to index arithmetic.
             // ci->func.p is the function slot; varargs are at func - nextra - 1 .. func - 1
             let pos = ci.func - (nextra + n + 1);
-            return Some((pos, b"(vararg)" as &[u8]));
+            let name: &'static [u8] = match state.global().lua_version {
+                lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => b"(*vararg)",
+                _ => b"(vararg)",
+            };
+            return Some((pos, name));
         }
     }
     None
@@ -593,11 +727,7 @@ pub(crate) fn find_local(
                 .unwrap_or_else(|| state.top_idx().0)
         };
         if n > 0 && limit.saturating_sub(base.0) >= n as u32 {
-            name = Some(if ci.is_lua() {
-                b"(temporary)".to_vec()
-            } else {
-                b"(C temporary)".to_vec()
-            });
+            name = Some(temporary_local_name(state, ci.is_lua()).to_vec());
         } else {
             return None;
         }
@@ -815,6 +945,9 @@ fn aux_get_info(
                         // TODO(port): access proto via GcRef<LuaProto>
                         ar.isvararg = lua_cl.proto.is_vararg;
                         ar.nparams = lua_cl.proto.numparams;
+                        if state.global().lua_version == lua_types::LuaVersion::V51 {
+                            ar.nups = visible_upvalue_count_51(&lua_cl.proto) as u8;
+                        }
                     }
                     _ => {
                         ar.isvararg = true;
@@ -885,6 +1018,11 @@ pub fn get_info(state: &mut LuaState, what: &[u8], ar: &mut LuaDebug) -> bool {
             Some(i) => i,
             None => return false,
         };
+        if state.global().lua_version == lua_types::LuaVersion::V51
+            && state.is_base_ci(ci_idx)
+        {
+            return get_info_tailcall_51(state, what, ar);
+        }
         let func_val = state.get_at(state.get_ci(ci_idx).func).clone();
         debug_assert!(
             matches!(func_val, LuaValue::Function(_)),
@@ -911,6 +1049,61 @@ pub fn get_info(state: &mut LuaState, what: &[u8], ar: &mut LuaDebug) -> bool {
         let _ = collect_valid_lines(state, cl.as_ref());
     }
     status
+}
+
+/// Fills `ar` for a Lua 5.1 synthetic `(tail call)` frame, mirroring C's
+/// `info_tailcall`. The frame has no associated closure, so every option that
+/// would inspect one yields the tail defaults: `what == "tail"`,
+/// `source == "=(tail call)"` (rendered `(tail call)`), all lines `-1`, empty
+/// name/namewhat, zero upvalues, and a `nil` function pushed for the `'f'`
+/// option / `nil` valid-lines table for `'L'`.
+///
+/// C reference (`ldebug.c`):
+/// ```c
+/// static void info_tailcall (lua_Debug *ar) {
+///   ar->name = ar->namewhat = "";
+///   ar->what = "tail";
+///   ar->lastlinedefined = ar->linedefined = ar->currentline = -1;
+///   ar->source = "=(tail call)";
+///   luaO_chunkid(ar->short_src, ar->source, LUA_IDSIZE);
+///   ar->nups = 0;
+/// }
+/// ```
+fn get_info_tailcall_51(state: &mut LuaState, what: &[u8], ar: &mut LuaDebug) -> bool {
+    let what = if what.first() == Some(&b'>') {
+        &what[1..]
+    } else {
+        what
+    };
+    info_tailcall(ar);
+    let mut status = true;
+    for &ch in what {
+        if !matches!(ch, b'S' | b'l' | b'u' | b'n' | b't' | b'r' | b'L' | b'f') {
+            status = false;
+        }
+    }
+    if what.contains(&b'f') {
+        state.push(LuaValue::Nil);
+    }
+    if what.contains(&b'L') {
+        state.push(LuaValue::Nil);
+    }
+    status
+}
+
+/// Sets the tail-frame fields on `ar`. See `get_info_tailcall_51`.
+fn info_tailcall(ar: &mut LuaDebug) {
+    ar.name = Some(Vec::new());
+    ar.namewhat = Some(b"");
+    ar.what = Some(b"tail");
+    ar.linedefined = -1;
+    ar.lastlinedefined = -1;
+    ar.currentline = -1;
+    ar.source = Some(b"=(tail call)".to_vec());
+    ar.srclen = b"=(tail call)".len();
+    chunk_id(&mut ar.short_src, b"=(tail call)", b"=(tail call)".len());
+    ar.nups = 0;
+    ar.istailcall = false;
 }
 
 // ─── Symbolic execution — finding which instruction set a register ────────────
@@ -1196,15 +1389,22 @@ fn funcname_from_code<'a>(
 }
 
 /// Looks up the name for tag method `tm` from GlobalState and stores it in `*name`.
-/// Returns `Some("metamethod")`.
+/// Returns `Some("metamethod")`, or `None` on Lua 5.1.
 ///
-/// PORT NOTE: `+2` skips the leading `__` prefix in C; here we strip it from
-/// the byte slice.
+/// PORT NOTE: 5.1's `getfuncname` only recognises `OP_CALL`/`OP_TAILCALL`/
+/// `OP_TFORLOOP`; it never names a metamethod-dispatched call, so a 5.1
+/// metamethod handler reports `namewhat == "" , name == nil`. 5.2/5.3 added the
+/// metamethod cases and report the raw event name (`__index`). 5.4's
+/// `funcnamefromcode` advances the event name by `+2` to drop the leading `__`
+/// (`__index` -> `index`). db.lua (5.2) asserts `info.name == "__index"`.
 fn get_tm_name(
     state: &LuaState,
     tm: TagMethod,
     name: &mut Option<Vec<u8>>,
 ) -> Option<&'static [u8]> {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return None;
+    }
     // macros.tsv: getshrstr(ts) → ts.as_bytes(); G → state.global()
     // PORT NOTE: reshaped for borrowck — tm_name returns Option<GcRef<LuaString>>;
     // materialise the bytes before stripping so there is no borrow of a temporary.
@@ -1213,8 +1413,16 @@ fn get_tm_name(
         .tm_name(tm)
         .map(|s| s.as_bytes().to_vec())
         .unwrap_or_default();
-    let stripped = raw_bytes.strip_prefix(b"__").unwrap_or(&raw_bytes).to_vec();
-    *name = Some(stripped);
+    let keeps_prefix = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
+    let resolved = if keeps_prefix {
+        raw_bytes
+    } else {
+        raw_bytes.strip_prefix(b"__").unwrap_or(&raw_bytes).to_vec()
+    };
+    *name = Some(resolved);
     Some(b"metamethod")
 }
 
@@ -1326,6 +1534,17 @@ fn format_var_info(kind: Option<&[u8]>, name: Option<&[u8]>) -> Vec<u8> {
 /// frame, e.g. `" (local 'x')"` or `" (upvalue 'y')"`. Used in error messages.
 ///
 fn var_info(state: &LuaState, val_idx: StackIdx) -> Vec<u8> {
+    let (kind, name) = var_info_parts(state, val_idx);
+    format_var_info(kind.as_deref(), name.as_deref())
+}
+
+/// Resolves the `(kind, name)` description for the value at `val_idx` in the
+/// current call frame (e.g. `(b"local", b"x")`), returning owned bytes so the
+/// caller can choose the message ordering. Returns `(None, None)` when no
+/// information is available. Splits the lookup out of `var_info` so the
+/// type-error constructors can build the 5.1/5.2 `<kind> '<name>' (a <type>
+/// value)` ordering as well as the 5.3+ `a <type> value (<kind> '<name>')` one.
+fn var_info_parts(state: &LuaState, val_idx: StackIdx) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
     let ci_idx = state.current_ci_idx();
     let ci = state.get_ci(ci_idx).clone();
     let mut kind: Option<&[u8]> = None;
@@ -1350,29 +1569,51 @@ fn var_info(state: &LuaState, val_idx: StackIdx) -> Vec<u8> {
             }
         }
     }
-    format_var_info(
-        kind,
-        if kind.is_some() {
-            Some(&name_owned)
-        } else {
-            None
-        },
-    )
+    match kind {
+        Some(k) => (Some(k.to_vec()), Some(name_owned)),
+        None => (None, None),
+    }
 }
 
 // ─── Error-raising functions ──────────────────────────────────────────────────
 
-/// Internal helper: raises a type error with the given `extra` info string.
+/// Internal helper: raises a type error attributing the failure to the value
+/// `val` (operation `op`) with optional `(kind, name)` variable info.
 ///
-fn typeerror_inner(state: &LuaState, val: &LuaValue, op: &[u8], extra: &[u8]) -> LuaError {
+/// The attribution ordering is version-gated, mirroring `luaG_typeerror`:
+/// 5.1/5.2 put the variable clause first — `attempt to <op> <kind> '<name>'
+/// (a <type> value)` — while 5.3+ trail it — `attempt to <op> a <type> value
+/// (<kind> '<name>')`. With no variable info both collapse to `attempt to <op>
+/// a <type> value`.
+fn typeerror_inner_parts(
+    state: &LuaState,
+    val: &LuaValue,
+    op: &[u8],
+    kind: Option<&[u8]>,
+    name: Option<&[u8]>,
+) -> LuaError {
     let t = state.obj_type_name(val);
+    let legacy_order = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
     let mut msg = Vec::new();
     msg.extend_from_slice(b"attempt to ");
     msg.extend_from_slice(op);
-    msg.extend_from_slice(b" a ");
-    msg.extend_from_slice(&t);
-    msg.extend_from_slice(b" value");
-    msg.extend_from_slice(extra);
+    if let (true, Some(k), Some(n)) = (legacy_order, kind, name) {
+        msg.extend_from_slice(b" ");
+        msg.extend_from_slice(k);
+        msg.extend_from_slice(b" '");
+        msg.extend_from_slice(n);
+        msg.extend_from_slice(b"' (a ");
+        msg.extend_from_slice(&t);
+        msg.extend_from_slice(b" value)");
+    } else {
+        msg.extend_from_slice(b" a ");
+        msg.extend_from_slice(&t);
+        msg.extend_from_slice(b" value");
+        msg.extend_from_slice(&format_var_info(kind, name));
+    }
     prefixed_runtime(state, msg)
 }
 
@@ -1385,8 +1626,45 @@ pub(crate) fn type_error(
     val_idx: StackIdx,
     op: &[u8],
 ) -> LuaError {
-    let extra = var_info(state, val_idx);
-    typeerror_inner(state, val, op, &extra)
+    let (kind, name) = var_info_parts(state, val_idx);
+    typeerror_inner_parts(state, val, op, kind.as_deref(), name.as_deref())
+}
+
+/// Raises an arithmetic-coercion type error (the `<=5.3` core path that owns
+/// string coercion via `luaG_opinterror`/`luaG_aritherror`). Identical to
+/// `type_error` except for when a `constant` operand is reported:
+///
+/// - **5.1** never attributes a `constant` for arithmetic — its `getobjname`
+///   has no `OP_LOADK` case, so `-"abc"` and `"abc"+1` both give a bare
+///   `... a string value`.
+/// - **5.2/5.3** attribute a `constant` only for unary minus (the operand is a
+///   live register the bytecode can trace back); a binary operand passed to
+///   `luaG_typeerror` from `luaO_arith` points into the constant table, so
+///   `varinfo` reports nothing.
+///
+/// The `constant` kind was wired into 5.4 arithmetic wording differently and
+/// 5.4/5.5 never reach this path.
+pub(crate) fn arith_type_error(
+    state: &LuaState,
+    val: &LuaValue,
+    val_idx: StackIdx,
+    op: &[u8],
+    binary: bool,
+) -> LuaError {
+    let (kind, name) = var_info_parts(state, val_idx);
+    let is_constant = matches!(kind.as_deref(), Some(b"constant"));
+    let suppress_constant = is_constant
+        && match state.global().lua_version {
+            lua_types::LuaVersion::V51 => true,
+            lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 => binary,
+            _ => false,
+        };
+    let (kind, name) = if suppress_constant {
+        (None, None)
+    } else {
+        (kind, name)
+    };
+    typeerror_inner_parts(state, val, op, kind.as_deref(), name.as_deref())
 }
 
 /// Variant of `type_error` for bytecode paths where the target isn't on the
@@ -1401,15 +1679,28 @@ pub(crate) fn type_error_with_hint(
     kind: &[u8],
     name: &[u8],
 ) -> LuaError {
-    let extra = format_var_info(Some(kind), Some(name));
     let t = obj_type_name_static(val);
+    let legacy_order = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
     let mut msg = Vec::new();
     msg.extend_from_slice(b"attempt to ");
     msg.extend_from_slice(op);
-    msg.extend_from_slice(b" a ");
-    msg.extend_from_slice(t);
-    msg.extend_from_slice(b" value");
-    msg.extend_from_slice(&extra);
+    if legacy_order {
+        msg.extend_from_slice(b" ");
+        msg.extend_from_slice(kind);
+        msg.extend_from_slice(b" '");
+        msg.extend_from_slice(name);
+        msg.extend_from_slice(b"' (a ");
+        msg.extend_from_slice(t);
+        msg.extend_from_slice(b" value)");
+    } else {
+        msg.extend_from_slice(b" a ");
+        msg.extend_from_slice(t);
+        msg.extend_from_slice(b" value");
+        msg.extend_from_slice(&format_var_info(Some(kind), Some(name)));
+    }
     prefixed_runtime(state, msg)
 }
 
@@ -1430,19 +1721,32 @@ fn obj_type_name_static(val: &LuaValue) -> &'static [u8] {
 }
 
 /// Raises a "call" type error for a non-callable `val`.
-/// Prefers name from `funcnamefromcall`; falls back to `varinfo`.
 ///
+/// Lua 5.4 introduced `luaG_callerror`, which attributes the failed call via
+/// `funcnamefromcall`/`funcnamefromcode` on the calling instruction. That is how
+/// 5.4/5.5 name a generic-for iterator failure `(for iterator 'for iterator')`.
+/// Lua 5.1/5.2/5.3 had no such path: a non-callable value raised a plain
+/// `luaG_typeerror` whose `varinfo` only names the value's register or upvalue,
+/// so `for k,v in 3 do` reports the bare `attempt to call a number value`.
 pub(crate) fn call_error(state: &LuaState, val: &LuaValue, val_idx: StackIdx) -> LuaError {
-    let ci_idx = state.current_ci_idx();
-    let ci = state.get_ci(ci_idx).clone();
-    let mut name: Option<Vec<u8>> = None;
-    let kind = funcname_from_call(state, &ci, &mut name);
-    let extra = if kind.is_some() {
-        format_var_info(kind, name.as_deref())
+    let uses_callerror = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V54 | lua_types::LuaVersion::V55
+    );
+    let (kind, name) = if uses_callerror {
+        let ci_idx = state.current_ci_idx();
+        let ci = state.get_ci(ci_idx).clone();
+        let mut name: Option<Vec<u8>> = None;
+        let kind = funcname_from_call(state, &ci, &mut name);
+        if kind.is_some() {
+            (kind.map(|k| k.to_vec()), name)
+        } else {
+            var_info_parts(state, val_idx)
+        }
     } else {
-        var_info(state, val_idx)
+        var_info_parts(state, val_idx)
     };
-    typeerror_inner(state, val, b"call", &extra)
+    typeerror_inner_parts(state, val, b"call", kind.as_deref(), name.as_deref())
 }
 
 /// Raises a "bad 'for' <what>" error.

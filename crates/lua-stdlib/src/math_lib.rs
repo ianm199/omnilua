@@ -529,14 +529,44 @@ fn math_rad(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-/// `math.min(x, ...)` — minimum of all arguments (uses Lua `<` comparison).
+/// Whether `math.max`/`math.min` use the float-only `luaL_checknumber` path.
 ///
+/// 5.1 and 5.2 coerce every argument with `luaL_checknumber`, comparing
+/// `lua_Number` doubles and returning the coerced number — so a non-number
+/// argument raises `number expected, got <type>` and a number-shaped string
+/// argument is accepted and returned as a number. 5.3+ rewrote both to use
+/// `lua_compare(..., LUA_OPLT)`, which compares the values directly (so strings
+/// compare lexicographically and are returned unchanged). 5.4 is the
+/// unchangeable baseline, so the float-only path is gated to V51/V52 only.
+fn max_min_is_float_only(state: &LuaState) -> bool {
+    matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    )
+}
+
+/// `math.min(x, ...)` — minimum of all arguments.
+///
+/// On 5.1/5.2 every argument is coerced via `luaL_checknumber` and the smallest
+/// number is returned (see [`max_min_is_float_only`]); on 5.3+ the smallest
+/// argument by Lua `<` comparison is returned unchanged.
 fn math_min(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.get_top();
-    let mut imin: i32 = 1;
     if n < 1 {
         return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
     }
+    if max_min_is_float_only(state) {
+        let mut dmin = state.check_number(1)?;
+        for i in 2..=n {
+            let d = state.check_number(i)?;
+            if d < dmin {
+                dmin = d;
+            }
+        }
+        state.push(LuaValue::Float(dmin));
+        return Ok(1);
+    }
+    let mut imin: i32 = 1;
     for i in 2..=n {
         if state.compare_lt(i, imin)? {
             imin = i;
@@ -546,14 +576,28 @@ fn math_min(state: &mut LuaState) -> Result<usize, LuaError> {
     Ok(1)
 }
 
-/// `math.max(x, ...)` — maximum of all arguments (uses Lua `<` comparison).
+/// `math.max(x, ...)` — maximum of all arguments.
 ///
+/// On 5.1/5.2 every argument is coerced via `luaL_checknumber` and the largest
+/// number is returned (see [`max_min_is_float_only`]); on 5.3+ the largest
+/// argument by Lua `<` comparison is returned unchanged.
 fn math_max(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.get_top();
-    let mut imax: i32 = 1;
     if n < 1 {
         return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
     }
+    if max_min_is_float_only(state) {
+        let mut dmax = state.check_number(1)?;
+        for i in 2..=n {
+            let d = state.check_number(i)?;
+            if d > dmax {
+                dmax = d;
+            }
+        }
+        state.push(LuaValue::Float(dmax));
+        return Ok(1);
+    }
+    let mut imax: i32 = 1;
     for i in 2..=n {
         if state.compare_lt(imax, i)? {
             imax = i;
@@ -892,4 +936,9 @@ pub fn luaopen_math(state: &mut LuaState) -> Result<usize, LuaError> {
 //                  pinned by the behavioral net (multiversion_oracle PRNG
 //                  sequence + subnormal tests, the lua-stdlib FloatOnly test,
 //                  math.lua, and check.sh 5.1-5.5). See GRADUATED.md "math".
+//   version-gated: math.max/math.min use luaL_checknumber on 5.1/5.2 (reject
+//                  non-numbers, return a coerced number) vs lua_compare on 5.3+.
+//                  Known residual: the 5.1 arg-error function name is '?' in the
+//                  reference but qualified ('math.max') here — same lua-vm
+//                  arg_error_impl 5.1 name-resolution gap noted in base.rs.
 // ──────────────────────────────────────────────────────────────────────────

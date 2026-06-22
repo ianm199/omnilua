@@ -533,12 +533,38 @@ pub struct LexState {
 
 const PARSER_MAX_C_CALLS: u32 = 200;
 
-fn enter_level(ls: &mut LexState) -> Result<(), LuaError> {
+/// Guards parser recursion depth, mirroring C's `enterlevel` / `nCcalls`.
+///
+/// Lua 5.2 and 5.3 reported overrunning the limit as the syntax error
+/// `too many C levels (limit is 200) in <where>` (with a source location and
+/// `near '<token>'` suffix, the `checklimit`/`errorlimit` path of those
+/// versions' `lparser.c`). Lua 5.4 replaced that with a bare runtime
+/// `C stack overflow` with no location, which is what 5.4/5.5 keep. 5.1 has its
+/// own per-construct limits and never used this collective "C levels" message,
+/// so it also stays on the bare form here.
+fn enter_level(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     ls.recursion_depth += 1;
-    if ls.recursion_depth >= PARSER_MAX_C_CALLS {
-        Err(LuaError::syntax(format_args!("C stack overflow")))
+    if ls.recursion_depth < PARSER_MAX_C_CALLS {
+        return Ok(());
+    }
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    ) {
+        let fs = ls.fs.as_ref().unwrap();
+        let where_clause: Vec<u8> = if fs.f.linedefined == 0 {
+            b"main function".to_vec()
+        } else {
+            format!("function at line {}", fs.f.linedefined).into_bytes()
+        };
+        let mut msg: Vec<u8> = Vec::new();
+        msg.extend_from_slice(b"too many C levels (limit is ");
+        msg.extend_from_slice(PARSER_MAX_C_CALLS.to_string().as_bytes());
+        msg.extend_from_slice(b") in ");
+        msg.extend_from_slice(&where_clause);
+        Err(lua_lex::syntax_error(&mut ls.lex, &msg))
     } else {
-        Ok(())
+        Err(LuaError::syntax(format_args!("C stack overflow")))
     }
 }
 
@@ -2054,6 +2080,31 @@ fn mark_vararg_table_needed(fs: &mut FuncState) {
         if op.opcode() == Some(lua_code::opcodes::OpCode::VarArgPack) {
             op.set_arg_k(1);
             *inst = lua_types::opcode::Instruction::new(op.0);
+            break;
+        }
+    }
+}
+
+/// Lua 5.1 only: when the body uses `...` directly, stock 5.1 clears
+/// `VARARG_NEEDSARG` (lparser.c's `fs->f->is_vararg &= ~VARARG_NEEDSARG`) so the
+/// implicit `arg` table is never filled — but `arg` stays a declared local that
+/// reads as nil (it shadows any global `arg`). We model this by rewriting the
+/// entry `VARARGPACK` that would build `arg` into a `LOADNIL` of the same
+/// register, so the local is initialized to nil at function entry instead of
+/// holding whatever value previously occupied that stack slot.
+fn clear_arg_table_needed(fs: &mut FuncState) {
+    for inst in fs.f.code.iter_mut() {
+        let op = lua_code::opcodes::Instruction(inst.raw());
+        if op.opcode() == Some(lua_code::opcodes::OpCode::VarArgPack) {
+            let arg_reg = op.arg_a();
+            let load_nil = lua_code::opcodes::Instruction::abck(
+                lua_code::opcodes::OpCode::LoadNil,
+                arg_reg,
+                0,
+                0,
+                0,
+            );
+            *inst = lua_types::opcode::Instruction::new(load_nil.0);
             break;
         }
     }
@@ -3854,12 +3905,106 @@ fn movegotosout(
             if let Some(lb_idx) = lb_idx {
                 let lb_pc = ls.dyd.label[lb_idx].pc;
                 let lb_nactvar = ls.dyd.label[lb_idx].nactvar;
-                solvegoto(ls, state, i, lb_pc, lb_nactvar)?;
+                let trigger1 = ls.dyd.gt[i].close;
+                let close_level = goto_close_level(ls, lb_nactvar, bl_scope_level, trigger1);
+                if let Some(level) = close_level {
+                    resolve_goto_with_close(ls, state, i, lb_pc, lb_nactvar, level)?;
+                } else {
+                    solvegoto(ls, state, i, lb_pc, lb_nactvar)?;
+                }
                 continue;
             }
         }
         i += 1;
     }
+    Ok(())
+}
+
+/// Computes the scope level at which a backward goto resolving to an
+/// enclosing-block label (`label_nactvar`) must close upvalues, or `None` if no
+/// close is needed.
+///
+/// This mirrors the two `luaK_patchclose` callsites upstream 5.3 reaches while
+/// resolving a pending goto in `movegotosout`:
+///
+///   1. `movegotosout` itself: if the exited block captured upvalues and the
+///      goto leaves that block's scope, close at the exited block's level
+///      (`bl_scope_level`). This is exactly when the goto entry's `close` flag
+///      was set just before re-leveling, passed in as `trigger1`.
+///   2. `findlabel`: if the goto also leaves the target label's scope
+///      (`bl_scope_level > label_nactvar`, since the goto's level was already
+///      re-leveled to `bl_scope_level`) and the enclosing block either captured
+///      upvalues or holds at least one label, close at the *label's* level
+///      (`label_nactvar`).
+///
+/// Upstream applies these with `SETARG_A` so the later (smaller, more inclusive)
+/// level wins; this returns that minimum. Trigger 2 dominates whenever it fires
+/// because `label_nactvar <= bl_scope_level` for an enclosing label, so closing
+/// at the label's level also covers locals declared after the label in the
+/// label's own block (e.g. `goto.lua`'s `local b` redeclared just after `::l1::`).
+fn goto_close_level(
+    ls: &LexState,
+    label_nactvar: u8,
+    bl_scope_level: u8,
+    trigger1: bool,
+) -> Option<u8> {
+    let enclosing = ls.fs.as_ref().unwrap().bl.as_ref();
+    let enclosing_upval = enclosing.map_or(false, |b| b.upval);
+    let enclosing_has_label =
+        enclosing.map_or(false, |b| ls.dyd.label.len() as i32 > b.firstlabel);
+    let trigger2 = bl_scope_level > label_nactvar && (enclosing_upval || enclosing_has_label);
+    match (trigger1, trigger2) {
+        (_, true) => Some(label_nactvar),
+        (true, false) => Some(bl_scope_level),
+        (false, false) => None,
+    }
+}
+
+/// Resolves a pending backward goto (index `g`) to an enclosing-block label at
+/// `label_pc`, closing the upvalues of the locals the goto exits at scope level
+/// `close_scope_level` (from [`goto_close_level`]).
+///
+/// In block-scoped goto (5.2/5.3) a backward goto whose target label lives in an
+/// enclosing block is resolved here, in `movegotosout`, after the inner block
+/// has been popped. Upstream lua-c patches the goto's own `OP_JMP` to carry a
+/// close (`luaK_patchclose`, the JMP's `A` field). This port's bytecode is the
+/// 5.4 format, whose `OP_JMP` carries no close field — closes are explicit
+/// `OP_CLOSE` instructions. So instead of patching the JMP in place, this emits a
+/// `CLOSE; JMP→label` trampoline at the current pc and redirects the goto's
+/// original JMP to land on the `CLOSE`. The upvalues of the exited locals are
+/// therefore closed on every backward iteration, giving each iteration a fresh
+/// upvalue cell (the behavior `goto.lua`'s upvalue-closing tests assert under
+/// 5.2/5.3).
+fn resolve_goto_with_close(
+    ls: &mut LexState,
+    state: &mut LuaState,
+    g: usize,
+    label_pc: i32,
+    label_nactvar: u8,
+    close_scope_level: u8,
+) -> Result<(), LuaError> {
+    if ls.dyd.gt[g].nactvar < label_nactvar {
+        let version = state.global().lua_version;
+        return Err(jumpscopeerror(ls, version, g, label_nactvar));
+    }
+    let line = ls.dyd.gt[g].line;
+    let gt_pc = ls.dyd.gt[g].pc;
+    let close_local_level = local_level_for_scope_level(ls, close_scope_level);
+    let close_level = reg_level(ls, ls.fs.as_ref().unwrap(), close_local_level) as u32;
+    let close_pc = {
+        let inst = lua_code::opcodes::Instruction::abck(
+            lua_code::opcodes::OpCode::Close,
+            close_level,
+            0,
+            0,
+            0,
+        );
+        emit_inst(ls.fs.as_mut().unwrap(), line, inst)
+    };
+    let jmp_pc = cg_jump(ls.fs.as_mut().unwrap(), line);
+    cg_patch_list(ls.fs.as_mut().unwrap(), jmp_pc, label_pc)?;
+    cg_patch_list(ls.fs.as_mut().unwrap(), gt_pc, close_pc)?;
+    ls.dyd.gt.remove(g);
     Ok(())
 }
 
@@ -4162,12 +4307,16 @@ fn block_follow(ls: &LexState, withuntil: bool) -> bool {
 }
 
 fn statlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
+    let v51 = state.global().lua_version == lua_types::LuaVersion::V51;
     while !block_follow(ls, true) {
         if ls.t.token == TK_RETURN {
             statement(ls, state)?;
             return Ok(());
         }
         statement(ls, state)?;
+        if v51 {
+            test_next(ls, state, b';' as TokenKind)?;
+        }
     }
     Ok(())
 }
@@ -4383,8 +4532,15 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     // Pre-5.5 versions do not reserve that local, and a name after `...` stays
     // a parse error because the loop breaks as soon as it sees `...`.
     let is_v55 = state.global().lua_version == lua_types::LuaVersion::V55;
+    // Lua 5.1 (`LUA_COMPAT_VARARG`) gives every vararg function an implicit local
+    // named `arg`, a `table.pack`-style table of the extra arguments (`arg.n` is
+    // the count). It is declared as an ordinary local right after the fixed
+    // parameters, mirroring `parlist`'s `new_localvarliteral(ls, "arg", ...)`
+    // plus `VARARG_HASARG | VARARG_NEEDSARG`. 5.2 removed it, so this is V51-only.
+    let is_v51 = state.global().lua_version == lua_types::LuaVersion::V51;
     let mut has_vararg_local = false;
     let mut has_vararg_name = false;
+    let mut has_arg_local = false;
     let mut vararg_name_vidx: Option<i32> = None;
     if ls.t.token != b')' as TokenKind {
         loop {
@@ -4411,6 +4567,11 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
                         let name = state.intern_str(b"(vararg table)")?;
                         new_local_var(ls, state, name)?;
                         has_vararg_local = true;
+                    } else if is_v51 {
+                        let name = state.intern_str(b"arg")?;
+                        new_local_var(ls, state, name)?;
+                        has_vararg_local = true;
+                        has_arg_local = true;
                     }
                 }
                 _ => {
@@ -4434,6 +4595,11 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
             let firstlocal = ls.fs.as_ref().unwrap().firstlocal;
             get_local_var_desc_mut(ls, firstlocal, vidx).kind = VarKind::VarArg;
         }
+        if has_arg_local {
+            let fs = ls.fs.as_mut().unwrap();
+            let arg_locvar = (fs.ndebugvars - 1) as usize;
+            fs.f.locvars[arg_locvar].startpc = 0;
+        }
     }
     // Reserve registers for parameters (plus the vararg-table parameter, if
     // present), in one call as upstream does (`luaK_reserveregs(fs, nactvar)`).
@@ -4456,6 +4622,26 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
         // Record the vararg-table register so `OP_VARARG` unpacks live from this
         // table (shared storage), making `t` mutations visible through `...`.
         ls.fs.as_mut().unwrap().f.vararg_table_reg = Some(reg as u8);
+    }
+    // Materialize the Lua 5.1 implicit `arg` table the same way, but with the K
+    // bit set so VARARGPACK builds the table unconditionally at entry (it is the
+    // default; `simpleexp`'s `...` arm calls `clear_arg_table_needed`, which
+    // rewrites this entry VARARGPACK into a LOADNIL when the body actually uses
+    // `...`, matching C's `is_vararg &= ~VARARG_NEEDSARG` — `arg` stays a
+    // declared local but reads nil). Unlike the 5.5 named form, `arg` is an
+    // ordinary local with no `vararg_table_reg` aliasing, so `...` keeps reading
+    // the raw extra args independently of `arg`.
+    if has_arg_local {
+        let reg = nvarstack(ls, ls.fs.as_ref().unwrap()) - 1;
+        let inst = lua_code::opcodes::Instruction::abck(
+            lua_code::opcodes::OpCode::VarArgPack,
+            reg as u32,
+            0,
+            0,
+            1,
+        );
+        let line = ls.fs.as_ref().unwrap().previousline;
+        emit_inst(ls.fs.as_mut().unwrap(), line, inst);
     }
     Ok(())
 }
@@ -4561,13 +4747,35 @@ fn explist(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Result<
     Ok(n)
 }
 
-fn funcargs(ls: &mut LexState, state: &mut LuaState, f: &mut ExprDesc) -> Result<(), LuaError> {
+/// Parses a function call's argument list and emits the CALL.
+///
+/// `suffixed_line` is the line captured at the start of the enclosing
+/// [`suffixedexp`] (the callee's first line). Lua 5.2 and 5.3 attribute the
+/// CALL instruction to that line via `luaK_fixline`, so a runtime call-error on
+/// `a\n(\n23)` reports the callee's line (1), not the open-paren line (2). Lua
+/// 5.4/5.5 dropped that fixup and attribute the CALL to the open-paren line, so
+/// those versions keep using `ls.linenumber` at funcargs entry and their
+/// bytecode line info is unchanged.
+fn funcargs(
+    ls: &mut LexState,
+    state: &mut LuaState,
+    f: &mut ExprDesc,
+    suffixed_line: i32,
+) -> Result<(), LuaError> {
     let mut args = ExprDesc::default();
     // BEFORE consuming, so the OP_CALL/etc emissions attribute to the call site.
     // errors.lua tests `a\n(\n23)` expects error at line of `(`, not line of `a`.
     let line = ls.linenumber;
     match ls.t.token {
         c if c == b'(' as TokenKind => {
+            if state.global().lua_version == lua_types::LuaVersion::V51
+                && ls.linenumber != ls.lastline
+            {
+                return Err(lua_lex::syntax_error(
+                    &mut ls.lex,
+                    b"ambiguous syntax (function call x new statement)",
+                ));
+            }
             lex_next(ls, state)?; // skip '('
             if ls.t.token == b')' as TokenKind {
                 args.k = ExprKind::Void;
@@ -4618,7 +4826,15 @@ fn funcargs(ls: &mut LexState, state: &mut LuaState, f: &mut ExprDesc) -> Result
         2,
         0,
     );
-    let call_pc = emit_inst(ls.fs.as_mut().unwrap(), line, call_inst);
+    let call_line = if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    ) {
+        suffixed_line
+    } else {
+        line
+    };
+    let call_pc = emit_inst(ls.fs.as_mut().unwrap(), call_line, call_inst);
     init_exp(f, ExprKind::Call, call_pc);
     ls.fs.as_mut().unwrap().freereg = base as u8 + 1;
     Ok(())
@@ -4646,6 +4862,7 @@ fn primaryexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Resu
 }
 
 fn suffixedexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Result<(), LuaError> {
+    let start_line = ls.linenumber;
     primaryexp(ls, state, v)?;
     loop {
         match ls.t.token {
@@ -4673,12 +4890,12 @@ fn suffixedexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Res
                     &mut key,
                     keep_self_opcode_for_register_key,
                 )?;
-                funcargs(ls, state, v)?;
+                funcargs(ls, state, v, start_line)?;
             }
             c if c == b'(' as TokenKind || c == TK_STRING || c == b'{' as TokenKind => {
                 let line = ls.lastline;
                 cg_exp_to_next_reg(ls.fs.as_mut().unwrap(), line, v)?;
-                funcargs(ls, state, v)?;
+                funcargs(ls, state, v, start_line)?;
             }
             _ => return Ok(()),
         }
@@ -4715,9 +4932,13 @@ fn simpleexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Resul
         TK_DOTS => {
             let is_vararg = ls.fs.as_ref().unwrap().f.is_vararg;
             if !is_vararg {
-                return Err(LuaError::syntax(format_args!(
-                    "cannot use '...' outside a vararg function"
-                )));
+                return Err(lua_lex::syntax_error(
+                    &mut ls.lex,
+                    b"cannot use '...' outside a vararg function",
+                ));
+            }
+            if state.global().lua_version == lua_types::LuaVersion::V51 {
+                clear_arg_table_needed(ls.fs.as_mut().unwrap());
             }
             let line = ls.lastline;
             let inst =
@@ -4822,7 +5043,7 @@ fn subexpr(
     v: &mut ExprDesc,
     limit: i32,
 ) -> Result<BinOpr, LuaError> {
-    enter_level(ls)?;
+    enter_level(ls, state)?;
 
     let uop = getunopr_versioned(ls.t.token, state);
     if uop != UnOpr::NoUnOpr {
@@ -4967,7 +5188,7 @@ fn restassign(
         if !nv_assign.v.k.is_indexed() {
             check_conflict(ls, state, lh, &nv_assign.v.clone())?;
         }
-        enter_level(ls)?;
+        enter_level(ls, state)?;
         restassign(ls, state, &mut nv_assign, nvars + 1)?;
         leave_level(ls);
     } else {
@@ -5903,9 +6124,11 @@ fn statement(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     // AND for runtime-error line attribution on control-flow instructions
     // (FORPREP, etc). errors.lua's lineerror tests depend on this.
     let line = ls.linenumber;
-    enter_level(ls)?;
+    enter_level(ls, state)?;
     match ls.t.token {
-        c if c == b';' as TokenKind => {
+        c if c == b';' as TokenKind
+            && state.global().lua_version != lua_types::LuaVersion::V51 =>
+        {
             lex_next(ls, state)?;
         }
         TK_IF => {

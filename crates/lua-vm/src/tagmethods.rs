@@ -503,7 +503,17 @@ pub(crate) fn try_bin_tm(
     // t's metamethod via `call_bin_tm`, and the coercible success path
     // (`"3" + 2`) still flows through the string metamethod below, preserving
     // 5.3 float-promotion semantics. See specs/followup/5.3-coerce-err.md.
-    if matches!(state.global().lua_version, lua_types::LuaVersion::V53)
+    //
+    // 5.1/5.2 own arithmetic string coercion in the core the same way: a
+    // non-coercible string operand raises `attempt to perform arithmetic on a
+    // <type> value` (`luaG_aritherror` → `luaG_typeerror`, no metamethod-name
+    // attribution and no spurious `[C]: in metamethod` frame). They share this
+    // intercept; the per-version message ordering is applied downstream in
+    // `debug::type_error`.
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    )
         && matches!(
             event,
             TagMethod::Add
@@ -548,11 +558,12 @@ pub(crate) fn try_bin_tm(
                 } else {
                     (p2, p2_idx.unwrap_or(StackIdx(0)))
                 };
-                return Err(crate::debug::type_error(
+                return Err(crate::debug::arith_type_error(
                     state,
                     bad,
                     bad_idx,
                     b"perform arithmetic on",
+                    !unary,
                 ));
             }
         }
@@ -725,6 +736,66 @@ pub(crate) fn try_bini_tm(
     try_bin_assoc_tm(state, p1, p1_idx, &aux, None, flip, res, event)
 }
 
+// ── get_compTM / get_equalTM (Lua 5.1 same-reference rule) ───────────────────
+
+/// Resolve the metatable governing an operand, mirroring `get_tm_by_obj`'s
+/// metatable dispatch: tables and full userdata carry per-object metatables;
+/// every other type uses the per-type metatable on `GlobalState`.
+fn operand_metatable(
+    state: &LuaState,
+    o: &LuaValue,
+) -> Option<GcRef<lua_types::value::LuaTable>> {
+    match o {
+        LuaValue::Table(t) => t.metatable(),
+        LuaValue::UserData(u) => u.metatable(),
+        _ => {
+            let type_idx = o.base_type() as usize;
+            state.global().mt[type_idx].clone()
+        }
+    }
+}
+
+/// Lua 5.1's `get_compTM`/`get_equalTM`: the comparison/equality metamethod is
+/// honoured only when BOTH operands resolve to the SAME handler function.
+///
+/// Returns the chosen metamethod, or `LuaValue::Nil` when the handlers differ,
+/// when one operand lacks the metamethod, or when neither has a metatable.
+/// 5.1 raised an error for ordered comparisons in this `Nil` case (the caller
+/// does so) and returned "not equal" for equality.
+///
+/// PORT NOTE (#events51): 5.1 picks the left metatable's handler, returns it
+/// directly when both metatables are the same object, and otherwise keeps it
+/// only if the right metatable's handler is raw-equal (same function reference).
+/// 5.2+ consult left-then-right unconditionally, so this is gated to V51 by the
+/// caller.
+pub(crate) fn get_comp_tm_51(
+    state: &mut LuaState,
+    p1: &LuaValue,
+    p2: &LuaValue,
+    event: TagMethod,
+) -> LuaValue {
+    let tm1 = get_tm_by_obj(state, p1, event);
+    if tm1.is_nil() {
+        return LuaValue::Nil;
+    }
+    let mt1 = operand_metatable(state, p1);
+    let mt2 = operand_metatable(state, p2);
+    if let (Some(a), Some(b)) = (&mt1, &mt2) {
+        if GcRef::ptr_eq(a, b) {
+            return tm1;
+        }
+    }
+    let tm2 = get_tm_by_obj(state, p2, event);
+    if tm2.is_nil() {
+        return LuaValue::Nil;
+    }
+    if crate::vm::raw_equal_values(&tm1, &tm2) {
+        tm1
+    } else {
+        LuaValue::Nil
+    }
+}
+
 // ── luaT_callorderTM ─────────────────────────────────────────────────────────
 
 //                           TMS event)
@@ -760,6 +831,33 @@ pub(crate) fn call_order_tm(
         {
             return Err(crate::debug::order_error(state, p1, p2));
         }
+    }
+
+    // PORT NOTE (#events51): 5.1's `call_orderTM` requires both operands to
+    // carry the SAME `__lt`/`__le` handler (`luaO_rawequalObj(tm1, tm2)`), and
+    // raises `luaG_ordererror` otherwise — including when only one operand has
+    // the metamethod. 5.2+ consult left-then-right unconditionally, so this is
+    // gated to V51. The `__le`→`__lt` (swapped) derivation below uses the same
+    // same-reference rule.
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        let res_idx = state.top_idx();
+        let tm = get_comp_tm_51(state, p1, p2, event);
+        if !tm.is_nil() {
+            call_tm_res(state, tm, p1.clone(), p2.clone(), res_idx)?;
+            let result = state.get_at(res_idx).clone();
+            return Ok(!matches!(result, LuaValue::Nil | LuaValue::Bool(false)));
+        }
+        if event == TagMethod::Le {
+            let tm = get_comp_tm_51(state, p2, p1, TagMethod::Lt);
+            if !tm.is_nil() {
+                state.current_call_info_mut().callstatus |= crate::state::CIST_LEQ;
+                call_tm_res(state, tm, p2.clone(), p1.clone(), res_idx)?;
+                state.current_call_info_mut().callstatus &= !crate::state::CIST_LEQ;
+                let result = state.get_at(res_idx).clone();
+                return Ok(matches!(result, LuaValue::Nil | LuaValue::Bool(false)));
+            }
+        }
+        return Err(crate::debug::order_error(state, p1, p2));
     }
 
     //      return !l_isfalse(s2v(L->top.p));
@@ -910,8 +1008,74 @@ pub(crate) fn adjust_varargs(
         state.set_at(base + nfixparams, LuaValue::Nil);
     }
 
+    build_legacy_arg_table(state, ci_idx, proto, nextra)?;
+
     debug_assert!(state.top_idx().0 <= state.call_info[ci_idx.as_usize()].top.0);
     Ok(())
+}
+
+/// Build the Lua 5.1 implicit `arg` table at call entry, mirroring C 5.1's
+/// `luaD_precall`, which fills `arg` inside `adjustvarargs` *before* any call or
+/// line hook fires.
+///
+/// Our architecture defers the `arg` materialization to a `VARARGPACK` body
+/// opcode, which runs after `OP_VARARGPREP` and therefore after the call hook.
+/// A hook (or a `debug.getlocal` from a frame above) would then observe `arg`
+/// as nil. Building it here restores the C ordering: by the time the call hook
+/// runs, the frame already holds a populated `arg`. The body `VARARGPACK` later
+/// rebuilds it idempotently for the non-hook path.
+///
+/// Only applies to Lua 5.1, only when the proto's first `VARARGPACK` carries the
+/// K bit set. When the body uses `...` directly the parser rewrites that entry
+/// `VARARGPACK` into a `LOADNIL` (see `clear_arg_table_needed`), so no K-bit
+/// `VARARGPACK` survives, `legacy_arg_table_reg` returns `None`, and we build
+/// nothing here — mirroring stock 5.1, which leaves `arg` declared but nil.
+fn build_legacy_arg_table(
+    state: &mut LuaState,
+    ci_idx: CallInfoIdx,
+    proto: &GcRef<lua_types::LuaProto>,
+    nextra: i32,
+) -> Result<(), LuaError> {
+    if state.global().lua_version != lua_types::LuaVersion::V51 {
+        return Ok(());
+    }
+    let Some(arg_reg) = legacy_arg_table_reg(proto) else {
+        return Ok(());
+    };
+
+    let base = state.call_info[ci_idx.as_usize()].func + 1;
+    let ra = base + arg_reg as i32;
+    let ci_func = base - 1;
+
+    let t = if nextra > 0 {
+        state.new_table_with_sizes(nextra as u32, 1)?
+    } else {
+        state.new_table()
+    };
+    for k in 0..nextra {
+        let src: StackIdx = ci_func - nextra + k;
+        let val = state.get_at(src);
+        t.raw_set_int(state, (k + 1) as i64, val)?;
+    }
+    let n_key = state.intern_str(b"n")?;
+    t.raw_set(state, LuaValue::Str(n_key), LuaValue::Int(nextra as i64))?;
+    state.set_at(ra, LuaValue::Table(t));
+    Ok(())
+}
+
+/// Return the register of the Lua 5.1 implicit `arg` table, or `None` when the
+/// proto should not build one at entry. The signal is the first `VARARGPACK`
+/// instruction with the K bit set (see `build_legacy_arg_table`).
+fn legacy_arg_table_reg(proto: &GcRef<lua_types::LuaProto>) -> Option<u8> {
+    for inst in proto.code.iter() {
+        if inst.opcode() == OpCode::VarArgPack {
+            if inst.test_k() {
+                return Some(inst.arg_a() as u8);
+            }
+            return None;
+        }
+    }
+    None
 }
 
 // ── luaT_getvarargs ──────────────────────────────────────────────────────────
@@ -1047,4 +1211,10 @@ pub(crate) fn get_varargs(
 //         ttype(r)` guard. 5.2+ keep consulting the TM for mixed types. The check
 //         is on the Lua type tag (base_type), so Int/Float (both `Number`) and the
 //         two userdata kinds compare as C's `ttype` does.
+//    (10) #events51: get_comp_tm_51 implements 5.1's get_compTM/get_equalTM
+//         same-reference rule — the `__lt`/`__le`/`__eq` metamethod fires only
+//         when both operands resolve to the identical handler function. For
+//         ordered comparison call_order_tm raises luaG_ordererror in the
+//         differing/missing-handler case (V51 only); equality (vm::equal_obj)
+//         returns "not equal". 5.2+ consult left-then-right unconditionally.
 // ──────────────────────────────────────────────────────────────────────────────

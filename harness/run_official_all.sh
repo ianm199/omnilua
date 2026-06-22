@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 usage() {
-    echo "usage: $0 [--version 5.4|5.5] [--tests-dir DIR]" >&2
+    echo "usage: $0 [--version 5.1|5.2|5.3|5.4|5.5] [--tests-dir DIR]" >&2
 }
 
 normalize_version() {
@@ -30,6 +30,8 @@ default_tests_dir() {
         5.5) echo "$ROOT/reference/lua-5.5.0-tests" ;;
         5.4) echo "$ROOT/reference/lua-c/testes" ;;
         5.3) echo "$ROOT/reference/lua-5.3.6-tests" ;;
+        5.2) echo "$ROOT/reference/extra-tests/lua-5.2.2-tests" ;;
+        5.1) echo "$ROOT/reference/extra-tests/lua5.1-tests" ;;
         *) echo "$ROOT/reference/lua-c/testes" ;;
     esac
 }

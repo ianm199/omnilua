@@ -407,9 +407,14 @@ fn check_mode_popen(mode: &[u8]) -> bool {
     matches!(mode, b"r" | b"w")
 }
 
-/// Push success (`true`) or failure (`false`, msg, errno) per `luaL_fileresult`.
+/// Push success (`true`) or failure (`fail`, msg, errno) per `luaL_fileresult`.
 ///
-/// else { luaL_pushfail; pushstring(msg); pushinteger(errno); return 3; }`
+/// On success: `lua_pushboolean(L, 1); return 1`. On failure C runs
+/// `luaL_pushfail(L); lua_pushfstring(...); lua_pushinteger(errno); return 3`,
+/// and `luaL_pushfail` resolves to `lua_pushnil` on every supported version
+/// (5.1-5.5), so the first failure value is `nil`, never `false`. Tests that
+/// compare the failure handle to `nil` (e.g. `io.open(missing) == nil`) rely on
+/// this exact value.
 fn file_result(
     state: &mut LuaState,
     success: bool,
@@ -420,7 +425,7 @@ fn file_result(
         state.push(LuaValue::Bool(true));
         return Ok(1);
     }
-    state.push(LuaValue::Bool(false));
+    state.push(LuaValue::Nil);
     let msg = os_err.to_string();
     match fname {
         Some(name) => {

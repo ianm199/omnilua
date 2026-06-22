@@ -155,13 +155,40 @@ pub const CO_FUNCS: &[(&[u8], lua_CFunction)] = &[
 /// Retrieves the coroutine thread at stack index 1, raising a type error if
 /// the argument is absent or not a thread.
 ///
+/// The error routes through `arg_error_impl` so it carries the calling
+/// function's name (`bad argument #1 to 'coroutine.resume' (...)` on 5.2+; `'?'`
+/// on 5.1). The `extramsg` body is version-gated to match each reference:
+/// 5.1/5.2 say `coroutine expected`, 5.3 says `thread expected`, and 5.4/5.5 use
+/// `luaL_argexpected` which appends `, got <type>`.
 fn get_co(state: &mut LuaState) -> Result<GcRef<lua_types::value::LuaThread>, LuaError> {
     let co = state.to_thread(1);
-    if co.is_none() {
-        let got = state.arg(1);
-        return Err(LuaError::type_arg_error(1, "thread", &got));
+    if let Some(co) = co {
+        return Ok(co);
     }
-    Ok(co.expect("checked above"))
+    Err(thread_arg_error(state, 1))
+}
+
+/// Build the version-correct "expected a coroutine/thread" argument error for
+/// argument `arg`, carrying the calling function's name via `arg_error_impl`.
+///
+/// See [`get_co`] for the per-version message forms.
+fn thread_arg_error(state: &mut LuaState, arg: i32) -> LuaError {
+    use lua_types::LuaVersion;
+    let version = state.global().lua_version;
+    if matches!(version, LuaVersion::V51 | LuaVersion::V52) {
+        return lua_vm::debug::arg_error_impl(state, arg, b"coroutine expected");
+    }
+    if matches!(version, LuaVersion::V53) {
+        return lua_vm::debug::arg_error_impl(state, arg, b"thread expected");
+    }
+    let got = state.value_at(arg);
+    let got_name = match state.full_type_name(&got) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let mut extramsg = b"thread expected, got ".to_vec();
+    extramsg.extend_from_slice(&got_name);
+    lua_vm::debug::arg_error_impl(state, arg, &extramsg)
 }
 
 fn get_opt_co(state: &mut LuaState) -> Result<GcRef<lua_types::value::LuaThread>, LuaError> {
@@ -674,6 +701,20 @@ fn aux_wrap(state: &mut LuaState) -> Result<usize, LuaError> {
 /// `"suspended"`. Pushes the new thread value and returns 1.
 pub fn co_create(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_type(1, LuaType::Function)?;
+    // 5.1's `luaB_cocreate` additionally rejects C functions
+    // (`luaL_argcheck(L, ... && !lua_iscfunction(L, 1), 1, "Lua function
+    // expected")`); only Lua closures may become coroutine bodies. 5.2 moved
+    // coroutines to `lcorolib.c` and dropped that restriction, so a C function
+    // is accepted from 5.2 on. Verified against lua5.1.5 / lua5.2.4.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51)
+        && state.is_c_function_at(1)
+    {
+        return Err(lua_vm::debug::arg_error_impl(
+            state,
+            1,
+            b"Lua function expected",
+        ));
+    }
     let body = state.value_at(1);
     let _nl = state.new_thread(Some(body))?;
     Ok(1)
@@ -972,10 +1013,19 @@ pub fn open_coroutine(state: &mut LuaState) -> Result<usize, LuaError> {
 //   net:           behavior is pinned by tests/coro_strengthen.rs (the version
 //                  seams), the official coroutine.lua suite, multiversion
 //                  oracle, and check.sh 5.1-5.5. See GRADUATED.md "coroutine".
+//   version-gated: get_co/thread_arg_error emit the calling function's name and
+//                  the per-version "expected" body (coroutine vs thread, with vs
+//                  without ", got <type>"). co_create rejects C-function bodies
+//                  on 5.1 only ("Lua function expected").
 //   known-gap:     the 5.1 yield-from-outside / yield-across-C-call wording is
 //                  "attempt to yield across metamethod/C-call boundary" in the
 //                  reference but "attempt to yield from outside a coroutine"
 //                  here — the message originates in lua-vm's lua_yieldk (a
 //                  cross-cutting yield guard, not this module). NOT fixed here:
 //                  the single-source fix is a version gate in lua-vm/src/do_.rs.
+//   known-gap:     a 5.1 arg error raised through pcall (no resolvable namewhat)
+//                  names '?' in the reference but the qualified function here
+//                  ('coroutine.resume', 'coroutine.create', ...). Single-source
+//                  fix is to gate lua-vm arg_error_impl's find_func_name_in_loaded
+//                  fallback off for V51 (same gap hits base/math arg errors).
 // ──────────────────────────────────────────────────────────────────────────────

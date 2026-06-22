@@ -4113,3 +4113,38 @@ fn v_too_many_captures_gate_crossversion() {
         );
     }
 }
+
+#[test]
+fn v_dump_version_byte_per_version() {
+    for (v, byte) in [
+        (LuaVersion::V51, "81"),
+        (LuaVersion::V52, "82"),
+        (LuaVersion::V53, "83"),
+        (LuaVersion::V54, "84"),
+        (LuaVersion::V55, "85"),
+    ] {
+        eq(
+            v,
+            "return string.byte(string.dump(function() return 1 end), 5)",
+            byte,
+        );
+    }
+}
+
+#[test]
+fn v52_load_dumped_multiupvalue_skips_env_injection() {
+    eq(
+        LuaVersion::V52,
+        "local a,b=20,30; local f=function(x) if x=='set' then a=10+b;b=b+1 else return a end end; \
+         local g=load(string.dump(f)); return g()",
+        "nil",
+    );
+    for v in [LuaVersion::V53, LuaVersion::V54, LuaVersion::V55] {
+        eq(
+            v,
+            "local a,b=20,30; local f=function(x) if x=='set' then a=10+b;b=b+1 else return a end end; \
+             local g=load(string.dump(f)); return type(g())",
+            "table",
+        );
+    }
+}

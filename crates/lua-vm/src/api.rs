@@ -447,9 +447,23 @@ impl LuaState {
                 if let LuaValue::Str(s) = result {
                     return Ok(s.as_bytes().to_vec());
                 }
-                return Err(LuaError::runtime(format_args!(
-                    "'__tostring' must return a string"
-                )));
+                let legacy_no_check = matches!(
+                    self.global().lua_version,
+                    lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+                );
+                if matches!(result, LuaValue::Int(_) | LuaValue::Float(_)) {
+                    return Ok(crate::object::num_to_string(self, &result)?
+                        .as_bytes()
+                        .to_vec());
+                }
+                if legacy_no_check {
+                    let display_idx = StackIdx(top.0 - 1).0 as i32;
+                    return display_default_bytes(self, &result, display_idx);
+                }
+                return Err(crate::debug::c_api_runtime(
+                    self,
+                    b"'__tostring' must return a string".to_vec(),
+                ));
             }
         }
         let bytes: Vec<u8> = match &v {
@@ -521,7 +535,7 @@ impl LuaState {
     /// trait default so the `todo!()` shim never fires.
     pub fn check_arg_any(&mut self, arg: i32) -> Result<(), LuaError> {
         if lua_type_at(self, arg) == LuaType::None {
-            return Err(LuaError::arg_error(arg, "value expected"));
+            return Err(crate::debug::arg_error_impl(self, arg, b"value expected"));
         }
         Ok(())
     }
@@ -858,6 +872,51 @@ impl LuaState {
         self.gc_pre_collect_clear();
         self.gc().check_step();
         Ok(u)
+    }
+}
+
+/// Opaque identity pointer for a `LuaValue`, mirroring `to_pointer` but keyed on
+/// the value rather than a stack index. Returns `None` for value-typed values
+/// that have no identity (nil, bool, numbers).
+fn value_pointer(o: &LuaValue) -> Option<usize> {
+    match o {
+        LuaValue::Function(LuaClosure::LightC(f)) => Some(*f as usize),
+        LuaValue::LightUserData(p) => Some(*p as usize),
+        LuaValue::Str(s) => Some(GcRef::identity(s)),
+        LuaValue::Table(t) => Some(GcRef::identity(t)),
+        LuaValue::Function(LuaClosure::Lua(f)) => Some(GcRef::identity(f)),
+        LuaValue::Function(LuaClosure::C(f)) => Some(GcRef::identity(f)),
+        LuaValue::UserData(u) => Some(GcRef::identity(u)),
+        LuaValue::Thread(t) => Some(GcRef::identity(t)),
+        _ => None,
+    }
+}
+
+/// Formats `val` to its default `tostring` bytes without consulting any
+/// metamethod (`"true"`/`"false"`/`"nil"`, numbers, or `"<type>: 0x<addr>"`).
+/// Used for the Lua 5.1/5.2 `tostring` path, where `__tostring` may return any
+/// type and the raw return value is used as-is. `_idx` identifies the slot the
+/// value already occupies; callers must not push a new copy.
+fn display_default_bytes(
+    state: &mut LuaState,
+    val: &LuaValue,
+    _idx: i32,
+) -> Result<Vec<u8>, LuaError> {
+    match val {
+        LuaValue::Str(s) => Ok(s.as_bytes().to_vec()),
+        LuaValue::Int(_) | LuaValue::Float(_) => {
+            Ok(crate::object::num_to_string(state, val)?.as_bytes().to_vec())
+        }
+        LuaValue::Bool(b) => Ok(if *b { b"true".to_vec() } else { b"false".to_vec() }),
+        LuaValue::Nil => Ok(b"nil".to_vec()),
+        _ => {
+            let kind = crate::tagmethods::obj_type_name(state, val)?;
+            let ptr = value_pointer(val).unwrap_or(0);
+            let mut buf = kind;
+            buf.extend_from_slice(b": 0x");
+            buf.extend_from_slice(format!("{:x}", ptr).as_bytes());
+            Ok(buf)
+        }
     }
 }
 
@@ -1245,6 +1304,17 @@ fn get_global_table(state: &LuaState) -> LuaValue {
     // array slot. init_registry now stashes globals in a direct
     // GlobalState field; read it from there until the LuaTable placeholder
     // reconciles with lua-vm::table::LuaTable.
+    //
+    // Lua 5.1 has a per-thread global table (`lua_State.l_gt`): a freshly
+    // loaded top-level chunk takes the *running* thread's `l_gt` as its
+    // environment, and `setfenv(0, t)` from inside a coroutine must affect
+    // only that coroutine, never the main thread's globals. Resolve through
+    // the running thread's `l_gt` on 5.1; every other version shares one
+    // global table and reads the `globals` field directly.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        let running = state.global().current_thread_id;
+        return state.v51_thread_lgt(running);
+    }
     state.global().globals.clone()
 }
 
@@ -1500,6 +1570,98 @@ fn register_finalizable_object(state: &mut LuaState, object: FinalizerObject) {
     }
 }
 
+/// Lua 5.1 collect-time finalizability probe for one userdata.
+///
+/// Holds only a weak handle, so it never roots the userdata — the collector's
+/// roster can keep it indefinitely without preventing collection. `is_alive`
+/// reports whether the box has been swept (via the weak handle's allocation
+/// token), letting the collector prune dead probes safely. See
+/// [`lua_gc::Udata51Probe`] and C 5.1 `luaC_separateudata`.
+///
+/// `submitted` is C's permanent `FINALIZEDBIT`: once the scan hands a userdata
+/// to the finalizer machinery it is never re-submitted, so each userdata is
+/// finalized at most once. (The shared `is_finalized` header flag cannot serve
+/// this role — `pop_to_be_finalized` resets it so the object can be collected
+/// normally after its `__gc` runs, which would otherwise let the scan
+/// re-finalize it on every later collect.)
+struct Udata51RosterEntry {
+    weak: lua_types::gc::GcWeak<LuaUserData>,
+    submitted: std::cell::Cell<bool>,
+}
+
+impl lua_gc::Udata51Probe for Udata51RosterEntry {
+    fn is_alive(&self) -> bool {
+        self.weak.upgrade().is_some()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Record a userdata in the Lua 5.1 collect-time finalizability roster.
+///
+/// 5.1 decides finalizability at collect time by re-reading each userdata's
+/// live metatable, so a `__gc` installed on a shared metatable *after*
+/// `setmetatable` still takes effect (the `gc.lua` newproxy case). The eager
+/// `setmetatable`-time registration cannot see such late `__gc`, so on 5.1 we
+/// additionally roster every userdata that carries a metatable and re-scan
+/// them at each explicit collection. No-op on 5.2–5.5, which match C's eager
+/// `luaC_checkfinalizer` exactly.
+fn roster_v51_userdata(state: &LuaState, ud: &GcRef<LuaUserData>) {
+    if !matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        return;
+    }
+    let probe = std::rc::Rc::new(Udata51RosterEntry {
+        weak: ud.downgrade(),
+        submitted: std::cell::Cell::new(false),
+    });
+    state.global().heap.register_v51_udata(probe);
+}
+
+/// Lua 5.1 collect-time finalizability scan, run before an explicit collect.
+///
+/// Mirrors C 5.1 `luaC_separateudata`: walk every rostered userdata and, for
+/// each one whose live metatable now carries `__gc`, register it for
+/// finalization. `register_finalizable_object` is idempotent (it skips
+/// already-finalized objects), so a userdata registered eagerly at
+/// `setmetatable` or by an earlier scan is not double-registered. Reachability
+/// is decided later by the collector's post-mark hook: a still-reachable
+/// userdata stays pending and is finalized only once it actually dies.
+///
+/// No-op on 5.2–5.5.
+pub fn scan_v51_finalizable_userdata(state: &mut LuaState) {
+    if !matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        return;
+    }
+    let probes = state.global().heap.scan_v51_finalizable();
+    if probes.is_empty() {
+        return;
+    }
+    let gc_name = state.global().tmname[crate::tagmethods::TagMethod::Gc as usize].clone();
+    for probe in &probes {
+        let entry = match probe.as_any().downcast_ref::<Udata51RosterEntry>() {
+            Some(entry) => entry,
+            None => continue,
+        };
+        if entry.submitted.get() {
+            continue;
+        }
+        let ud = match entry.weak.upgrade() {
+            Some(ud) => ud,
+            None => continue,
+        };
+        let has_gc = match ud.metatable() {
+            Some(mt) => !matches!(mt.get_short_str(&gc_name), LuaValue::Nil),
+            None => false,
+        };
+        if has_gc {
+            entry.submitted.set(true);
+            register_finalizable_object(state, FinalizerObject::UserData(ud));
+        }
+    }
+}
+
 /// Drain objects already promoted from `pending_finalizers` to
 /// `to_be_finalized` by the heap mark phase.
 pub fn run_pending_finalizers(state: &mut LuaState) {
@@ -1622,6 +1784,15 @@ fn run_pending_finalizers_limited(
 
         if let Some(errobj) = finalizer_error {
             match version {
+                lua_types::LuaVersion::V51 if propagate => {
+                    // C 5.1 `GCTM` invokes the finalizer with `luaD_call`
+                    // (unprotected), so a raised error propagates UNWRAPPED out
+                    // of `luaC_fullgc` / `lua_gc` to the enclosing pcall — no
+                    // `error in __gc metamethod (...)` decoration (that wrapping
+                    // arrived in 5.2). Re-throw the raw error object and abort
+                    // the drain, matching the C longjmp.
+                    return Err(LuaError::from_value(errobj));
+                }
                 lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53 if propagate => {
                     // C `GCTM`: wrap a string error object as
                     // `error in __gc metamethod (%s)` and re-throw. A
@@ -1769,6 +1940,11 @@ pub fn set_metatable(state: &mut LuaState, objindex: i32) -> Result<bool, LuaErr
                 if metatable_has_gc(state, mt_table) {
                     register_finalizable_object(state, FinalizerObject::UserData(ud.clone()));
                 }
+                // Lua 5.1 decides finalizability at collect time, so a `__gc`
+                // added to this (possibly shared) metatable later must still
+                // take effect. Roster the userdata for the collect-time scan;
+                // no-op on 5.2–5.5.
+                roster_v51_userdata(state, ud);
             }
             ud.set_metatable(mt);
         }
@@ -1933,7 +2109,12 @@ pub fn load(
         let top = state.top_idx();
         let func_val = state.get_at(top - 1);
         if let LuaValue::Function(LuaClosure::Lua(lcl)) = func_val {
-            if !lcl.upvals.is_empty() {
+            let inject_env = if state.global().lua_version == lua_types::LuaVersion::V52 {
+                lcl.upvals.len() == 1
+            } else {
+                !lcl.upvals.is_empty()
+            };
+            if inject_env {
                 let gt = get_global_table(state);
                 let uv = state.new_upval_closed(gt);
                 lcl.set_upval(0, uv);
@@ -2041,6 +2222,10 @@ pub fn gc(state: &mut LuaState, args: GcArgs) -> i32 {
             if !state.allowhook {
                 return 0;
             }
+            // Lua 5.1 only: re-scan rostered userdata for a late-added `__gc`
+            // before the collect, mirroring C's collect-time
+            // `luaC_separateudata`. No-op on 5.2–5.5.
+            scan_v51_finalizable_userdata(state);
             // Under D-2, weak-table sweep happens INSIDE the heap's
             // post-mark hook (see GcHandle::full_collect), driven by
             // reachability rather than strong_count. The standalone weak
@@ -2250,11 +2435,33 @@ pub fn lua_error(state: &mut LuaState) -> Result<Infallible, LuaError> {
     }
 }
 
+/// Normalize an integer-valued float resumption key to its integer key on the
+/// float-only number model (5.1/5.2).
+///
+/// Those versions have no integer subtype, so a loop variable used as a table
+/// key arrives as `Float(k.0)` while `new_key` stored it as `Int(k)` (key
+/// normalization runs on every version). Without this the `next` resumption key
+/// would miss the stored key and raise `invalid key to 'next'`. The dual-number
+/// versions (5.3+) must NOT normalize here: reference Lua errors on `next(t, 2.0)`
+/// against an integer key, and that fidelity is preserved by leaving the key as-is.
+fn normalize_float_only_next_key(state: &LuaState, key: LuaValue) -> LuaValue {
+    if state.global().lua_version.number_model() != lua_types::NumberModel::FloatOnly {
+        return key;
+    }
+    if let LuaValue::Float(f) = key {
+        let k = f as i64;
+        if k as f64 == f {
+            return LuaValue::Int(k);
+        }
+    }
+    key
+}
+
 pub fn next(state: &mut LuaState, idx: i32) -> Result<bool, LuaError> {
     let t = get_table_value(state, idx)
         .ok_or_else(|| LuaError::runtime(format_args!("table expected")))?;
     let top = state.top_idx();
-    let key = state.get_at(top - 1);
+    let key = normalize_float_only_next_key(state, state.get_at(top - 1));
     match t.next(key)? {
         Some((next_key, next_val)) => {
             state.set_at(top - 1, next_key);

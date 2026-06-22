@@ -46,6 +46,9 @@ const LUAC_NUM_55: f64 = -370.5;
 
 // LUA_VERSION_NUM = 504 → ((5 * 16) + 4) = 0x54 = 84
 /// One-byte version tag: upper nibble = major, lower nibble = minor.
+const LUAC_VERSION_51: u8 = 0x51;
+const LUAC_VERSION_52: u8 = 0x52;
+const LUAC_VERSION_53: u8 = 0x53;
 const LUAC_VERSION_54: u8 = 0x54;
 const LUAC_VERSION_55: u8 = 0x55;
 
@@ -855,10 +858,12 @@ fn check_header(s: &mut LoadState<'_>) -> Result<(), LuaError> {
     check_literal(s, &LUA_SIGNATURE[1..], "not a binary chunk")?;
 
     let version = s.state.global().lua_version;
-    let expected_version = if matches!(version, LuaVersion::V55) {
-        LUAC_VERSION_55
-    } else {
-        LUAC_VERSION_54
+    let expected_version = match version {
+        LuaVersion::V51 => LUAC_VERSION_51,
+        LuaVersion::V52 => LUAC_VERSION_52,
+        LuaVersion::V53 => LUAC_VERSION_53,
+        LuaVersion::V55 => LUAC_VERSION_55,
+        _ => LUAC_VERSION_54,
     };
     let ver = load_byte(s)?;
     if ver != expected_version {
@@ -870,46 +875,89 @@ fn check_header(s: &mut LoadState<'_>) -> Result<(), LuaError> {
         return Err(load_error(s, "format mismatch"));
     }
 
-    check_literal(s, LUAC_DATA, "corrupted chunk")?;
-
-    if matches!(version, LuaVersion::V55) {
-        fcheck_size(s, 4, "int")?;
-        if load_raw_i32(s)? != LUAC_INT_55 as i32 {
-            return Err(load_error(s, "int format mismatch"));
+    match version {
+        LuaVersion::V51 => {
+            check_legacy_sizes(s)?;
         }
-
-        fcheck_size(s, 4, "instruction")?;
-        if load_raw_u32(s)? != LUAC_INST_55 {
-            return Err(load_error(s, "instruction format mismatch"));
+        LuaVersion::V52 => {
+            check_legacy_sizes(s)?;
+            check_literal(s, LUAC_DATA, "corrupted chunk")?;
         }
-
-        fcheck_size(s, 8, "Lua integer")?;
-        if load_integer(s)? != LUAC_INT_55 {
-            return Err(load_error(s, "Lua integer format mismatch"));
+        LuaVersion::V53 => {
+            check_literal(s, LUAC_DATA, "corrupted chunk")?;
+            fcheck_size(s, size_of::<i32>(), "int")?;
+            fcheck_size(s, size_of::<usize>(), "size_t")?;
+            fcheck_size(s, 4, "Instruction")?;
+            fcheck_size(s, 8, "lua_Integer")?;
+            fcheck_size(s, 8, "lua_Number")?;
+            if load_integer(s)? != LUAC_INT {
+                return Err(load_error(s, "integer format mismatch"));
+            }
+            if load_number(s)? != LUAC_NUM {
+                return Err(load_error(s, "float format mismatch"));
+            }
         }
+        LuaVersion::V55 => {
+            check_literal(s, LUAC_DATA, "corrupted chunk")?;
+            fcheck_size(s, 4, "int")?;
+            if load_raw_i32(s)? != LUAC_INT_55 as i32 {
+                return Err(load_error(s, "int format mismatch"));
+            }
 
-        fcheck_size(s, 8, "Lua number")?;
-        if load_number(s)? != LUAC_NUM_55 {
-            return Err(load_error(s, "Lua number format mismatch"));
+            fcheck_size(s, 4, "instruction")?;
+            if load_raw_u32(s)? != LUAC_INST_55 {
+                return Err(load_error(s, "instruction format mismatch"));
+            }
+
+            fcheck_size(s, 8, "Lua integer")?;
+            if load_integer(s)? != LUAC_INT_55 {
+                return Err(load_error(s, "Lua integer format mismatch"));
+            }
+
+            fcheck_size(s, 8, "Lua number")?;
+            if load_number(s)? != LUAC_NUM_55 {
+                return Err(load_error(s, "Lua number format mismatch"));
+            }
         }
-    } else {
-        fcheck_size(s, 4, "Instruction")?;
+        _ => {
+            check_literal(s, LUAC_DATA, "corrupted chunk")?;
+            fcheck_size(s, 4, "Instruction")?;
 
-        fcheck_size(s, 8, "lua_Integer")?;
+            fcheck_size(s, 8, "lua_Integer")?;
 
-        fcheck_size(s, 8, "lua_Number")?;
+            fcheck_size(s, 8, "lua_Number")?;
 
-        let int_check = load_integer(s)?;
-        if int_check != LUAC_INT {
-            return Err(load_error(s, "integer format mismatch"));
-        }
+            let int_check = load_integer(s)?;
+            if int_check != LUAC_INT {
+                return Err(load_error(s, "integer format mismatch"));
+            }
 
-        let num_check = load_number(s)?;
-        if num_check != LUAC_NUM {
-            return Err(load_error(s, "float format mismatch"));
+            let num_check = load_number(s)?;
+            if num_check != LUAC_NUM {
+                return Err(load_error(s, "float format mismatch"));
+            }
         }
     }
 
+    Ok(())
+}
+
+/// Validate the 5.1/5.2 endianness + size + integral-flag block: endian = 1
+/// (little), `sizeof(int)` = 4, `sizeof(size_t)`, `sizeof(Instruction)` = 4,
+/// `sizeof(lua_Number)` = 8, integral = 0. These versions have no integer
+/// subtype, so there is no `lua_Integer` size byte and no `LUAC_INT`/`LUAC_NUM`
+/// sentinel.
+fn check_legacy_sizes(s: &mut LoadState<'_>) -> Result<(), LuaError> {
+    if load_byte(s)? != 1 {
+        return Err(load_error(s, "endianness mismatch"));
+    }
+    fcheck_size(s, size_of::<i32>(), "int")?;
+    fcheck_size(s, size_of::<usize>(), "size_t")?;
+    fcheck_size(s, 4, "Instruction")?;
+    fcheck_size(s, 8, "lua_Number")?;
+    if load_byte(s)? != 0 {
+        return Err(load_error(s, "number format mismatch"));
+    }
     Ok(())
 }
 

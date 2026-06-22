@@ -595,6 +595,16 @@ pub struct CallInfo {
     /// frame. Upstream stores this in the repacked 5.5 `callstatus` bits; keep
     /// it separate here so older transfer/recover-status bits stay unchanged.
     pub call_metamethods: u8,
+
+    /// Lua 5.1: count of tail calls "lost" into this reused frame. Mirrors C
+    /// 5.1's `ci->tailcalls`. Each `OP_TAILCALL` reuses the current frame and
+    /// increments this; a normal call gets a fresh slot (via `next_ci`) where
+    /// it is reset to 0. Used only by the 5.1 `debug.getstack` level walk to
+    /// synthesize the `(tail call)` frames the 5.1 debug model exposes; 5.2+
+    /// dropped that model in favour of the `istailcall` flag and never read it.
+    /// Lives in the 3 spare bytes after `call_metamethods`, so `CallInfo` stays
+    /// 72 B (the size guard above still holds).
+    pub tailcalls: u16,
 }
 
 /// Compile-time guard that the T2-C2 `CallInfoFrame` flatten kept the per-frame
@@ -702,6 +712,7 @@ impl Default for CallInfo {
             nresults: 0,
             callstatus: 0,
             call_metamethods: 0,
+            tailcalls: 0,
         }
     }
 }
@@ -1827,6 +1838,37 @@ pub struct GlobalState {
     /// at `1` because `0` is reserved for the main thread.
     pub next_thread_id: u64,
 
+    /// Lua 5.1 per-thread global table (`lua_State.l_gt`) for coroutine
+    /// threads, keyed by thread id.
+    ///
+    /// In 5.1 every thread has its own global table: `setfenv(0, t)` and
+    /// `getfenv(0)` read/write the *running* thread's `l_gt`, and a freshly
+    /// loaded top-level chunk takes the running thread's `l_gt` as its
+    /// environment. A coroutine inherits its creator's `l_gt` at creation,
+    /// after which the two are independent — a coroutine's `setfenv(0, t)`
+    /// must not clobber the main thread's globals.
+    ///
+    /// The main thread (`main_thread_id`) is the single exception: its `l_gt`
+    /// is the existing [`Self::globals`] field (single source of truth, never
+    /// duplicated here). Only coroutine ids appear as keys, seeded in
+    /// `new_thread`. Empty (and never read) on 5.2–5.5, where all threads
+    /// share one global table and this field is inert. Traced as a root and
+    /// pruned of dead-thread entries after each collection.
+    pub thread_globals: std::collections::HashMap<u64, LuaValue>,
+
+    /// Lua 5.1 per-closure environment for closures that carry no `_ENV`
+    /// upvalue, keyed by closure identity ([`GcRef::identity`]).
+    ///
+    /// The reused modern parser threads an `_ENV` upvalue only onto closures
+    /// that reference a free (global) name; a closure that references none has
+    /// no such upvalue. 5.1's `setfenv(f, t)` must still set such a closure's
+    /// environment and `getfenv(f)` must read it back, so the environment is
+    /// stored here, independent of the upvalue array. A closure that *does*
+    /// have an `_ENV` upvalue never appears here — its environment is that
+    /// upvalue's closed value. Empty (and never read) on 5.2–5.5. Traced as a
+    /// root and pruned of dead-closure entries after each collection.
+    pub closure_envs: std::collections::HashMap<usize, LuaValue>,
+
     // types.tsv: global_State.memerrmsg → GcRef<LuaString>
     pub memerrmsg: GcRef<LuaString>,
 
@@ -2238,6 +2280,19 @@ pub struct LuaState {
     // types.tsv: lua_State.openupval → Vec<GcRef<UpVal>>
     pub openupval: Vec<GcRef<UpVal>>,
 
+    /// Per-thread mirror of C 5.3's per-open-upvalue `touched` flag
+    /// (`lfunc.h` `UpVal.u.open.touched`). Set when this thread creates or
+    /// writes an open upvalue; consulted only by the legacy (5.1/5.2/5.3)
+    /// `remarkupvals` pass in [`trace_reachable_threads`]. In those versions
+    /// an unmarked thread's touched open upvalues have their values re-marked
+    /// **once** during the atomic phase, then the flag is cleared (mirroring
+    /// C clearing `touched` and dropping the thread from `g->twups`). This is
+    /// what makes a cycle reachable only through a suspended thread survive
+    /// one extra collection before being finalized. From 5.4 the C condition
+    /// became `!iswhite(uv)` instead of `touched`, so this flag is never read
+    /// for modern versions and the baked 5.4/5.5 behavior is unchanged.
+    pub legacy_open_upval_touched: std::cell::Cell<bool>,
+
     // types.tsv: lua_State.tbclist → Vec<StackIdx>
     pub tbclist: Vec<StackIdx>,
 
@@ -2332,6 +2387,39 @@ impl LuaState {
     /// Used in `new_thread` to give the child thread access to the same GlobalState.
     pub fn global_rc(&self) -> Rc<RefCell<GlobalState>> {
         Rc::clone(&self.global)
+    }
+
+    /// Lua 5.1 global table of the thread `id` (`lua_State.l_gt`).
+    ///
+    /// The main thread's `l_gt` is the shared [`GlobalState::globals`] field;
+    /// a coroutine's lives in [`GlobalState::thread_globals`] under its id,
+    /// seeded at creation in `new_thread`. A coroutine id that is missing from
+    /// the map is a `new_thread` seeding bug, not a recoverable state.
+    ///
+    /// 5.1 only. Other versions never call this — they share one global table.
+    pub fn v51_thread_lgt(&self, id: u64) -> LuaValue {
+        let g = self.global();
+        if id == g.main_thread_id {
+            g.globals.clone()
+        } else {
+            g.thread_globals
+                .get(&id)
+                .expect("v51 coroutine l_gt must be seeded in new_thread")
+                .clone()
+        }
+    }
+
+    /// Set the Lua 5.1 global table of thread `id` (`lua_State.l_gt`).
+    ///
+    /// Writes the main thread's `l_gt` through [`GlobalState::globals`] and a
+    /// coroutine's through [`GlobalState::thread_globals`]. 5.1 only.
+    pub fn v51_set_thread_lgt(&self, id: u64, t: LuaValue) {
+        let mut g = self.global_mut();
+        if id == g.main_thread_id {
+            g.globals = t;
+        } else {
+            g.thread_globals.insert(id, t);
+        }
     }
 
     /// Enable the ltests-style warning sink used by `LUA_RS_TESTC`.
@@ -2978,9 +3066,25 @@ impl LuaState {
     }
     #[inline(always)]
     pub fn next_ci(&mut self) -> Result<CallInfoIdx, LuaError> {
-        match self.call_info[self.ci.as_usize()].next {
-            Some(idx) => Ok(idx),
-            None => Ok(extend_ci(self)),
+        let idx = match self.call_info[self.ci.as_usize()].next {
+            Some(idx) => idx,
+            None => extend_ci(self),
+        };
+        self.call_info[idx.as_usize()].tailcalls = 0;
+        Ok(idx)
+    }
+
+    /// Records that a Lua tail call reused the frame at `ci`, so the 5.1
+    /// `debug.getstack` level walk can synthesize the `(tail call)` frames the
+    /// 5.1 debug model exposes. Gated to 5.1: 5.2+ dropped synthetic tail frames
+    /// for the `istailcall` flag and never read `tailcalls`, so on those versions
+    /// this is a single version compare and return — the hot tail-call path is
+    /// otherwise byte-identical.
+    #[inline(always)]
+    pub fn note_lua_tailcall(&mut self, ci: CallInfoIdx) {
+        if self.global().lua_version == lua_types::LuaVersion::V51 {
+            self.call_info[ci.as_usize()].tailcalls =
+                self.call_info[ci.as_usize()].tailcalls.saturating_add(1);
         }
     }
     #[inline(always)]
@@ -3183,8 +3287,29 @@ impl LuaState {
     pub fn set_hook(&mut self, h: Option<Box<dyn FnMut(&mut LuaState, &crate::debug::LuaDebug)>>) {
         self.hook = h;
     }
+    /// Fire a count or line hook on the currently executing frame.
+    ///
+    /// C-Lua's `luaG_traceexec` is the sole caller of `luaD_hook` for count and
+    /// line events, and it relies on `L->ci` being the same Lua frame after the
+    /// hook as before it: the bytecode dispatch loop in `luaV_execute` reads
+    /// `L->ci` (via `trace_exec`) on the next instruction and writes its
+    /// `savedpc`, which is only valid on a Lua frame. C maintains that invariant
+    /// implicitly — the unprotected `lua_call` inside the hook restores `L->ci`
+    /// via `luaD_poscall` on success, and on a hook error it `longjmp`s straight
+    /// to the nearest protected boundary, which resets `L->ci`, so a corrupted
+    /// `ci` never re-enters the dispatch loop.
+    ///
+    /// Our port reports hook-callback errors through a different path that can
+    /// leave `self.ci` advanced to the hook's own (C) frame instead of unwinding
+    /// it, so the invariant the dispatch loop depends on would be broken. Saving
+    /// `self.ci` here and restoring it after the hook reasserts exactly the
+    /// invariant C guarantees, so the next `trace_exec` writes `savedpc` on the
+    /// Lua frame it is actually executing rather than panicking on a C frame.
     pub fn call_hook_event(&mut self, event: i32, line: i32) -> Result<(), LuaError> {
-        crate::do_::hook(self, event, line, 0, 0)
+        let saved_ci = self.ci;
+        let r = crate::do_::hook(self, event, line, 0, 0);
+        self.ci = saved_ci;
+        r
     }
 
     pub fn registry_value(&self) -> LuaValue {
@@ -3240,6 +3365,7 @@ impl LuaState {
     /// Allocate an open upvalue referring to a thread's stack slot.
     pub fn new_upval_open(&mut self, thread_id: usize, level: StackIdx) -> GcRef<UpVal> {
         self.mark_gc_check_needed();
+        self.legacy_open_upval_touched.set(true);
         GcRef::new(UpVal::open(thread_id, level))
     }
     /// Mirrors `luaS_newlstr`: short strings are interned globally so equal
@@ -3664,14 +3790,26 @@ impl LuaState {
             _ => Err(LuaError::type_error(&val, "convert to string")),
         }
     }
+    /// Parses `s` as a Lua number, returning `(value, consumed)` on success.
+    ///
+    /// `object::str2num` is number-model-blind and yields an integer whenever
+    /// the text parses as one. The float-only versions (5.1/5.2) have no integer
+    /// subtype, so a string coercion there is normalised to a float: otherwise
+    /// `tonumber("10")` would carry an integer payload that diverges from the
+    /// reference on any path that inspects the subtype.
     pub fn str_to_num(&mut self, s: &[u8]) -> Option<(LuaValue, usize)> {
         let mut out = LuaValue::Nil;
-        let sz = crate::object::str2num(s, &mut out);
-        if sz == 0 {
-            None
+        let float_only =
+            self.global().lua_version.number_model() == lua_types::NumberModel::FloatOnly;
+        let sz = if float_only {
+            crate::object::str2num_float_only(s, &mut out)
         } else {
-            Some((out, sz))
+            crate::object::str2num(s, &mut out)
+        };
+        if sz == 0 {
+            return None;
         }
+        Some((out, sz))
     }
 
     #[inline(always)]
@@ -4440,6 +4578,8 @@ fn trace_reachable_threads(
         }
     }
 
+    remark_legacy_open_upvalues(global, marker);
+
     #[cfg(debug_assertions)]
     debug_assert!(
         uncovered_borrowed.len() <= global.suspended_parent_stacks.len(),
@@ -4453,6 +4593,84 @@ fn trace_reachable_threads(
         uncovered_borrowed,
         global.suspended_parent_stacks.len()
     );
+}
+
+/// Legacy (5.1/5.2/5.3) `remarkupvals` (lgc.c). After the main mark phase has
+/// settled which threads are reachable, an unmarked thread's *touched* open
+/// upvalues have their pointed-to stack values re-marked exactly once, then the
+/// thread's touched flag is cleared — mirroring C marking each touched upvalue's
+/// value and removing the thread from `g->twups`.
+///
+/// This re-mark resurrects an object reachable only through a suspended thread's
+/// cycle for one extra collection. Concretely, a `co <-> closure <-> table`
+/// cycle with a `__gc` on the table is *not* finalized after the first
+/// `collectgarbage()` (the touched open upvalue keeps the table marked, and the
+/// table transitively re-marks the thread); on the next collection the flag is
+/// already cleared, nothing re-marks the table, and it is separated to be
+/// finalized. That two-collection delay is exactly what 5.3's `gc.lua` asserts
+/// (`assert(not collected)` after the first collect).
+///
+/// From 5.4 the C condition became `!iswhite(uv)` rather than `touched`, so a
+/// white open upvalue on an unmarked thread is never re-marked and the same
+/// cycle is finalized after a single collect. Modern versions therefore skip
+/// this pass entirely, leaving the baked 5.4/5.5 behavior untouched.
+fn remark_legacy_open_upvalues(global: &GlobalState, marker: &mut lua_gc::Marker) {
+    use lua_gc::Trace;
+
+    let legacy = matches!(
+        global.lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    );
+    if !legacy {
+        return;
+    }
+
+    let mut remarked_any = false;
+    for (id, entry) in global.threads.iter() {
+        if entry.value.id != *id {
+            continue;
+        }
+        if thread_entry_marked_alive(marker, *id, entry) {
+            continue;
+        }
+        let Ok(thread) = entry.state.try_borrow() else {
+            continue;
+        };
+        if thread.openupval.is_empty() || !thread.legacy_open_upval_touched.get() {
+            continue;
+        }
+        thread.legacy_open_upval_touched.set(false);
+        for uv in thread.openupval.iter() {
+            let Some((_tid, idx)) = uv.try_open_payload() else {
+                continue;
+            };
+            let slot = idx.0 as usize;
+            if slot < thread.stack.len() {
+                thread.stack[slot].val.trace(marker);
+                remarked_any = true;
+            }
+        }
+    }
+
+    if !remarked_any {
+        return;
+    }
+    marker.drain_gray_queue();
+
+    loop {
+        let visited_before = marker.visited_count();
+        for (id, entry) in global.threads.iter() {
+            if thread_entry_marked_alive(marker, *id, entry) {
+                if let Ok(thread) = entry.state.try_borrow() {
+                    thread.trace(marker);
+                }
+            }
+        }
+        marker.drain_gray_queue();
+        if marker.visited_count() == visited_before {
+            break;
+        }
+    }
 }
 
 fn thread_entry_marked_alive(
@@ -4477,23 +4695,6 @@ fn lua_value_marked_or_old(marker: &lua_gc::Marker, value: &LuaValue) -> bool {
         | LuaValue::Float(_)
         | LuaValue::LightUserData(_)
         | LuaValue::Function(LuaClosure::LightC(_)) => true,
-    }
-}
-
-fn lua_value_identity(value: &LuaValue) -> Option<usize> {
-    match value {
-        LuaValue::Str(v) => Some(v.identity()),
-        LuaValue::Table(v) => Some(v.identity()),
-        LuaValue::Function(LuaClosure::Lua(v)) => Some(v.identity()),
-        LuaValue::Function(LuaClosure::C(v)) => Some(v.identity()),
-        LuaValue::UserData(v) => Some(v.identity()),
-        LuaValue::Thread(v) => Some(v.identity()),
-        LuaValue::Nil
-        | LuaValue::Bool(_)
-        | LuaValue::Int(_)
-        | LuaValue::Float(_)
-        | LuaValue::LightUserData(_)
-        | LuaValue::Function(LuaClosure::LightC(_)) => None,
     }
 }
 
@@ -4784,9 +4985,9 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(std::collections::HashSet::new());
         let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
-        let finalizing_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
-            std::cell::RefCell::new(std::collections::HashSet::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
+        let alive_closure_env_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
         let dead_interned: std::cell::RefCell<Vec<(u32, usize)>> = std::cell::RefCell::new(Vec::new());
         let collect_ran = std::cell::Cell::new(false);
@@ -4802,21 +5003,36 @@ impl<'a> GcHandle<'a> {
                 collect_ran.set(true);
                 alive_ids.borrow_mut().reserve(weak_table_capacity);
                 newly_unreachable.borrow_mut().reserve(finalizer_capacity);
-                finalizing_ids.borrow_mut().reserve(finalizer_capacity);
                 alive_thread_ids.borrow_mut().reserve(thread_capacity);
                 trace_reachable_threads(&*global, global.current_thread_id, marker);
                 close_open_upvalues_for_unreachable_threads(&*global, marker);
+                // Lua 5.1 weak-key tables are NOT ephemerons. In 5.1
+                // `traversetable` (lgc.c) a `__mode='k'` table still marks its
+                // VALUES strongly (`if (!weakvalue) markvalue(g, gval(n))`), so
+                // a value that references its own weak key keeps that key alive
+                // (`a[t]=t` survives). Ephemeron semantics — a value reachable
+                // only if the key is independently reachable — arrived in 5.2.
+                let legacy_weak_key_values =
+                    matches!(global.lua_version, lua_types::LuaVersion::V51);
                 loop {
                     let visited_before = marker.visited_count();
                     for t in &weak_tables_snapshot.ephemeron {
                         if !marker.is_marked_or_old(t.0) {
                             continue;
                         }
-                        let to_mark = t.ephemeron_values_to_mark_with_value(&|v| {
-                            lua_value_marked_or_old(marker, v)
-                        });
-                        for v in &to_mark {
-                            v.trace(marker);
+                        if legacy_weak_key_values {
+                            let mut to_mark = Vec::new();
+                            t.for_each_entry(|_k, v| to_mark.push(v.clone()));
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
+                        } else {
+                            let to_mark = t.ephemeron_values_to_mark_with_value(&|v| {
+                                lua_value_marked_or_old(marker, v)
+                            });
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
                         }
                     }
                     marker.drain_gray_queue();
@@ -4824,10 +5040,44 @@ impl<'a> GcHandle<'a> {
                         break;
                     }
                 }
+                // Clear dead weak VALUES before finalizer resurrection,
+                // mirroring C's `clearvalues(g->weak, NULL)` /
+                // `clearvalues(g->allweak, NULL)` which run in `atomic`
+                // *before* `separatetobefnz`/`markbeingfnz` (lua-5.3.6
+                // lgc.c). An object that is only reachable through a
+                // to-be-finalized table is still white at this point, so a
+                // weak-value reference to it is dropped — and stays dropped
+                // even after resurrection re-marks the object — so the
+                // finalizer observes the already-cleared slot. Keys are left
+                // untouched here; they are cleared post-resurrection.
+                //
+                // C iterates the *entire* weak list regardless of table mark
+                // state, so a weak-value table reachable only via a soon-to-be
+                // resurrected object (its `__gc` closure stored weakly is the
+                // canonical case) still has its dead values dropped here, not
+                // after resurrection re-marks the table. The mark check only
+                // gates whether surviving value-strings are re-marked: strings
+                // are values weak tables never collect, but only when the
+                // owning table itself is reachable.
+                for t in weak_tables_snapshot
+                    .weak_values
+                    .iter()
+                    .chain(weak_tables_snapshot.all_weak.iter())
+                {
+                    let to_mark = t.prune_weak_dead_with_value(
+                        &|_| true,
+                        &|v| lua_value_marked_or_old(marker, v),
+                    );
+                    if marker.is_marked_or_old(t.0) {
+                        for v in &to_mark {
+                            v.trace(marker);
+                        }
+                    }
+                }
+                marker.drain_gray_queue();
                 for pf in &pending_snapshot {
                     if !finalizer_marked_or_old(marker, pf) {
                         pf.mark(marker);
-                        finalizing_ids.borrow_mut().insert(pf.identity());
                         newly_unreachable.borrow_mut().push(pf.clone());
                     }
                 }
@@ -4838,11 +5088,19 @@ impl<'a> GcHandle<'a> {
                         if !marker.is_marked_or_old(t.0) {
                             continue;
                         }
-                        let to_mark = t.ephemeron_values_to_mark_with_value(&|v| {
-                            lua_value_marked_or_old(marker, v)
-                        });
-                        for v in &to_mark {
-                            v.trace(marker);
+                        if legacy_weak_key_values {
+                            let mut to_mark = Vec::new();
+                            t.for_each_entry(|_k, v| to_mark.push(v.clone()));
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
+                        } else {
+                            let to_mark = t.ephemeron_values_to_mark_with_value(&|v| {
+                                lua_value_marked_or_old(marker, v)
+                            });
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
                         }
                     }
                     marker.drain_gray_queue();
@@ -4850,24 +5108,37 @@ impl<'a> GcHandle<'a> {
                         break;
                     }
                 }
+                // Clear dead weak KEYS post-resurrection, mirroring C's
+                // `clearkeys(g->ephemeron, NULL)` / `clearkeys(g->allweak,
+                // NULL)`. A key kept alive only by a resurrected (now-marked)
+                // object survives; a key pending its own finalization is
+                // already marked by `markbeingfnz`, so `marked_or_old`
+                // keeps it visible until its `__gc` runs. Values in these
+                // originally-tracked tables were already settled in the
+                // pre-resurrection value pass and must not be re-evaluated
+                // (resurrection can re-mark a value that was correctly
+                // cleared), so this pass touches keys only — matching the
+                // `origweak` skip in C's later `clearvalues(g->weak,
+                // origweak)`.
+                for t in weak_tables_snapshot
+                    .ephemeron
+                    .iter()
+                    .chain(weak_tables_snapshot.all_weak.iter())
+                {
+                    if !marker.is_marked_or_old(t.0) {
+                        continue;
+                    }
+                    let to_mark = t.prune_weak_dead_with_value(
+                        &|v| lua_value_marked_or_old(marker, v),
+                        &|_| true,
+                    );
+                    for v in &to_mark {
+                        v.trace(marker);
+                    }
+                }
                 for t in weak_snapshot_tables(&weak_tables_snapshot) {
-                    let id = t.identity();
                     if marker.is_marked_or_old(t.0) {
-                        let to_mark = {
-                            let finalizing = finalizing_ids.borrow();
-                            t.prune_weak_dead_with_value(
-                                &|v| lua_value_marked_or_old(marker, v),
-                                &|v| {
-                                    lua_value_marked_or_old(marker, v)
-                                        && lua_value_identity(v)
-                                            .map_or(true, |id| !finalizing.contains(&id))
-                                },
-                            )
-                        };
-                        for v in &to_mark {
-                            v.trace(marker);
-                        }
-                        alive_ids.borrow_mut().insert(id);
+                        alive_ids.borrow_mut().insert(t.identity());
                     }
                 }
                 marker.drain_gray_queue();
@@ -4875,6 +5146,14 @@ impl<'a> GcHandle<'a> {
                     let mut alive = alive_thread_ids.borrow_mut();
                     for (id, entry) in global.threads.iter() {
                         if thread_entry_marked_alive(marker, *id, entry) {
+                            alive.insert(*id);
+                        }
+                    }
+                }
+                {
+                    let mut alive = alive_closure_env_ids.borrow_mut();
+                    for id in global.closure_envs.keys() {
+                        if marker.is_visited(*id) {
                             alive.insert(*id);
                         }
                     }
@@ -4898,6 +5177,7 @@ impl<'a> GcHandle<'a> {
         let alive_set = alive_ids.into_inner();
         let promote: Vec<FinalizerObject> = newly_unreachable.into_inner();
         let alive_thread_ids = alive_thread_ids.into_inner();
+        let alive_closure_env_ids = alive_closure_env_ids.into_inner();
         let dead_interned = dead_interned.into_inner();
         let mut g = state_ref.global.borrow_mut();
         remove_dead_interned_strings(&mut *g, dead_interned);
@@ -4906,6 +5186,13 @@ impl<'a> GcHandle<'a> {
         g.threads.retain(|id, _| alive_thread_ids.contains(id));
         g.cross_thread_upvals
             .retain(|(id, _), _| *id == main_thread_id || alive_thread_ids.contains(id));
+        // Lua 5.1 side maps (empty on 5.2–5.5): drop a coroutine's per-thread
+        // global table once the coroutine is gone, and a closure's stored
+        // environment once that closure is no longer visited.
+        g.thread_globals
+            .retain(|id, _| alive_thread_ids.contains(id));
+        g.closure_envs
+            .retain(|id, _| alive_closure_env_ids.contains(id));
         // Move newly-unreachable finalizables from `pending_finalizers` to
         // `to_be_finalized`. The latter is rooted by `GlobalState::trace`,
         // so these tables remain alive until their `__gc` runs.
@@ -5039,9 +5326,9 @@ impl<'a> GcHandle<'a> {
             std::cell::RefCell::new(std::collections::HashSet::new());
         let newly_unreachable: std::cell::RefCell<Vec<FinalizerObject>> =
             std::cell::RefCell::new(Vec::new());
-        let finalizing_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
-            std::cell::RefCell::new(std::collections::HashSet::new());
         let alive_thread_ids: std::cell::RefCell<std::collections::HashSet<u64>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
+        let alive_closure_env_ids: std::cell::RefCell<std::collections::HashSet<usize>> =
             std::cell::RefCell::new(std::collections::HashSet::new());
         let dead_interned: std::cell::RefCell<Vec<(u32, usize)>> = std::cell::RefCell::new(Vec::new());
         let atomic_ran = std::cell::Cell::new(false);
@@ -5066,10 +5353,14 @@ impl<'a> GcHandle<'a> {
                 atomic_ran.set(true);
                 alive_ids.borrow_mut().reserve(weak_table_capacity);
                 newly_unreachable.borrow_mut().reserve(finalizer_capacity);
-                finalizing_ids.borrow_mut().reserve(finalizer_capacity);
                 alive_thread_ids.borrow_mut().reserve(thread_capacity);
                 trace_reachable_threads(&*global, global.current_thread_id, marker);
                 close_open_upvalues_for_unreachable_threads(&*global, marker);
+                // Lua 5.1 weak-key tables are NOT ephemerons; see the
+                // full-collect hook above. `__mode='k'` still marks its values
+                // strongly so a value referencing its own weak key survives.
+                let legacy_weak_key_values =
+                    matches!(global.lua_version, lua_types::LuaVersion::V51);
                 loop {
                     let visited_before = marker.visited_count();
                     for t in &weak_tables_snapshot.ephemeron {
@@ -5077,9 +5368,17 @@ impl<'a> GcHandle<'a> {
                         if !marker.is_visited(t_id) {
                             continue;
                         }
-                        let to_mark = t.ephemeron_values_to_mark(&|id| marker.is_visited(id));
-                        for v in &to_mark {
-                            v.trace(marker);
+                        if legacy_weak_key_values {
+                            let mut to_mark = Vec::new();
+                            t.for_each_entry(|_k, v| to_mark.push(v.clone()));
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
+                        } else {
+                            let to_mark = t.ephemeron_values_to_mark(&|id| marker.is_visited(id));
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
                         }
                     }
                     marker.drain_gray_queue();
@@ -5087,10 +5386,35 @@ impl<'a> GcHandle<'a> {
                         break;
                     }
                 }
+                // Clear dead weak VALUES before finalizer resurrection,
+                // mirroring C's `clearvalues(g->weak, NULL)` /
+                // `clearvalues(g->allweak, NULL)` which run *before*
+                // `markbeingfnz` in `atomic` (lua-5.3.6 lgc.c). See the
+                // full-collect hook above for the rationale; this is the
+                // incremental atomic and is the path the in-mode gc.lua
+                // weak-table-plus-finalizer test exercises. C iterates the
+                // entire weak list regardless of table mark state, so a
+                // weak-value table reachable only via a soon-to-be-resurrected
+                // object (canonically a `__gc` closure stored weakly) still
+                // has its dead values dropped here. The visited check only
+                // gates re-marking surviving value-strings. Keys untouched.
+                for t in weak_tables_snapshot
+                    .weak_values
+                    .iter()
+                    .chain(weak_tables_snapshot.all_weak.iter())
+                {
+                    let to_mark =
+                        t.prune_weak_dead_with(&|_| true, &|id| marker.is_visited(id));
+                    if marker.is_visited(t.identity()) {
+                        for v in &to_mark {
+                            v.trace(marker);
+                        }
+                    }
+                }
+                marker.drain_gray_queue();
                 for pf in &pending_snapshot {
                     if !marker.is_visited(pf.identity()) {
                         pf.mark(marker);
-                        finalizing_ids.borrow_mut().insert(pf.identity());
                         newly_unreachable.borrow_mut().push(pf.clone());
                     }
                 }
@@ -5102,9 +5426,17 @@ impl<'a> GcHandle<'a> {
                         if !marker.is_visited(t_id) {
                             continue;
                         }
-                        let to_mark = t.ephemeron_values_to_mark(&|id| marker.is_visited(id));
-                        for v in &to_mark {
-                            v.trace(marker);
+                        if legacy_weak_key_values {
+                            let mut to_mark = Vec::new();
+                            t.for_each_entry(|_k, v| to_mark.push(v.clone()));
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
+                        } else {
+                            let to_mark = t.ephemeron_values_to_mark(&|id| marker.is_visited(id));
+                            for v in &to_mark {
+                                v.trace(marker);
+                            }
                         }
                     }
                     marker.drain_gray_queue();
@@ -5112,19 +5444,29 @@ impl<'a> GcHandle<'a> {
                         break;
                     }
                 }
+                // Clear dead weak KEYS post-resurrection, mirroring C's
+                // `clearkeys(g->ephemeron, NULL)` / `clearkeys(g->allweak,
+                // NULL)`. Values in these originally-tracked tables were
+                // already settled in the pre-resurrection pass and must not
+                // be re-evaluated, so this pass is keys-only (the `origweak`
+                // skip in C's later `clearvalues(g->weak, origweak)`).
+                for t in weak_tables_snapshot
+                    .ephemeron
+                    .iter()
+                    .chain(weak_tables_snapshot.all_weak.iter())
+                {
+                    if !marker.is_visited(t.identity()) {
+                        continue;
+                    }
+                    let to_mark =
+                        t.prune_weak_dead_with(&|id| marker.is_visited(id), &|_| true);
+                    for v in &to_mark {
+                        v.trace(marker);
+                    }
+                }
                 for t in weak_snapshot_tables(&weak_tables_snapshot) {
-                    let id = t.identity();
-                    if marker.is_visited(id) {
-                        let to_mark = {
-                            let finalizing = finalizing_ids.borrow();
-                            t.prune_weak_dead_with(&|id| marker.is_visited(id), &|id| {
-                                marker.is_visited(id) && !finalizing.contains(&id)
-                            })
-                        };
-                        for v in &to_mark {
-                            v.trace(marker);
-                        }
-                        alive_ids.borrow_mut().insert(id);
+                    if marker.is_visited(t.identity()) {
+                        alive_ids.borrow_mut().insert(t.identity());
                     }
                 }
                 marker.drain_gray_queue();
@@ -5132,6 +5474,14 @@ impl<'a> GcHandle<'a> {
                     let mut alive = alive_thread_ids.borrow_mut();
                     for (id, entry) in global.threads.iter() {
                         if thread_entry_marked_alive(marker, *id, entry) {
+                            alive.insert(*id);
+                        }
+                    }
+                }
+                {
+                    let mut alive = alive_closure_env_ids.borrow_mut();
+                    for id in global.closure_envs.keys() {
+                        if marker.is_visited(*id) {
                             alive.insert(*id);
                         }
                     }
@@ -5154,6 +5504,7 @@ impl<'a> GcHandle<'a> {
             let alive_set = alive_ids.into_inner();
             let promote: Vec<FinalizerObject> = newly_unreachable.into_inner();
             let alive_thread_ids = alive_thread_ids.into_inner();
+            let alive_closure_env_ids = alive_closure_env_ids.into_inner();
             let dead_interned = dead_interned.into_inner();
             let mut g = state_ref.global.borrow_mut();
             remove_dead_interned_strings(&mut *g, dead_interned);
@@ -5162,6 +5513,13 @@ impl<'a> GcHandle<'a> {
             g.threads.retain(|id, _| alive_thread_ids.contains(id));
             g.cross_thread_upvals
                 .retain(|(id, _), _| *id == main_thread_id || alive_thread_ids.contains(id));
+            // Lua 5.1 side maps (empty on 5.2–5.5): drop a coroutine's
+            // per-thread global table once the coroutine is gone, and a
+            // closure's stored environment once that closure is unvisited.
+            g.thread_globals
+                .retain(|id, _| alive_thread_ids.contains(id));
+            g.closure_envs
+                .retain(|id, _| alive_closure_env_ids.contains(id));
             let promoted = g.finalizers.promote_pending_to_finalized(promote);
             for object in &promoted {
                 if let Some(ptr) = object.heap_ptr() {
@@ -5584,6 +5942,7 @@ fn stack_init(thread: &mut LuaState) {
         next: None,
         callstatus: CIST_C,
         call_metamethods: 0,
+        tailcalls: 0,
         nresults: 0,
         u: CallInfoFrame::c_default(),
         u2: CallInfoExtra::default(),
@@ -5779,6 +6138,20 @@ pub fn new_thread(state: &mut LuaState, initial_body: Option<LuaValue>) -> Resul
         id
     };
 
+    // Lua 5.1: a coroutine inherits its creator's global table (`l_gt`) at
+    // creation, after which the two are independent. Seed the new thread's
+    // `thread_globals` slot with the running thread's current `l_gt` so the
+    // coroutine's `setfenv(0, t)` and freshly-loaded chunks resolve through
+    // its own slot, never the main thread's `globals`. Inert on 5.2–5.5.
+    if matches!(state.global().lua_version, lua_types::LuaVersion::V51) {
+        let creator_id = state.global().current_thread_id;
+        let creator_lgt = state.v51_thread_lgt(creator_id);
+        state
+            .global_mut()
+            .thread_globals
+            .insert(reserved_id, creator_lgt);
+    }
+
     let mut new_thread = LuaState {
         status: LuaStatus::Ok as u8,
         allowhook: true,
@@ -5789,6 +6162,7 @@ pub fn new_thread(state: &mut LuaState, initial_body: Option<LuaValue>) -> Resul
         ci: CallInfoIdx(0),
         call_info: Vec::new(),
         openupval: Vec::new(),
+        legacy_open_upval_touched: std::cell::Cell::new(false),
         tbclist: Vec::new(),
         global: global_rc.clone(),
         hook: None,
@@ -6058,6 +6432,8 @@ pub fn new_state() -> Option<LuaState> {
         closing_thread_id: None,
         main_thread_id: 0,
         next_thread_id: 1,
+        thread_globals: std::collections::HashMap::new(),
+        closure_envs: std::collections::HashMap::new(),
         memerrmsg: placeholder_str.clone(),
         tmname: Vec::new(),
         mt: std::array::from_fn(|_| None),
@@ -6097,6 +6473,7 @@ pub fn new_state() -> Option<LuaState> {
         ci: CallInfoIdx(0),
         call_info: Vec::new(),
         openupval: Vec::new(),
+        legacy_open_upval_touched: std::cell::Cell::new(false),
         tbclist: Vec::new(),
         global: global_rc.clone(),
         hook: None,

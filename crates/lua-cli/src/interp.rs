@@ -727,9 +727,15 @@ fn pmain_body(
         }
     }
 
-    if let Err(e) = createargtable(state, argv, script) {
-        cli.report(Err(e));
-        return false;
+    let legacy_arg = matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V51 | lua_types::LuaVersion::V52
+    );
+    if !legacy_arg || script > 0 {
+        if let Err(e) = createargtable(state, argv, script) {
+            cli.report(Err(e));
+            return false;
+        }
     }
 
     if args & HAS_BIG_E == 0 && !cli.handle_luainit(state) {

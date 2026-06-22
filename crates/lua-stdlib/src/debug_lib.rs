@@ -671,10 +671,20 @@ fn check_upval(
 }
 
 /// `debug.upvalueid(f, n)` — return a unique identifier for upvalue `n` of
-/// function `f` as a light userdata. Returns fail on out-of-range index.
+/// function `f` as a light userdata.
 ///
+/// On 5.1/5.2/5.3 an out-of-range upvalue index raises
+/// `bad argument #2 ... (invalid upvalue index)` because those versions feed
+/// the index straight to `lua_upvalueid`, which asserts the index is in range.
+/// On 5.4/5.5 the index is validated and an out-of-range index returns the fail
+/// value instead, so the validity check is gated to the legacy/transitional
+/// versions.
 pub(crate) fn upvalue_id(state: &mut LuaState) -> Result<usize, LuaError> {
-    let (id, _nup) = check_upval(state, 1, 2, false)?;
+    let require_valid = matches!(
+        state.global().lua_version,
+        LuaVersion::V51 | LuaVersion::V52 | LuaVersion::V53
+    );
+    let (id, _nup) = check_upval(state, 1, 2, require_valid)?;
     match id {
         Some(uid) => {
             lua_vm::api::push_light_userdata(state, uid as *mut core::ffi::c_void);
@@ -1049,11 +1059,59 @@ pub(crate) const DBLIB: &[(&[u8], LibFn)] = &[
     (b"setcstacklimit", set_c_stack_limit as LibFn),
 ];
 
+/// Names withheld from the `debug` roster on the 5.1 backend.
+///
+/// 5.1's `ldblib.c` predates userdata user-values (`getuservalue`/
+/// `setuservalue`), upvalue identity (`upvalueid`/`upvaluejoin`), and the 5.4
+/// `setcstacklimit`. It instead carries the fenv accessors `getfenv`/`setfenv`,
+/// which are layered on by [`open_debug`]. Verified against lua5.1.5.
+const DBLIB_DROP_V51: &[&[u8]] = &[
+    b"getuservalue",
+    b"setuservalue",
+    b"upvalueid",
+    b"upvaluejoin",
+    b"setcstacklimit",
+];
+
 /// Open the `debug` library and push the module table onto the stack.
 /// Returns 1 (the table).
 ///
+/// The roster is version-gated: `setcstacklimit` is a 5.4-only addition
+/// (removed again in 5.5), and the 5.1 backend swaps the modern upvalue/
+/// uservalue accessors for the fenv accessors `getfenv`/`setfenv`. Every delta
+/// is verified against that version's reference binary.
 pub fn open_debug(state: &mut LuaState) -> Result<usize, LuaError> {
-    state.new_lib(DBLIB)?;
+    use lua_types::LuaVersion;
+    let version = state.global().lua_version;
+    let is_v51 = matches!(version, LuaVersion::V51);
+    let has_setcstacklimit = matches!(version, LuaVersion::V54);
+
+    let filtered: Vec<(&[u8], LibFn)> = DBLIB
+        .iter()
+        .filter(|(name, _)| {
+            if !has_setcstacklimit && *name == b"setcstacklimit".as_slice() {
+                return false;
+            }
+            if is_v51 && DBLIB_DROP_V51.contains(name) {
+                return false;
+            }
+            true
+        })
+        .copied()
+        .collect();
+    state.new_lib(&filtered)?;
+
+    if is_v51 {
+        // `debug.getfenv`/`debug.setfenv` are the object-form fenv accessors
+        // (`db_getfenv`/`db_setfenv`), distinct from the level-aware globals
+        // `getfenv`/`setfenv`: their first argument is the object itself, not a
+        // stack level. Verified against lua5.1.5: `debug.getfenv ~= getfenv`.
+        state.push_c_function(crate::base::debug_getfenv_fn)?;
+        state.set_field(-2, b"getfenv")?;
+        state.push_c_function(crate::base::debug_setfenv_fn)?;
+        state.set_field(-2, b"setfenv")?;
+    }
+
     Ok(1)
 }
 
@@ -1063,6 +1121,10 @@ pub fn open_debug(state: &mut LuaState) -> Result<usize, LuaError> {
 //   unsafe_blocks: 0
 //   net:           db.lua (5.4) + multiversion_oracle + check.sh 5.1..5.5 +
 //                  tests/debug_strengthen.rs (this crate). See GRADUATED.md.
+//   version-gated: per-version roster (open_debug): setcstacklimit is 5.4-only;
+//                  5.1 drops upvalueid/upvaluejoin/get|setuservalue/
+//                  setcstacklimit and adds getfenv/setfenv. upvalueid raises on
+//                  an out-of-range index on 5.1/5.2/5.3, returns fail on 5.4/5.5.
 //   deferred:      6 TODO(port), all genuine deferred VM behavior — the
 //                  cross-thread `lua_xmove` cluster (getinfo/getlocal/setlocal/
 //                  sethook/gethook against another thread's stack needs

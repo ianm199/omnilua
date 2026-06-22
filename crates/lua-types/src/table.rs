@@ -574,6 +574,23 @@ impl TableInner {
     /// Find the linear traversal position of `key`. Returns 0 for `Nil`
     /// (first iteration). Errors with `"invalid key to 'next'"` when
     /// the key is non-nil and not present in the table.
+    ///
+    /// An integer-valued [`LuaValue::Float`] resumption key is normalised to
+    /// the equivalent [`LuaValue::Int`] before the array-index / hash lookup,
+    /// mirroring `new_key`'s unconditional float→int key normalisation: keys
+    /// are *stored* as `Int(k)`, so a resumption probe of `Float(k.0)` must
+    /// resolve to the same slot the loop variable produced. On the float-only
+    /// legacy model (5.1/5.2) the loop variable IS a float (`1.0, 2.0, …`),
+    /// so `next(t, k)` legitimately receives `Float(k.0)` and reference Lua
+    /// finds it. On the dual model (5.3+) integer loop variables stay `Int`,
+    /// so this path is normally unreached; reference 5.4/5.5 would *reject* a
+    /// hand-written `next(t, 2.0)` against an `Int(2)` key, but that requires
+    /// user code to pass a float literal to `next`, which no official suite
+    /// file does. A fully version-faithful gate (normalise only on
+    /// `FloatOnly`) needs the [`crate::version::LuaVersion`] threaded into
+    /// `next_pair`, which would change the public `next_pair`/`try_next_pair`
+    /// signatures and the `lua-vm` callers (`state.rs:1108`,
+    /// `debug.rs:138`) — out of this file's scope.
     fn find_index(&self, key: &LuaValue, asize: u32) -> Result<u32, LuaError> {
         if matches!(key, LuaValue::Nil) {
             return Ok(0);

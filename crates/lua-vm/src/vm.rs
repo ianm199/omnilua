@@ -3133,6 +3133,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let n = state.pretailcall(ci, ra, top_b, delta)?;
                         if n < 0 {
                             // Lua function — goto startfunc
+                            state.note_lua_tailcall(ci);
                             continue 'startfunc;
                         } else {
                             // C function — ci->func.p -= delta; luaD_poscall; goto ret

@@ -595,6 +595,16 @@ pub struct CallInfo {
     /// frame. Upstream stores this in the repacked 5.5 `callstatus` bits; keep
     /// it separate here so older transfer/recover-status bits stay unchanged.
     pub call_metamethods: u8,
+
+    /// Lua 5.1: count of tail calls "lost" into this reused frame. Mirrors C
+    /// 5.1's `ci->tailcalls`. Each `OP_TAILCALL` reuses the current frame and
+    /// increments this; a normal call gets a fresh slot (via `next_ci`) where
+    /// it is reset to 0. Used only by the 5.1 `debug.getstack` level walk to
+    /// synthesize the `(tail call)` frames the 5.1 debug model exposes; 5.2+
+    /// dropped that model in favour of the `istailcall` flag and never read it.
+    /// Lives in the 3 spare bytes after `call_metamethods`, so `CallInfo` stays
+    /// 72 B (the size guard above still holds).
+    pub tailcalls: u16,
 }
 
 /// Compile-time guard that the T2-C2 `CallInfoFrame` flatten kept the per-frame
@@ -702,6 +712,7 @@ impl Default for CallInfo {
             nresults: 0,
             callstatus: 0,
             call_metamethods: 0,
+            tailcalls: 0,
         }
     }
 }
@@ -3055,9 +3066,25 @@ impl LuaState {
     }
     #[inline(always)]
     pub fn next_ci(&mut self) -> Result<CallInfoIdx, LuaError> {
-        match self.call_info[self.ci.as_usize()].next {
-            Some(idx) => Ok(idx),
-            None => Ok(extend_ci(self)),
+        let idx = match self.call_info[self.ci.as_usize()].next {
+            Some(idx) => idx,
+            None => extend_ci(self),
+        };
+        self.call_info[idx.as_usize()].tailcalls = 0;
+        Ok(idx)
+    }
+
+    /// Records that a Lua tail call reused the frame at `ci`, so the 5.1
+    /// `debug.getstack` level walk can synthesize the `(tail call)` frames the
+    /// 5.1 debug model exposes. Gated to 5.1: 5.2+ dropped synthetic tail frames
+    /// for the `istailcall` flag and never read `tailcalls`, so on those versions
+    /// this is a single version compare and return — the hot tail-call path is
+    /// otherwise byte-identical.
+    #[inline(always)]
+    pub fn note_lua_tailcall(&mut self, ci: CallInfoIdx) {
+        if self.global().lua_version == lua_types::LuaVersion::V51 {
+            self.call_info[ci.as_usize()].tailcalls =
+                self.call_info[ci.as_usize()].tailcalls.saturating_add(1);
         }
     }
     #[inline(always)]
@@ -5915,6 +5942,7 @@ fn stack_init(thread: &mut LuaState) {
         next: None,
         callstatus: CIST_C,
         call_metamethods: 0,
+        tailcalls: 0,
         nresults: 0,
         u: CallInfoFrame::c_default(),
         u2: CallInfoExtra::default(),

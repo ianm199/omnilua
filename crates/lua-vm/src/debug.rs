@@ -522,6 +522,9 @@ pub fn get_stack(state: &LuaState, level: i32, ar: &mut LuaDebug) -> bool {
     if level < 0 {
         return false;
     }
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return get_stack_51(state, level, ar);
+    }
     let mut remaining = level;
     let mut ci_idx = state.current_ci_idx();
     loop {
@@ -540,6 +543,55 @@ pub fn get_stack(state: &LuaState, level: i32, ar: &mut LuaDebug) -> bool {
     }
     if !state.is_base_ci(ci_idx) {
         ar.i_ci = Some(ci_idx);
+        true
+    } else {
+        false
+    }
+}
+
+/// Lua 5.1 `lua_getstack`: the level walk that accounts for "lost" tail calls.
+///
+/// 5.1 reuses a frame on a tail call (like every later version) but exposes the
+/// lost frames to the debug API as synthetic `(tail call)` levels. Each Lua
+/// frame contributes its own level plus one extra per accumulated tail call
+/// (`ci.tailcalls`). When `level` lands inside that synthetic span the C code
+/// sets `ar->i_ci = 0` (the base-CI index) as a sentinel; we mirror that with
+/// `Some(CallInfoIdx(0))`, which `get_info` reads as "emit a tail frame". The
+/// base CI is never a real `getinfo` target, so that index is free to overload
+/// exactly as C overloads it.
+///
+/// C reference (`ldebug.c`):
+/// ```c
+/// for (ci = L->ci; level > 0 && ci > L->base_ci; ci--) {
+///   level--;
+///   if (f_isLua(ci)) level -= ci->tailcalls;
+/// }
+/// if (level == 0 && ci > L->base_ci) { i_ci = ci - base_ci; }
+/// else if (level < 0) { i_ci = 0; }  // a lost tail call
+/// else status = 0;
+/// ```
+fn get_stack_51(state: &LuaState, level: i32, ar: &mut LuaDebug) -> bool {
+    let mut remaining = level;
+    let mut ci_idx = state.current_ci_idx();
+    loop {
+        if remaining <= 0 || state.is_base_ci(ci_idx) {
+            break;
+        }
+        remaining -= 1;
+        let ci = state.get_ci(ci_idx);
+        if ci.is_lua() {
+            remaining -= ci.tailcalls as i32;
+        }
+        match state.prev_ci(ci_idx) {
+            Some(prev) => ci_idx = prev,
+            None => break,
+        }
+    }
+    if remaining == 0 && !state.is_base_ci(ci_idx) {
+        ar.i_ci = Some(ci_idx);
+        true
+    } else if remaining < 0 {
+        ar.i_ci = Some(CallInfoIdx(0));
         true
     } else {
         false
@@ -966,6 +1018,11 @@ pub fn get_info(state: &mut LuaState, what: &[u8], ar: &mut LuaDebug) -> bool {
             Some(i) => i,
             None => return false,
         };
+        if state.global().lua_version == lua_types::LuaVersion::V51
+            && state.is_base_ci(ci_idx)
+        {
+            return get_info_tailcall_51(state, what, ar);
+        }
         let func_val = state.get_at(state.get_ci(ci_idx).func).clone();
         debug_assert!(
             matches!(func_val, LuaValue::Function(_)),
@@ -992,6 +1049,61 @@ pub fn get_info(state: &mut LuaState, what: &[u8], ar: &mut LuaDebug) -> bool {
         let _ = collect_valid_lines(state, cl.as_ref());
     }
     status
+}
+
+/// Fills `ar` for a Lua 5.1 synthetic `(tail call)` frame, mirroring C's
+/// `info_tailcall`. The frame has no associated closure, so every option that
+/// would inspect one yields the tail defaults: `what == "tail"`,
+/// `source == "=(tail call)"` (rendered `(tail call)`), all lines `-1`, empty
+/// name/namewhat, zero upvalues, and a `nil` function pushed for the `'f'`
+/// option / `nil` valid-lines table for `'L'`.
+///
+/// C reference (`ldebug.c`):
+/// ```c
+/// static void info_tailcall (lua_Debug *ar) {
+///   ar->name = ar->namewhat = "";
+///   ar->what = "tail";
+///   ar->lastlinedefined = ar->linedefined = ar->currentline = -1;
+///   ar->source = "=(tail call)";
+///   luaO_chunkid(ar->short_src, ar->source, LUA_IDSIZE);
+///   ar->nups = 0;
+/// }
+/// ```
+fn get_info_tailcall_51(state: &mut LuaState, what: &[u8], ar: &mut LuaDebug) -> bool {
+    let what = if what.first() == Some(&b'>') {
+        &what[1..]
+    } else {
+        what
+    };
+    info_tailcall(ar);
+    let mut status = true;
+    for &ch in what {
+        if !matches!(ch, b'S' | b'l' | b'u' | b'n' | b't' | b'r' | b'L' | b'f') {
+            status = false;
+        }
+    }
+    if what.contains(&b'f') {
+        state.push(LuaValue::Nil);
+    }
+    if what.contains(&b'L') {
+        state.push(LuaValue::Nil);
+    }
+    status
+}
+
+/// Sets the tail-frame fields on `ar`. See `get_info_tailcall_51`.
+fn info_tailcall(ar: &mut LuaDebug) {
+    ar.name = Some(Vec::new());
+    ar.namewhat = Some(b"");
+    ar.what = Some(b"tail");
+    ar.linedefined = -1;
+    ar.lastlinedefined = -1;
+    ar.currentline = -1;
+    ar.source = Some(b"=(tail call)".to_vec());
+    ar.srclen = b"=(tail call)".len();
+    chunk_id(&mut ar.short_src, b"=(tail call)", b"=(tail call)".len());
+    ar.nups = 0;
+    ar.istailcall = false;
 }
 
 // ─── Symbolic execution — finding which instruction set a register ────────────

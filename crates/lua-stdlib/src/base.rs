@@ -832,17 +832,16 @@ fn fenv_read(state: &LuaState, func: &LuaValue) -> LuaValue {
 /// `getfenv([f])` — Lua 5.1 only.
 ///
 /// Returns the environment of the function `f` (a function value or a stack
-/// level), or the running function's environment when the argument is absent or
-/// `1`. Level `0` returns the running thread's global table. See
+/// level), or the running function's environment when the argument is absent,
+/// `nil`, or `1`. 5.1's `getfunc` resolves the level via `luaL_optint(L, 1, 1)`,
+/// which defaults both an absent and an explicit `nil` argument to level 1.
+/// Level `0` returns the running thread's global table. See
 /// `specs/followup/5.1-fenv.md` §2.
 pub(crate) fn getfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     let arg1 = state.value_at(1);
     let func = match &arg1 {
         LuaValue::Function(_) => arg1.clone(),
-        LuaValue::Nil if state.type_at(1) == LuaType::None => {
-            // No argument => level 1 (the running function).
-            fenv_getfunc(state, 1)?
-        }
+        LuaValue::Nil => fenv_getfunc(state, 1)?,
         LuaValue::Float(_) | LuaValue::Int(_) => {
             let level = fenv_level(&arg1);
             if level == 0 {

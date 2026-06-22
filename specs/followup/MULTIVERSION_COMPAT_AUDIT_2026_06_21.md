@@ -470,3 +470,8 @@ Path to 100%: F6 (shared) → 5.3 = 100%, 5.1 = 19/21; + errors-hang → 20/21; 
 - files.lua@5.1 also flipped; calls.lua@5.1 advanced (F6 cleared) to a dump/undump-with-upvalues blocker at calls.lua:277.
 Tally: 5.1 18/21 (calls@277 dump/undump-upvalues, db@366 tail-return hooks, errors hang), 5.2 100%, **5.3 100%**, 5.4 100%, 5.5 100%.
 PERF: overall 1.46x vs C; _long workloads at parity (table_ops_long 0.43x); tall poles = table-set-same-key + method_calls (~2x).
+
+### CORRECTION (2026-06-22): 5.3 is 26/27, NOT 100% — db.lua@5.3 CIST_FIN hang
+F6 flipped files.lua@5.3, but 5.3's `all.lua` still FAILs (gate: TIMEOUT). Root cause confirmed: `all.lua` runs `db.lua` internally (`dofile('db.lua')`); it stalls at "testing debug library" because **db.lua@5.3 has a real hang** — the CIST_FIN finalizer-frame issue (db.lua:734 `repeat until name` never terminates; the __gc finalizer-invoking frame puts CIST_FIN on the finalizer's own frame instead of the caller, so `debug.getinfo` inside the finalizer loops). The standalone `db.wrap.lua@5.3` is masked as `both_fail` (the reference also fails the standalone wrap for a separate ltests reason), which hid this. The reference's `all.lua@5.3` reaches `final OK`; ours hangs — so this is a genuine omniLua bug. My prior "5.3 reaches 100%" note matched the reference's `final OK`, not ours — corrected here.
+**True remaining for 5.3 = 100%:** fix the db.lua@5.3 CIST_FIN finalizer-frame hang (vm.rs/debug.rs/state.rs). Then `all.lua@5.3` (and standalone db, modulo ltests) clears.
+Accurate tally: 5.1 19/21 (db@5.1 tail-return + errors hang in flight), 5.2 100%, **5.3 26/27** (all.lua blocked on db@5.3 CIST_FIN), 5.4 100%, 5.5 100%.

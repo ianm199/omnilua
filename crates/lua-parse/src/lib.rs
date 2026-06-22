@@ -3869,12 +3869,106 @@ fn movegotosout(
             if let Some(lb_idx) = lb_idx {
                 let lb_pc = ls.dyd.label[lb_idx].pc;
                 let lb_nactvar = ls.dyd.label[lb_idx].nactvar;
-                solvegoto(ls, state, i, lb_pc, lb_nactvar)?;
+                let trigger1 = ls.dyd.gt[i].close;
+                let close_level = goto_close_level(ls, lb_nactvar, bl_scope_level, trigger1);
+                if let Some(level) = close_level {
+                    resolve_goto_with_close(ls, state, i, lb_pc, lb_nactvar, level)?;
+                } else {
+                    solvegoto(ls, state, i, lb_pc, lb_nactvar)?;
+                }
                 continue;
             }
         }
         i += 1;
     }
+    Ok(())
+}
+
+/// Computes the scope level at which a backward goto resolving to an
+/// enclosing-block label (`label_nactvar`) must close upvalues, or `None` if no
+/// close is needed.
+///
+/// This mirrors the two `luaK_patchclose` callsites upstream 5.3 reaches while
+/// resolving a pending goto in `movegotosout`:
+///
+///   1. `movegotosout` itself: if the exited block captured upvalues and the
+///      goto leaves that block's scope, close at the exited block's level
+///      (`bl_scope_level`). This is exactly when the goto entry's `close` flag
+///      was set just before re-leveling, passed in as `trigger1`.
+///   2. `findlabel`: if the goto also leaves the target label's scope
+///      (`bl_scope_level > label_nactvar`, since the goto's level was already
+///      re-leveled to `bl_scope_level`) and the enclosing block either captured
+///      upvalues or holds at least one label, close at the *label's* level
+///      (`label_nactvar`).
+///
+/// Upstream applies these with `SETARG_A` so the later (smaller, more inclusive)
+/// level wins; this returns that minimum. Trigger 2 dominates whenever it fires
+/// because `label_nactvar <= bl_scope_level` for an enclosing label, so closing
+/// at the label's level also covers locals declared after the label in the
+/// label's own block (e.g. `goto.lua`'s `local b` redeclared just after `::l1::`).
+fn goto_close_level(
+    ls: &LexState,
+    label_nactvar: u8,
+    bl_scope_level: u8,
+    trigger1: bool,
+) -> Option<u8> {
+    let enclosing = ls.fs.as_ref().unwrap().bl.as_ref();
+    let enclosing_upval = enclosing.map_or(false, |b| b.upval);
+    let enclosing_has_label =
+        enclosing.map_or(false, |b| ls.dyd.label.len() as i32 > b.firstlabel);
+    let trigger2 = bl_scope_level > label_nactvar && (enclosing_upval || enclosing_has_label);
+    match (trigger1, trigger2) {
+        (_, true) => Some(label_nactvar),
+        (true, false) => Some(bl_scope_level),
+        (false, false) => None,
+    }
+}
+
+/// Resolves a pending backward goto (index `g`) to an enclosing-block label at
+/// `label_pc`, closing the upvalues of the locals the goto exits at scope level
+/// `close_scope_level` (from [`goto_close_level`]).
+///
+/// In block-scoped goto (5.2/5.3) a backward goto whose target label lives in an
+/// enclosing block is resolved here, in `movegotosout`, after the inner block
+/// has been popped. Upstream lua-c patches the goto's own `OP_JMP` to carry a
+/// close (`luaK_patchclose`, the JMP's `A` field). This port's bytecode is the
+/// 5.4 format, whose `OP_JMP` carries no close field — closes are explicit
+/// `OP_CLOSE` instructions. So instead of patching the JMP in place, this emits a
+/// `CLOSE; JMP→label` trampoline at the current pc and redirects the goto's
+/// original JMP to land on the `CLOSE`. The upvalues of the exited locals are
+/// therefore closed on every backward iteration, giving each iteration a fresh
+/// upvalue cell (the behavior `goto.lua`'s upvalue-closing tests assert under
+/// 5.2/5.3).
+fn resolve_goto_with_close(
+    ls: &mut LexState,
+    state: &mut LuaState,
+    g: usize,
+    label_pc: i32,
+    label_nactvar: u8,
+    close_scope_level: u8,
+) -> Result<(), LuaError> {
+    if ls.dyd.gt[g].nactvar < label_nactvar {
+        let version = state.global().lua_version;
+        return Err(jumpscopeerror(ls, version, g, label_nactvar));
+    }
+    let line = ls.dyd.gt[g].line;
+    let gt_pc = ls.dyd.gt[g].pc;
+    let close_local_level = local_level_for_scope_level(ls, close_scope_level);
+    let close_level = reg_level(ls, ls.fs.as_ref().unwrap(), close_local_level) as u32;
+    let close_pc = {
+        let inst = lua_code::opcodes::Instruction::abck(
+            lua_code::opcodes::OpCode::Close,
+            close_level,
+            0,
+            0,
+            0,
+        );
+        emit_inst(ls.fs.as_mut().unwrap(), line, inst)
+    };
+    let jmp_pc = cg_jump(ls.fs.as_mut().unwrap(), line);
+    cg_patch_list(ls.fs.as_mut().unwrap(), jmp_pc, label_pc)?;
+    cg_patch_list(ls.fs.as_mut().unwrap(), gt_pc, close_pc)?;
+    ls.dyd.gt.remove(g);
     Ok(())
 }
 

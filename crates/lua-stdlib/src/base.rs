@@ -793,6 +793,12 @@ fn fenv_getfunc(state: &mut LuaState, level: i64) -> Result<LuaValue, LuaError> 
     let ci_idx = ar
         .i_ci
         .ok_or_else(|| lua_vm::debug::arg_error_impl(state, 1, b"invalid level"))?;
+    if state.global().lua_version == lua_types::LuaVersion::V51 && state.is_base_ci(ci_idx) {
+        return Err(LuaError::runtime(format_args!(
+            "no function environment for tail call at level {}",
+            level
+        )));
+    }
     let func_slot = state.get_ci(ci_idx).func;
     Ok(state.get_at(func_slot))
 }

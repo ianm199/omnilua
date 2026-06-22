@@ -430,3 +430,30 @@ Remaining 5.1 (6, all cross-crate, all V51-gated-safe): calls (reader F6), closu
 - **closure.lua@5.1 + locals.lua@5.1** both flipped: completed the 5.1 fenv environment model (V51-only). (A) per-thread `l_gt` via `GlobalState.thread_globals` (coroutine `setfenv(0,t)` no longer clobbers main globals; `get_global_table` resolves through the running thread); (B) per-closure env via `GlobalState.closure_envs` (closures with no `_ENV` upvalue can still carry a `setfenv` env). Both side-maps are GC roots, pruned after collection, inert on 5.2-5.5.
 Tally: 5.1 **81%** (17/21), 5.2 100%, 5.3 93%, 5.4 100%, 5.5 100%.
 Remaining 5.1 (4): db@336 (tail-call frame synthesis), gc@228 (collect-time userdata finalizability), calls@250 (reader-streaming F6, 10-file — supervised), errors (xpcall+C-stack-overflow hang — supervised).
+
+### Loop wave 10 + FINAL (2026-06-22) — campaign paused at the architectural floor
+- **gc.lua@5.1** flipped: collect-time userdata finalizability (V51 weak roster in lua-gc + api.rs hook; C luaC_separateudata model — late `__gc` on a shared metatable now fires).
+- **db.lua@5.1** advanced 336→366: synthetic tail-call frames (vm/state/debug, V51) + getfenv tail-level rejection + stub 'tail' what-code. Next link = "tail return" hook events.
+
+## FINAL SCORECARD (session)
+| Version | Session start | Final | Δ |
+|---|---|---|---|
+| 5.1 | 40% (8/20) | **86%** (18/21) | +46 |
+| 5.2 | 54% (13/24) | **100%** (24/24) | +46 |
+| 5.3 | 74% (20/27) | **93%** (25/27, real-floor) | +19 |
+| 5.4 | 100% | **100%** | — |
+| 5.5 | 100% | **100%** | — |
+Branch `fix/multiversion-compat`, 76 commits, every wave oracle-gated, zero 5.4/5.5 regression. 4 latent baseline bugs also fixed (gsub-numbers, -0.0, stack-overflow prefix, value-expected arg name).
+
+## REMAINING (supervised-tier; each precisely scoped)
+- **Reader streaming (finding F6)** — blocks calls.lua@5.1 + files.lua@5.3. A 10-file coordinated change: api::load → reentrant `FnMut(&mut LuaState)`, zio getc/fill take `&mut LuaState`, ParserHook signature + 3 installers (lua-cli, lua-rs-runtime, lua-hlua-shim). See docs/IDIOMATIZATION_VM_FINDINGS.md F6.
+- **errors.lua@5.1 hang** — `xpcall(y, debug.traceback)` over a C-stack-overflow loops forever on the legacy path (VM C-stack/error-handler interaction).
+- **db.lua@5.1** — "tail return" debug-hook event emission (debug.rs hook dispatch).
+- **all.lua@5.3** — harness cwd artifact (`loadfile` of sibling test files), NOT a code bug; fix the runner's cwd/file layout, not omnilua.
+
+## HARNESS ARTIFACTS ADDED (durable)
+- `harness/quick_file.sh` — 8s-capped whole-file check (PASS/FAIL/HANG); killed the 60s-hang iteration tax.
+- `harness/gen_golden.sh` + `crates/lua-rs-runtime/tests/golden/` — capture reference truth once → committed golden.
+- `crates/lua-rs-runtime/tests/dump_kit.rs`, `error_wording_kit.rs` — in-process golden kits (0.00s).
+- `harness/multiversion_diff_suite.sh` — per-version differential gate; `run_official_all.sh` wired for 5.1/5.2.
+- Official **5.1** + **5.2.2** test suites vendored (`reference/extra-tests/`); all five reference binaries in `/tmp/lua-refs/bin`.

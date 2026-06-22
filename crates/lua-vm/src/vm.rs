@@ -1297,6 +1297,36 @@ pub(crate) fn less_equal(
 
 // ─── Equality ────────────────────────────────────────────────────────────────
 
+/// `luaO_rawequalObj`: primitive equality with no metamethod dispatch.
+///
+/// Calling `equal_obj` with a `None` state suppresses every metamethod, so the
+/// result is the raw tag+value/pointer comparison and can never raise. Used by
+/// the 5.1 same-reference comparison rule to test whether two handler functions
+/// are the identical reference.
+pub(crate) fn raw_equal_values(t1: &LuaValue, t2: &LuaValue) -> bool {
+    matches!(equal_obj(None, t1, t2), Ok(true))
+}
+
+/// Select the `__eq` metamethod for two table/userdata operands.
+///
+/// 5.2+ consult the left operand's handler, then the right's (left-then-right).
+/// 5.1 honours `__eq` only when both operands resolve to the SAME handler
+/// reference (`get_equalTM`), returning `Nil` (i.e. "not equal") otherwise. The
+/// caller has already established that the operands are the same kind and not
+/// the identical object.
+fn equal_tm(state: &mut LuaState, t1: &LuaValue, t2: &LuaValue) -> LuaValue {
+    let eq = crate::tagmethods::TagMethod::Eq;
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        return crate::tagmethods::get_comp_tm_51(state, t1, t2, eq);
+    }
+    let tm1 = crate::tagmethods::get_tm_by_obj(state, t1, eq);
+    if tm1.is_nil() {
+        crate::tagmethods::get_tm_by_obj(state, t2, eq)
+    } else {
+        tm1
+    }
+}
+
 /// Main equality test.  `raw = true` means no metamethods (L == NULL in C).
 pub(crate) fn equal_obj(
     state: Option<&mut LuaState>,
@@ -1348,12 +1378,7 @@ pub(crate) fn equal_obj(
             let Some(state) = state else {
                 return Ok(false);
             };
-            let tm1 = state.fast_tm_ud(u1, TagMethod::Eq);
-            let tm = if matches!(tm1, LuaValue::Nil) {
-                state.fast_tm_ud(u2, TagMethod::Eq)
-            } else {
-                tm1
-            };
+            let tm = equal_tm(state, t1, t2);
             if matches!(tm, LuaValue::Nil) {
                 return Ok(false);
             }
@@ -1367,15 +1392,7 @@ pub(crate) fn equal_obj(
             let Some(state) = state else {
                 return Ok(false);
             };
-            //    if (tm == NULL) tm = fasttm(L, hvalue(t2)->metatable, TM_EQ);
-            let mt1 = h1.metatable();
-            let mt2 = h2.metatable();
-            let tm1 = state.fast_tm_table(mt1.as_ref(), TagMethod::Eq);
-            let tm = if matches!(tm1, LuaValue::Nil) {
-                state.fast_tm_table(mt2.as_ref(), TagMethod::Eq)
-            } else {
-                tm1
-            };
+            let tm = equal_tm(state, t1, t2);
             if matches!(tm, LuaValue::Nil) {
                 return Ok(false);
             }

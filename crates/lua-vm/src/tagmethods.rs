@@ -736,6 +736,66 @@ pub(crate) fn try_bini_tm(
     try_bin_assoc_tm(state, p1, p1_idx, &aux, None, flip, res, event)
 }
 
+// ── get_compTM / get_equalTM (Lua 5.1 same-reference rule) ───────────────────
+
+/// Resolve the metatable governing an operand, mirroring `get_tm_by_obj`'s
+/// metatable dispatch: tables and full userdata carry per-object metatables;
+/// every other type uses the per-type metatable on `GlobalState`.
+fn operand_metatable(
+    state: &LuaState,
+    o: &LuaValue,
+) -> Option<GcRef<lua_types::value::LuaTable>> {
+    match o {
+        LuaValue::Table(t) => t.metatable(),
+        LuaValue::UserData(u) => u.metatable(),
+        _ => {
+            let type_idx = o.base_type() as usize;
+            state.global().mt[type_idx].clone()
+        }
+    }
+}
+
+/// Lua 5.1's `get_compTM`/`get_equalTM`: the comparison/equality metamethod is
+/// honoured only when BOTH operands resolve to the SAME handler function.
+///
+/// Returns the chosen metamethod, or `LuaValue::Nil` when the handlers differ,
+/// when one operand lacks the metamethod, or when neither has a metatable.
+/// 5.1 raised an error for ordered comparisons in this `Nil` case (the caller
+/// does so) and returned "not equal" for equality.
+///
+/// PORT NOTE (#events51): 5.1 picks the left metatable's handler, returns it
+/// directly when both metatables are the same object, and otherwise keeps it
+/// only if the right metatable's handler is raw-equal (same function reference).
+/// 5.2+ consult left-then-right unconditionally, so this is gated to V51 by the
+/// caller.
+pub(crate) fn get_comp_tm_51(
+    state: &mut LuaState,
+    p1: &LuaValue,
+    p2: &LuaValue,
+    event: TagMethod,
+) -> LuaValue {
+    let tm1 = get_tm_by_obj(state, p1, event);
+    if tm1.is_nil() {
+        return LuaValue::Nil;
+    }
+    let mt1 = operand_metatable(state, p1);
+    let mt2 = operand_metatable(state, p2);
+    if let (Some(a), Some(b)) = (&mt1, &mt2) {
+        if GcRef::ptr_eq(a, b) {
+            return tm1;
+        }
+    }
+    let tm2 = get_tm_by_obj(state, p2, event);
+    if tm2.is_nil() {
+        return LuaValue::Nil;
+    }
+    if crate::vm::raw_equal_values(&tm1, &tm2) {
+        tm1
+    } else {
+        LuaValue::Nil
+    }
+}
+
 // ── luaT_callorderTM ─────────────────────────────────────────────────────────
 
 //                           TMS event)
@@ -771,6 +831,33 @@ pub(crate) fn call_order_tm(
         {
             return Err(crate::debug::order_error(state, p1, p2));
         }
+    }
+
+    // PORT NOTE (#events51): 5.1's `call_orderTM` requires both operands to
+    // carry the SAME `__lt`/`__le` handler (`luaO_rawequalObj(tm1, tm2)`), and
+    // raises `luaG_ordererror` otherwise — including when only one operand has
+    // the metamethod. 5.2+ consult left-then-right unconditionally, so this is
+    // gated to V51. The `__le`→`__lt` (swapped) derivation below uses the same
+    // same-reference rule.
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        let res_idx = state.top_idx();
+        let tm = get_comp_tm_51(state, p1, p2, event);
+        if !tm.is_nil() {
+            call_tm_res(state, tm, p1.clone(), p2.clone(), res_idx)?;
+            let result = state.get_at(res_idx).clone();
+            return Ok(!matches!(result, LuaValue::Nil | LuaValue::Bool(false)));
+        }
+        if event == TagMethod::Le {
+            let tm = get_comp_tm_51(state, p2, p1, TagMethod::Lt);
+            if !tm.is_nil() {
+                state.current_call_info_mut().callstatus |= crate::state::CIST_LEQ;
+                call_tm_res(state, tm, p2.clone(), p1.clone(), res_idx)?;
+                state.current_call_info_mut().callstatus &= !crate::state::CIST_LEQ;
+                let result = state.get_at(res_idx).clone();
+                return Ok(matches!(result, LuaValue::Nil | LuaValue::Bool(false)));
+            }
+        }
+        return Err(crate::debug::order_error(state, p1, p2));
     }
 
     //      return !l_isfalse(s2v(L->top.p));
@@ -1058,4 +1145,10 @@ pub(crate) fn get_varargs(
 //         ttype(r)` guard. 5.2+ keep consulting the TM for mixed types. The check
 //         is on the Lua type tag (base_type), so Int/Float (both `Number`) and the
 //         two userdata kinds compare as C's `ttype` does.
+//    (10) #events51: get_comp_tm_51 implements 5.1's get_compTM/get_equalTM
+//         same-reference rule — the `__lt`/`__le`/`__eq` metamethod fires only
+//         when both operands resolve to the identical handler function. For
+//         ordered comparison call_order_tm raises luaG_ordererror in the
+//         differing/missing-handler case (V51 only); equality (vm::equal_obj)
+//         returns "not equal". 5.2+ consult left-then-right unconditionally.
 // ──────────────────────────────────────────────────────────────────────────────

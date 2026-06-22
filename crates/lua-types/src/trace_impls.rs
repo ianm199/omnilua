@@ -149,6 +149,20 @@ impl Trace for LuaTable {
 
 /// LuaProto — bytecode prototype. k (constants), p (child protos),
 /// source, upvalue names, locvar names.
+///
+/// The `cache` field is the last closure instantiated from this proto
+/// (5.2/5.3 `LUA_COMPAT` closure caching). It is a non-owning weak edge,
+/// mirroring C's `traverseproto` (`lgc.c` 5.3.6:481-482): `if (f->cache &&
+/// iswhite(f->cache)) f->cache = NULL;`. C drops a white cache during the
+/// proto traversal so the cached closure is free to be collected; it never
+/// marks the cache. We do the same — drop the cache when its target has not
+/// been independently reached (`!is_visited`) and never `mark` it. The cache
+/// is purely an optimization, so an early drop only costs a later
+/// `OP_CLOSURE` cache miss (it rebuilds a fresh closure), never correctness.
+/// Marking it strongly (the previous behavior) over-rooted the last closure
+/// of every proto, which kept a `__gc` closure stored as a weak metatable
+/// value alive past the cycle that should have cleared it — making the
+/// `gc.lua` `__gc x weak tables` finalizer fire when it must not.
 impl Trace for LuaProto {
 
     fn type_name(&self) -> &'static str {
@@ -173,8 +187,13 @@ impl Trace for LuaProto {
         for lv in self.locvars.iter() {
             lv.varname.trace(m);
         }
-        if let Some(c) = self.cache.borrow().as_ref() {
-            c.trace(m);
+        let drop_cache = self
+            .cache
+            .borrow()
+            .as_ref()
+            .map_or(false, |c| !m.is_visited(c.identity()));
+        if drop_cache {
+            *self.cache.borrow_mut() = None;
         }
     }
 }

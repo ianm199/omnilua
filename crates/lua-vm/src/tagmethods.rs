@@ -1026,9 +1026,10 @@ pub(crate) fn adjust_varargs(
 /// rebuilds it idempotently for the non-hook path.
 ///
 /// Only applies to Lua 5.1, only when the proto's first `VARARGPACK` carries the
-/// K bit set (`mark_vararg_table_needed`); the parser clears that bit when the
-/// body uses `...` directly, in which case stock 5.1 leaves `arg` declared but
-/// unfilled, and we mirror that by doing nothing here.
+/// K bit set. When the body uses `...` directly the parser rewrites that entry
+/// `VARARGPACK` into a `LOADNIL` (see `clear_arg_table_needed`), so no K-bit
+/// `VARARGPACK` survives, `legacy_arg_table_reg` returns `None`, and we build
+/// nothing here — mirroring stock 5.1, which leaves `arg` declared but nil.
 fn build_legacy_arg_table(
     state: &mut LuaState,
     ci_idx: CallInfoIdx,

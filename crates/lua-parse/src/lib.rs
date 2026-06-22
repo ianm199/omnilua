@@ -2085,16 +2085,26 @@ fn mark_vararg_table_needed(fs: &mut FuncState) {
     }
 }
 
-/// Lua 5.1 only: clear the K bit on this function's `arg`-building VARARGPACK so
-/// the VM skips materializing the implicit `arg` table. Mirrors lparser.c's
-/// `fs->f->is_vararg &= ~VARARG_NEEDSARG` at the `...` callsite: when the body
-/// actually uses `...`, stock 5.1 leaves `arg` declared but never fills it.
+/// Lua 5.1 only: when the body uses `...` directly, stock 5.1 clears
+/// `VARARG_NEEDSARG` (lparser.c's `fs->f->is_vararg &= ~VARARG_NEEDSARG`) so the
+/// implicit `arg` table is never filled — but `arg` stays a declared local that
+/// reads as nil (it shadows any global `arg`). We model this by rewriting the
+/// entry `VARARGPACK` that would build `arg` into a `LOADNIL` of the same
+/// register, so the local is initialized to nil at function entry instead of
+/// holding whatever value previously occupied that stack slot.
 fn clear_arg_table_needed(fs: &mut FuncState) {
     for inst in fs.f.code.iter_mut() {
-        let mut op = lua_code::opcodes::Instruction(inst.raw());
+        let op = lua_code::opcodes::Instruction(inst.raw());
         if op.opcode() == Some(lua_code::opcodes::OpCode::VarArgPack) {
-            op.set_arg_k(0);
-            *inst = lua_types::opcode::Instruction::new(op.0);
+            let arg_reg = op.arg_a();
+            let load_nil = lua_code::opcodes::Instruction::abck(
+                lua_code::opcodes::OpCode::LoadNil,
+                arg_reg,
+                0,
+                0,
+                0,
+            );
+            *inst = lua_types::opcode::Instruction::new(load_nil.0);
             break;
         }
     }
@@ -4615,10 +4625,12 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     }
     // Materialize the Lua 5.1 implicit `arg` table the same way, but with the K
     // bit set so VARARGPACK builds the table unconditionally at entry (it is the
-    // default; `simpleexp`'s `...` arm clears the bit when the body actually uses
-    // `...`, matching C's `is_vararg &= ~VARARG_NEEDSARG`). Unlike the 5.5 named
-    // form, `arg` is an ordinary local with no `vararg_table_reg` aliasing, so
-    // `...` keeps reading the raw extra args independently of `arg`.
+    // default; `simpleexp`'s `...` arm calls `clear_arg_table_needed`, which
+    // rewrites this entry VARARGPACK into a LOADNIL when the body actually uses
+    // `...`, matching C's `is_vararg &= ~VARARG_NEEDSARG` — `arg` stays a
+    // declared local but reads nil). Unlike the 5.5 named form, `arg` is an
+    // ordinary local with no `vararg_table_reg` aliasing, so `...` keeps reading
+    // the raw extra args independently of `arg`.
     if has_arg_local {
         let reg = nvarstack(ls, ls.fs.as_ref().unwrap()) - 1;
         let inst = lua_code::opcodes::Instruction::abck(

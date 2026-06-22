@@ -2572,13 +2572,18 @@ fn aux_upvalue(state: &LuaState, fi: &LuaValue, n: i32) -> Option<(Vec<u8>, LuaV
             // The proto records the static name of each upvalue (e.g. "_ENV"
             // for the main chunk's environment upvalue). Stripped chunks have
             // no upvalue-name debug info; Lua reports those as "(no name)".
+            let no_name: &[u8] = if state.global().lua_version == lua_types::LuaVersion::V53 {
+                b"(*no name)"
+            } else {
+                b"(no name)"
+            };
             let name: Vec<u8> = lcl
                 .proto
                 .upvalues
                 .get((n - 1) as usize)
                 .and_then(|ud| ud.name.as_ref())
                 .map(|s| s.as_bytes().to_vec())
-                .unwrap_or_else(|| b"(no name)".to_vec());
+                .unwrap_or_else(|| no_name.to_vec());
             Some((name, val))
         }
         _ => None,

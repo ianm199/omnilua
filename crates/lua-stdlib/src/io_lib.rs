@@ -1571,7 +1571,7 @@ pub fn io_lines(state: &mut LuaState) -> Result<usize, LuaError> {
 
     aux_lines(state, toclose)?;
 
-    if toclose {
+    if toclose && state.global().lua_version.lines_returns_to_be_closed() {
         state.push(LuaValue::Nil); // state
         state.push(LuaValue::Nil); // control
         state.push_value_at(1)?; // file as to-be-closed variable (4th result)

@@ -138,7 +138,7 @@ fn load_error(_s: &LoadState<'_>, why: &'static str) -> LuaError {
 /// bytes NOT read (0 = success), matching `ZIO::read`'s contract.
 fn load_block(s: &mut LoadState<'_>, buf: &mut [u8]) -> Result<(), LuaError> {
     // macros.tsv: luaZ_read → z.read(buf)  (returns usize unread)
-    if s.z.read(buf) != 0 {
+    if s.z.read(s.state, buf)? != 0 {
         return Err(load_error(s, "truncated chunk"));
     }
     Ok(())
@@ -159,7 +159,7 @@ fn load_block(s: &mut LoadState<'_>, buf: &mut [u8]) -> Result<(), LuaError> {
 /// PORT NOTE: `cast_byte` → `as u8` per macros.tsv; `zgetc` → `z.getc()`.
 fn load_byte(s: &mut LoadState<'_>) -> Result<u8, LuaError> {
     // macros.tsv: zgetc → z.getc()  returning i32
-    let b = s.z.getc();
+    let b = s.z.getc(s.state)?;
     if b == crate::zio::EOZ {
         return Err(load_error(s, "truncated chunk"));
     }

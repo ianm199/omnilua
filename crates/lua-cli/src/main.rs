@@ -865,14 +865,14 @@ fn list_bytecode(proto: &lua_types::proto::LuaProto, path: &mut Vec<usize>) {
 
 fn parser_hook(
     state: &mut LuaState,
-    source: &[u8],
+    z: &mut lua_vm::zio::ZIO,
     name: &[u8],
     firstchar: i32,
 ) -> Result<GcRef<LuaLClosure>, LuaError> {
     let proto = lua_parse::parse(
         state,
         lua_parse::DynData::default(),
-        source,
+        z,
         name,
         firstchar,
     )?;

@@ -34,6 +34,10 @@ impl DynDataStub {
 /// startup; when present, this stub delegates to it. When absent (e.g. in
 /// internal unit tests that never load text), we surface a syntax error so
 /// the runtime can route it through `pcall` instead of panicking.
+///
+/// The `ZIO` is handed to the hook unread (the first byte `c` was already
+/// pulled by the caller to decide binary-vs-text); the parser drives the
+/// stream lazily so an early syntax error stops the reader, matching C.
 fn parse_stub(
     state: &mut LuaState,
     z: &mut ZIO,
@@ -44,18 +48,7 @@ fn parse_stub(
 ) -> Result<lua_types::GcRef<lua_types::closure::LuaLClosure>, LuaError> {
     let hook = state.global().parser_hook;
     if let Some(parse) = hook {
-        let mut source: Vec<u8> = Vec::new();
-        if c >= 0 {
-            source.push(c as u8);
-        }
-        loop {
-            let b = z.getc();
-            if b < 0 {
-                break;
-            }
-            source.push(b as u8);
-        }
-        return parse(state, &source, name, c);
+        return parse(state, z, name, c);
     }
     Err(LuaError::syntax(format_args!(
         "{}: Lua text parser not yet wired (phase-b: lua-parse::parse)",
@@ -1595,7 +1588,7 @@ fn check_mode(mode: Option<&[u8]>, kind: &[u8]) -> Result<(), LuaError> {
 ///
 fn f_parser(state: &mut LuaState, p: &mut SParser) -> Result<(), LuaError> {
     // zgetc → z.getc()  (macros.tsv)
-    let c = p.z.getc();
+    let c = p.z.getc(state)?;
 
     // LUA_SIGNATURE → const LUA_SIGNATURE: &[u8] = b"\x1bLua"  (macros.tsv)
     let cl = if c == b'\x1b' as i32 {
@@ -1626,6 +1619,15 @@ fn f_parser(state: &mut LuaState, p: &mut SParser) -> Result<(), LuaError> {
 
 /// Loads and parses a chunk in protected mode, returning the status.
 ///
+/// The collector is stopped for the duration of the parse and its prior flags
+/// restored afterwards. The parser builds its proto/closure tree in Rust-owned
+/// `Box<LuaProto>` values that are not yet reachable from any GC root (C
+/// anchors the half-built main closure on the stack instead). A `load` reader
+/// written in Lua can run `collectgarbage()` mid-parse — and now that the
+/// reader is pulled lazily, such a collection would sweep the interned
+/// constants and child protos the parser is still wiring up. Stopping GC over
+/// the parse window keeps the half-built tree alive; the reader's collect
+/// simply defers, matching C's "load completes correctly under GC pressure".
 pub(crate) fn protected_parser(
     state: &mut LuaState,
     z: ZIO,
@@ -1645,9 +1647,18 @@ pub(crate) fn protected_parser(
 
     // (macros.tsv: luaZ_initbuffer → buf.init() / Mbuffer::new())
 
+    let saved_gcstp = {
+        let mut g = state.global_mut();
+        let old = g.gc_stop_flags();
+        let _ = g.stop_gc_internal();
+        old
+    };
+
     let top_idx = state.top_idx();
     let errfunc = state.errfunc;
     let status = pcall(state, |s| f_parser(s, &mut p), top_idx, errfunc);
+
+    state.global_mut().set_gc_stop_flags(saved_gcstp);
 
     // (p and all its sub-fields drop here automatically)
 

@@ -6250,15 +6250,14 @@ fn mainfunc(
 pub fn parse(
     state: &mut LuaState,
     dyd: DynData,
-    source: &[u8],
+    z: &mut lua_vm::zio::ZIO,
     name: &[u8],
     firstchar: i32,
 ) -> Result<Box<LuaProto>, LuaError> {
     let source_str = state.intern_str(name)?;
     let envn_str = state.intern_str(lua_lex::LUA_ENV)?;
 
-    let rest_bytes: Vec<u8> = source.iter().skip(1).copied().collect();
-    let z = lua_lex::ZIO::from_bytes(rest_bytes);
+    let z = z.take();
 
     let lex_ls = lua_lex::LexState {
         current: firstchar,

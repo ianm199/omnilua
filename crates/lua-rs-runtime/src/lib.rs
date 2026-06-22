@@ -3497,7 +3497,7 @@ pub fn install_parser_hook(state: &mut LuaState) {
 
 fn parser_hook(
     state: &mut LuaState,
-    source: &[u8],
+    z: &mut lua_vm::zio::ZIO,
     name: &[u8],
     firstchar: i32,
 ) -> std::result::Result<GcRef<LuaLClosure>, LuaError> {
@@ -3505,7 +3505,7 @@ fn parser_hook(
     let proto = lua_parse::parse(
         state,
         lua_parse::DynData::default(),
-        source,
+        z,
         name,
         firstchar,
     )?;

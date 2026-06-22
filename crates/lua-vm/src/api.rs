@@ -2098,7 +2098,7 @@ pub fn pcall_k(
 // is &[u8].
 pub fn load(
     state: &mut LuaState,
-    reader: Box<dyn FnMut() -> Option<Vec<u8>>>,
+    reader: crate::zio::ChunkReader,
     chunkname: Option<&[u8]>,
     mode: Option<&[u8]>,
 ) -> Result<LuaStatus, LuaError> {

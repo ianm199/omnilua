@@ -21,6 +21,7 @@ pub use lua_types::LuaError;
 pub use lua_types::LuaString;
 pub use lua_vm::state::LuaState;
 pub use lua_vm::table::LuaTable;
+pub use lua_vm::zio::ZIO;
 
 /// Growable token-text buffer for the lexer.
 ///
@@ -120,67 +121,6 @@ impl LexBuffer {
 impl Default for LexBuffer {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Chunked byte source for the lexer.
-///
-/// Pulls successive byte chunks from a reader callback and hands them out one
-/// byte at a time as `i32`, with [`EOZ`] (`-1`) signalling end of stream. A
-/// reader is permitted to be re-polled after yielding an empty chunk: an empty
-/// chunk reports `EOZ` without committing it, so a later [`getc`](ZIO::getc)
-/// asks the reader again — that is how an interactive source distinguishes a
-/// momentary stall from a true end.
-///
-/// The byte position is a single cursor into the current chunk; "remaining" is
-/// derived as `chunk.len() - cursor`, not tracked as a separate counter.
-///
-/// TODO: ZIO/LexBuffer will move to lua_vm::zio (separate refactor).
-pub struct ZIO {
-    reader: Box<dyn FnMut() -> Option<Vec<u8>>>,
-    chunk: Vec<u8>,
-    cursor: usize,
-}
-
-impl ZIO {
-    /// Construct a ZIO from a reader callback that yields successive chunks.
-    pub fn new(reader: Box<dyn FnMut() -> Option<Vec<u8>>>) -> Self {
-        ZIO {
-            reader,
-            chunk: Vec::new(),
-            cursor: 0,
-        }
-    }
-
-    /// Construct a ZIO that yields the supplied bytes once and then EOZ.
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        let mut once = Some(bytes);
-        ZIO::new(Box::new(move || once.take()))
-    }
-
-    /// Return the next byte as `i32`, or [`EOZ`] at end of stream.
-    pub fn getc(&mut self) -> i32 {
-        match self.chunk.get(self.cursor) {
-            Some(&b) => {
-                self.cursor += 1;
-                b as i32
-            }
-            None => self.fill(),
-        }
-    }
-
-    /// Pull the next non-exhausted chunk and yield its first byte. An exhausted
-    /// reader (`None`) or an empty chunk both report `EOZ` without advancing the
-    /// cursor, so the reader may be asked again on the next [`getc`](ZIO::getc).
-    fn fill(&mut self) -> i32 {
-        match (self.reader)() {
-            Some(chunk) if !chunk.is_empty() => {
-                self.chunk = chunk;
-                self.cursor = 1;
-                self.chunk[0] as i32
-            }
-            _ => EOZ,
-        }
     }
 }
 
@@ -469,10 +409,14 @@ fn curr_is_newline(ls: &LexState) -> bool {
 
 /// Advance the lexer by one character.
 ///
-/// Named `advance` to avoid collision with Rust's iterator method.
+/// Named `advance` to avoid collision with Rust's iterator method. Fallible:
+/// the underlying `ZIO` may invoke a Lua `load` reader, which can error
+/// mid-stream. When the reader returns no more bytes, `ls.current` becomes
+/// [`EOZ`] and parsing ends normally.
 #[inline]
-fn advance(ls: &mut LexState) {
-    ls.current = ls.z.getc();
+fn advance(state: &mut LuaState, ls: &mut LexState) -> Result<(), LuaError> {
+    ls.current = ls.z.getc(state)?;
+    Ok(())
 }
 
 /// Append character `c` to the token buffer, growing it if necessary.
@@ -497,7 +441,7 @@ fn save(ls: &mut LexState, state: &mut LuaState, c: i32) -> Result<(), LuaError>
 fn save_and_next(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     let c = ls.current;
     save(ls, state, c)?;
-    advance(ls);
+    advance(state, ls)?;
     Ok(())
 }
 
@@ -724,12 +668,12 @@ pub fn lookahead(state: &mut LuaState, ls: &mut LexState) -> Result<i32, LuaErro
 // ── Private lexer helpers ──────────────────────────────────────────────────────
 
 /// If the current character equals `c`, advance and return `true`.
-fn check_next1(ls: &mut LexState, c: i32) -> bool {
+fn check_next1(state: &mut LuaState, ls: &mut LexState, c: i32) -> Result<bool, LuaError> {
     if ls.current == c {
-        advance(ls);
-        true
+        advance(state, ls)?;
+        Ok(true)
     } else {
-        false
+        Ok(false)
     }
 }
 
@@ -749,14 +693,14 @@ fn check_next2(ls: &mut LexState, state: &mut LuaState, set: &[u8; 2]) -> Result
 /// Handles `\n`, `\r`, `\n\r`, and `\r\n`: a second newline byte is only
 /// consumed when it differs from the first, so a `\n\n` (two blank lines)
 /// is not collapsed into one.
-fn inc_line_number(ls: &mut LexState, _state: &mut LuaState) -> Result<(), LuaError> {
+fn inc_line_number(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     debug_assert!(curr_is_newline(ls), "inc_line_number: not at a newline");
 
     let old = ls.current;
-    advance(ls);
+    advance(state, ls)?;
 
     if curr_is_newline(ls) && ls.current != old {
-        advance(ls);
+        advance(state, ls)?;
     }
 
     ls.linenumber += 1;
@@ -950,7 +894,7 @@ fn read_long_string(
                 if is_string {
                     save_and_next(ls, state)?;
                 } else {
-                    advance(ls);
+                    advance(state, ls)?;
                 }
             }
         }
@@ -1085,7 +1029,7 @@ fn read_utf8_esc(state: &mut LuaState, ls: &mut LexState) -> Result<u32, LuaErro
 
     esc_check(state, ls, ls.current == b'}' as i32, b"missing '}'")?;
 
-    advance(ls);
+    advance(state, ls)?;
 
     ls.buff.truncate_by(i);
 
@@ -1221,12 +1165,12 @@ fn read_string(
                     c if c == EOZ => EscapeResult::NoSave,
                     c if c == b'z' as i32 && !is_v51 => {
                         ls.buff.truncate_by(1);
-                        advance(ls);
+                        advance(state, ls)?;
                         while is_space(ls.current) {
                             if curr_is_newline(ls) {
                                 inc_line_number(ls, state)?;
                             } else {
-                                advance(ls);
+                                advance(state, ls)?;
                             }
                         }
                         EscapeResult::NoSave
@@ -1257,7 +1201,7 @@ fn read_string(
 
                 match esc {
                     EscapeResult::ReadSave(c) => {
-                        advance(ls);
+                        advance(state, ls)?;
                         ls.buff.truncate_by(1);
                         save(ls, state, c)?;
                     }
@@ -1340,21 +1284,21 @@ fn llex(
                 // long-bracket strings.
                 if ls.current == b'#' as i32 {
                     while !curr_is_newline(ls) && ls.current != EOZ {
-                        advance(ls);
+                        advance(state, ls)?;
                     }
                 }
             }
 
             Peek::Byte(b' ' | b'\x0C' | b'\t' | b'\x0B') => {
-                advance(ls);
+                advance(state, ls)?;
             }
 
             Peek::Byte(b'-') => {
-                advance(ls);
+                advance(state, ls)?;
                 if ls.current != b'-' as i32 {
                     return Ok(b'-' as i32);
                 }
-                advance(ls);
+                advance(state, ls)?;
 
                 if ls.current == b'[' as i32 {
                     let sep = skip_sep(state, ls)?;
@@ -1366,7 +1310,7 @@ fn llex(
                     }
                 }
                 while !curr_is_newline(ls) && ls.current != EOZ {
-                    advance(ls);
+                    advance(state, ls)?;
                 }
                 // loop continues (no token emitted for comments)
             }
@@ -1383,18 +1327,18 @@ fn llex(
             }
 
             Peek::Byte(b'=') => {
-                advance(ls);
-                if check_next1(ls, b'=' as i32) {
+                advance(state, ls)?;
+                if check_next1(state, ls, b'=' as i32)? {
                     return Ok(TK_EQ);
                 }
                 return Ok(b'=' as i32);
             }
 
             Peek::Byte(b'<') => {
-                advance(ls);
-                if check_next1(ls, b'=' as i32) {
+                advance(state, ls)?;
+                if check_next1(state, ls, b'=' as i32)? {
                     return Ok(TK_LE);
-                } else if !is_float_only(state) && check_next1(ls, b'<' as i32) {
+                } else if !is_float_only(state) && check_next1(state, ls, b'<' as i32)? {
                     // The `<<` shift operator is a Lua 5.3 addition. Under the
                     // float-only legacy family (5.1/5.2) it does not exist: a
                     // bare `<` is returned, so a second `<` then surfaces
@@ -1405,10 +1349,10 @@ fn llex(
             }
 
             Peek::Byte(b'>') => {
-                advance(ls);
-                if check_next1(ls, b'=' as i32) {
+                advance(state, ls)?;
+                if check_next1(state, ls, b'=' as i32)? {
                     return Ok(TK_GE);
-                } else if !is_float_only(state) && check_next1(ls, b'>' as i32) {
+                } else if !is_float_only(state) && check_next1(state, ls, b'>' as i32)? {
                     // `>>` is a 5.3 addition; absent in 5.1/5.2.
                     return Ok(TK_SHR);
                 }
@@ -1416,8 +1360,8 @@ fn llex(
             }
 
             Peek::Byte(b'/') => {
-                advance(ls);
-                if !is_float_only(state) && check_next1(ls, b'/' as i32) {
+                advance(state, ls)?;
+                if !is_float_only(state) && check_next1(state, ls, b'/' as i32)? {
                     // Floor division `//` is a 5.3 addition; absent in 5.1/5.2,
                     // where the second `/` becomes "unexpected symbol near '/'".
                     return Ok(TK_IDIV);
@@ -1426,21 +1370,21 @@ fn llex(
             }
 
             Peek::Byte(b'~') => {
-                advance(ls);
-                if check_next1(ls, b'=' as i32) {
+                advance(state, ls)?;
+                if check_next1(state, ls, b'=' as i32)? {
                     return Ok(TK_NE);
                 }
                 return Ok(b'~' as i32);
             }
 
             Peek::Byte(b':') => {
-                advance(ls);
+                advance(state, ls)?;
                 // Lua 5.1 has no `::label::` token; `::` was added with `goto` in
                 // 5.2. Under V51 the second `:` is left for the parser, which
                 // reports `unexpected symbol near ':'`. See
                 // specs/followup/5.1-roster-syntax.md §2.
                 let is_v51 = matches!(state.global().lua_version, lua_types::LuaVersion::V51);
-                if !is_v51 && check_next1(ls, b':' as i32) {
+                if !is_v51 && check_next1(state, ls, b':' as i32)? {
                     return Ok(TK_DBCOLON);
                 }
                 return Ok(b':' as i32);
@@ -1454,8 +1398,8 @@ fn llex(
 
             Peek::Byte(b'.') => {
                 save_and_next(ls, state)?;
-                if check_next1(ls, b'.' as i32) {
-                    if check_next1(ls, b'.' as i32) {
+                if check_next1(state, ls, b'.' as i32)? {
+                    if check_next1(state, ls, b'.' as i32)? {
                         return Ok(TK_DOTS);
                     }
                     return Ok(TK_CONCAT);
@@ -1520,7 +1464,7 @@ fn llex(
                     return Ok(TK_NAME);
                 } else {
                     let tok = ls.current;
-                    advance(ls);
+                    advance(state, ls)?;
                     return Ok(tok);
                 }
             }
@@ -1853,14 +1797,15 @@ mod tests {
 
     #[test]
     fn zio_yields_bytes_then_eoz() {
+        let mut state = new_state().expect("state init");
         let mut z = ZIO::from_bytes(b"ab".to_vec());
-        assert_eq!(z.getc(), b'a' as i32);
-        assert_eq!(z.getc(), b'b' as i32);
-        assert_eq!(z.getc(), EOZ);
-        assert_eq!(z.getc(), EOZ);
+        assert_eq!(z.getc(&mut state).unwrap(), b'a' as i32);
+        assert_eq!(z.getc(&mut state).unwrap(), b'b' as i32);
+        assert_eq!(z.getc(&mut state).unwrap(), EOZ);
+        assert_eq!(z.getc(&mut state).unwrap(), EOZ);
         // An empty source is immediately EOZ.
         let mut empty = ZIO::from_bytes(Vec::new());
-        assert_eq!(empty.getc(), EOZ);
+        assert_eq!(empty.getc(&mut state).unwrap(), EOZ);
     }
 
     #[test]

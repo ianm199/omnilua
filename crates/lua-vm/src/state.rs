@@ -1235,9 +1235,14 @@ impl Collectable for LuaState {}
 /// The implementation lives in `lua-parse`; `lua-vm` cannot depend on it
 /// directly (that would form a cycle), so the parser is reached via this
 /// function pointer registered at startup.
+///
+/// The parser receives the live [`ZIO`](crate::zio::ZIO) (already positioned
+/// past `firstchar`) rather than a fully-materialised buffer, so it can pull
+/// reader chunks on demand and stop at the first syntax error — matching C's
+/// `lua_load`, where the lexer drives the `lua_Reader` byte by byte.
 pub type ParserHook = fn(
     state: &mut LuaState,
-    source: &[u8],
+    z: &mut crate::zio::ZIO,
     name: &[u8],
     firstchar: i32,
 ) -> Result<GcRef<lua_types::closure::LuaLClosure>, LuaError>;

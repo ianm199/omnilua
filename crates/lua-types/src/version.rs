@@ -63,6 +63,15 @@ impl LuaVersion {
         !matches!(self, LuaVersion::V51 | LuaVersion::V52)
     }
 
+    /// Whether `io.lines(filename, ...)` returns the file as a fourth
+    /// to-be-closed result. The to-be-closed value (`<close>`) mechanism is a
+    /// 5.4 addition: 5.4/5.5 return four values (iterator, nil, nil, file) so a
+    /// generic `for` can close the file on loop exit; 5.1–5.3 return only the
+    /// iterator (one value).
+    pub fn lines_returns_to_be_closed(self) -> bool {
+        matches!(self, LuaVersion::V54 | LuaVersion::V55)
+    }
+
     /// Whether this version has a real backend. The modern family (5.3/5.4/5.5)
     /// and 5.2 (float-only + `_ENV`) are complete. 5.1 reuses the 5.2 float-only
     /// core plus three faithful 5.1-specific axes:

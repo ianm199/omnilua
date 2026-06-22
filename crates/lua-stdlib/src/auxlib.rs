@@ -1112,7 +1112,7 @@ pub fn load_filex(
     };
     let payload = skip_bom_and_shebang(&raw);
     let mut once = Some(payload);
-    let boxed: Box<dyn FnMut() -> Option<Vec<u8>>> = Box::new(move || once.take());
+    let boxed: lua_vm::zio::ChunkReader = Box::new(move |_state| Ok(once.take()));
     let mut chunkname = b"@".to_vec();
     chunkname.extend_from_slice(fname);
     let status = lua_vm::api::load(state, boxed, Some(&chunkname), mode)?;

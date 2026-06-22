@@ -418,3 +418,10 @@ Tally: 5.1 **62%** (13/21), 5.2 100%, 5.3 **93%** (25/27), 5.4 100%, 5.5 100%.
 - **db.lua@5.1** advanced 279→336: 5.1 implicit `arg` table now built in `adjust_varargs` at call entry (before hooks), V51+K-bit gated. Next link = tail-call frame synthesis (vm.rs/state.rs/lua-stdlib).
 - **reader streaming**: documented-no-edit (finding **F6** in docs/IDIOMATIZATION_VM_FINDINGS.md). Confirmed it needs a 10-file coordinated change (api::load signature → reentrant `FnMut(&mut LuaState)`, zio getc/fill take `&mut LuaState`, ParserHook signature + 3 installers). Blocks calls@5.1, files-later@5.1, files@415@5.3. SUPERVISED.
 0 file flips. 5.1's remaining tail is cross-crate architectural: reader streaming (F6), fenv env-storage for closures w/o free globals, tail-call frame synthesis, collect-time userdata finalizability.
+
+### Loop wave 8 (2026-06-22) — 5.1 to 71%
+- **vararg.lua@5.1** flipped: `clear_arg_table_needed` rewrites the entry VARARGPACK to LOADNIL so a direct-`...` body leaves implicit `arg` nil (C `VARARG_NEEDSARG` cleared). lua-parse.
+- **files.lua@5.1** flipped: `file_result` pushes `nil` not `Bool(false)` on failure (luaL_pushfail). io_lib. Also advanced files@5.2/5.3 past line 28.
+- **closure.lua@5.1** documented-no-edit: true first divergence is `setfenv(0,a)` in a coroutine clobbering shared `GlobalState.globals`; needs per-thread `l_gt` (state.rs + base.rs + api.rs + load path).
+Tally: 5.1 **71%** (15/21), 5.2 100%, 5.3 93%, 5.4 100%, 5.5 100%.
+Remaining 5.1 (6, all cross-crate, all V51-gated-safe): calls (reader F6), closure + locals (5.1 fenv/per-thread-env model), db@336 (tail-call frame synthesis), errors (xpcall+stackoverflow hang), gc@228 (collect-time userdata finalizability).

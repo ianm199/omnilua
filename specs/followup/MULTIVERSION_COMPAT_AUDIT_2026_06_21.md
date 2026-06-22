@@ -457,3 +457,10 @@ Branch `fix/multiversion-compat`, 76 commits, every wave oracle-gated, zero 5.4/
 - `crates/lua-rs-runtime/tests/dump_kit.rs`, `error_wording_kit.rs` — in-process golden kits (0.00s).
 - `harness/multiversion_diff_suite.sh` — per-version differential gate; `run_official_all.sh` wired for 5.1/5.2.
 - Official **5.1** + **5.2.2** test suites vendored (`reference/extra-tests/`); all five reference binaries in `/tmp/lua-refs/bin`.
+
+### Correction (2026-06-22, post-release) — NOT a "floor"; both 5.1 and 5.3 are reachable to 100%
+"Real-bug floor" was wrong framing. None of the remaining items are a hard limit — they are larger coordinated changes, all fixable:
+- **`all.lua@5.3` is NOT a bug** — it passes (`final OK !!!`, zero error markers) when run from the testdir with adequate time. It was a gate false-negative: `all.lua` runs the WHOLE suite, and the gate's 12s cap killed it mid-run. Fixed: `multiversion_diff_suite.sh` now gives `all`/`heavy`/`big`/`verybig` a 120s timeout.
+- **5.3 is effectively 26/27** — the ONLY real remaining item is `files.lua@415` (lazy-reader F6).
+- **5.1 is 18/21** — remaining: `calls.lua@250` (F6), `errors.lua` (xpcall+C-stack-overflow hang), `db.lua@366` ("tail return" hook events).
+Path to 100%: F6 (shared) → 5.3 = 100%, 5.1 = 19/21; + errors-hang → 20/21; + db-tail-return → 5.1 = 100%.

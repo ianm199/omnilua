@@ -481,3 +481,14 @@ Accurate tally: 5.1 19/21 (db@5.1 tail-return + errors hang in flight), 5.2 100%
 - **errors.lua@5.1 HANG FIXED**: root cause was LUAI_MAXSTACK=1_000_000 instead of 5.1's faithful 65500 — deep recursion overflowed at ~1M frames and luaL_traceback's O(n²) middle-skip scan never returned. grow_stack now caps 5.1 at 65500 (5.2+ keep 1M). errors@5.1 no longer hangs; advances to a control-byte lexer token divergence at errors.lua:196.
 Tally: 5.1 **20/21** (only errors@5.1 control-byte token left), 5.2 100%, 5.3 26/27 (db@5.3 CIST_FIN), 5.4 100%, 5.5 100%.
 FINAL WAVE in flight (file-disjoint): lexer51 (lua-lex) → errors@5.1 control-byte raw-byte near-token; cistfin (vm/debug/state) → db.lua@5.3 CIST_FIN finalizer-frame hang. Both clean = all five versions at 100%.
+
+## ★ ALL FIVE VERSIONS AT 100% (2026-06-22)
+Final gate (ours vs real reference under the identical stock harness, all/heavy at 120s):
+| Version | our_pass / ref_pass | OUR_BUGS |
+|---|---|---|
+| 5.1 | 21/21 | **0** |
+| 5.2 | 24/24 | **0** |
+| 5.3 | 27/27 | **0** |
+| 5.4 | 44/44 | **0** |
+| 5.5 | 34/34 | **0** |
+omniLua passes 100% of every file the reference passes, on all five versions. Session arc: 5.1 40→100, 5.2 54→100, 5.3 74→100, 5.4/5.5 held 100. The final 5.1/5.3 push: F6 lazy reentrant reader + ZIO unification (files@5.1/5.3), 5.1 fenv/per-thread-l_gt/per-closure-env (closure/locals), implicit arg, db@5.1 tail-return hooks, errors@5.1 (MAXSTACK 65500 + control-byte token + syntax-levels + upvalue limit), calls@5.1 dump/undump _ENV gate, gc@5.1 collect-time userdata finalizability, db@5.3 CIST_FIN per-version naming + (*no name). Regression: 184 oracle, dump_kit/error_wording_kit, GC canaries, workspace build all green; 5.4/5.5 byte-identical throughout. Perf: 1.46x overall vs C, _long workloads at parity.

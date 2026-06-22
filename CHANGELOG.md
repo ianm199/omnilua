@@ -4,6 +4,46 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-06-22
+
+### Multi-version: all five versions now pass their full official suites
+
+**omniLua now passes 100% of the official PUC-Rio Lua test suite for every
+version it speaks — 5.1, 5.2, 5.3, 5.4, and 5.5** — measured against the
+unmodified reference binaries under the identical stock harness (`ltests`-only
+files, which the reference itself can't run standalone, excluded). This release
+closes the remaining 5.1 and 5.3 gaps (5.1 rose from ~40% to 100%, 5.3 from
+~74% to 100%) with zero change to the 5.4/5.5 baseline.
+
+- **Lazy `load()` reader streaming** — a reentrant reader now feeds the lexer on
+  demand (stopping at the first syntax error instead of draining the whole
+  reader), and the duplicate `ZIO` types are unified. Fixes `load()` with a
+  function reader and `load(io.lines(...))`. Also fixes a GC use-after-sweep when
+  a reader runs `collectgarbage()` mid-parse, and `io.lines` arity per version.
+  The public `omnilua::load()` signature is unchanged.
+- **Lua 5.1 environment model** completed — per-thread global table (`l_gt`) for
+  `setfenv(0)` inside coroutines, per-closure environments for closures with no
+  `_ENV` upvalue, the implicit `arg` vararg table, the same-reference metamethod
+  rule, and `getfenv` level/tail-call handling.
+- **Debug/GC fidelity** — 5.1 "tail return" hook events and synthetic tail-call
+  frames; 5.3 finalizer-frame (`CIST_FIN`) naming so `debug.getinfo` inside a
+  `__gc` reports the metamethod (eliminating a `db.lua` hang); weak-value
+  clearing ordered before finalizer resurrection; white proto-cache drop;
+  suspended-coroutine cycle finalization; collect-time userdata finalizability
+  on 5.1.
+- **Parser/lexer/number-model gates** — 5.1 stack ceiling corrected to 65500
+  (fixing an `xpcall`-over-stack-overflow hang), `"too many syntax levels"` /
+  `LUAI_MAXUPVALUES=60` limits, control-byte token rendering, oversized-hex
+  `tonumber`, float-only `next` key normalization, and the
+  `%x`/`%u`/`%o`/`%q`/`%g`/`%s` conversions, each version-gated.
+
+### Harness
+
+- `harness/quick_file.sh` (8s-capped whole-file oracle check), `harness/gen_golden.sh`
+  + committed golden vectors, the `dump_kit` / `error_wording_kit` in-process kits,
+  and `harness/multiversion_diff_suite.sh` (per-version differential gate). The
+  official **5.1** and **5.2.2** test suites are vendored under `reference/extra-tests/`.
+
 ## [0.3.0] - 2026-06-22
 
 ### Added — multi-version compatibility (5.1–5.5)

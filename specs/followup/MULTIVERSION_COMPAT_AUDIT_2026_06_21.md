@@ -391,3 +391,9 @@ Measured the agent inner loop to kill slow loops:
 - **The killer was the 60s hang timeout.** Exactly one file hangs: **db.lua@5.3** (infinite loop — the `repeat until name` / CIST_FIN finalizer-frame-level bug). Every progress re-run ate the full 60–65s; everything else fails fast (0.0s). 10 reruns = 10+ wasted minutes on one file.
 - **Fix:** `harness/quick_file.sh <ver> <base>` — whole-file check with an 8s cap, classifying PASS / FAIL\<msg\> / HANG. A HANG is a "still failing" signal; never wait 60s for it. Develop on `diff_one` snippets (0.2s); use quick_file for occasional advance checks; only the final gate uses the long timeout. Each worktree has its own `target/` (cold build once per agent) and `[profile.dev] opt-level=1` is deliberate (keeps the debug binary fast enough to run the oracle) — left as-is.
 - **Known inner-loop quarantine:** db.lua@5.3 hangs until the CIST_FIN finalizer-frame fix lands; treat its timeout as FAIL, don't grind against it.
+
+### Loop wave 4 (2026-06-22)
+- **lua-parse errors chain**: flipped **errors.lua@5.3**; advanced 5.1 (39→181) & 5.2 (211→352). 5 version-gated fixes (5.1 empty-stmt reject, 5.1 ambiguous-syntax, 5.2/5.3 CALL-line attribution, 5.2/5.3 'too many C levels', 5.1 implicit-arg startpc=0).
+- **proto-cache trace**: flipped **gc.lua@5.2** (drop white proto.cache, C traverseproto fidelity); gc.lua@5.3 advanced 428→502.
+Tally: 5.1 52%, 5.2 **88%**, 5.3 **89%**, 5.4/5.5 100%.
+New known hang: errors.lua@5.1 (xpcall+C-stack-overflow+traceback loop on legacy path). Remaining VM-side links: db.lua@5.1 getlocal base-shift (debug.rs/tagmethods adjust_varargs), gc.lua@5.1:228 collect-time userdata finalizability + gc.lua@5.3:502 coroutine-cycle finalization (state.rs), errors.lua@5.2:352 lexer invalid-byte token name (lua-lex).

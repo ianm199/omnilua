@@ -62,6 +62,28 @@ fn parse_stub(
 const LUAI_MAXSTACK: usize = 1_000_000;
 const ERRORSTACKSIZE: usize = LUAI_MAXSTACK + 200;
 
+/// Lua 5.1's `LUAI_MAXSTACK` (`luaconf.h`): the default 5.1 build caps the
+/// thread stack at 65500 slots, so deep recursion overflows after ~16k frames
+/// rather than the ~1M frames 5.2+ allow. The smaller cap is load-bearing for
+/// 5.1's `luaL_traceback`, whose `O(n^2)` middle-skip scan is only tractable
+/// over a bounded stack — at 1M frames it never returns (errors.lua@5.1's
+/// `xpcall(g, debug.traceback)` over a stack-overflow). The error-stack
+/// extension stays `ERRORSTACKSIZE` for every version so the message handler
+/// always has headroom above the cap.
+const LUAI_MAXSTACK_51: usize = 65500;
+
+/// Version-selected stack-growth ceiling (the threshold at which growing the
+/// stack raises `"stack overflow"`). 5.2+ keep the 1M cap; 5.1 uses its smaller
+/// faithful cap. The error-stack extension (`ERRORSTACKSIZE`) is unaffected.
+#[inline]
+fn max_stack(state: &LuaState) -> usize {
+    if state.global().lua_version == lua_types::LuaVersion::V51 {
+        LUAI_MAXSTACK_51
+    } else {
+        LUAI_MAXSTACK
+    }
+}
+
 const EXTRA_STACK: i32 = 5;
 
 const LUA_MINSTACK: i32 = 20;
@@ -271,24 +293,25 @@ pub(crate) fn grow_stack(
     raise_error: bool,
 ) -> Result<bool, LuaError> {
     let size = state.stack_size();
+    let cap = max_stack(state);
 
-    if size > LUAI_MAXSTACK {
+    if size > cap {
         // Thread already using the error-overflow extension; cannot grow further.
         debug_assert!(state.stack_size() == ERRORSTACKSIZE);
         if raise_error {
             return Err(LuaError::with_status(LuaStatus::ErrErr));
         }
         return Ok(false);
-    } else if (n as usize) < LUAI_MAXSTACK {
+    } else if (n as usize) < cap {
         let mut new_size = 2 * size;
         let needed = (state.top_idx().0 as i32 + n) as usize;
-        if new_size > LUAI_MAXSTACK {
-            new_size = LUAI_MAXSTACK;
+        if new_size > cap {
+            new_size = cap;
         }
         if new_size < needed {
             new_size = needed;
         }
-        if new_size <= LUAI_MAXSTACK {
+        if new_size <= cap {
             return realloc_stack(state, new_size, raise_error);
         }
     }

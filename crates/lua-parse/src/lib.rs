@@ -533,12 +533,38 @@ pub struct LexState {
 
 const PARSER_MAX_C_CALLS: u32 = 200;
 
-fn enter_level(ls: &mut LexState) -> Result<(), LuaError> {
+/// Guards parser recursion depth, mirroring C's `enterlevel` / `nCcalls`.
+///
+/// Lua 5.2 and 5.3 reported overrunning the limit as the syntax error
+/// `too many C levels (limit is 200) in <where>` (with a source location and
+/// `near '<token>'` suffix, the `checklimit`/`errorlimit` path of those
+/// versions' `lparser.c`). Lua 5.4 replaced that with a bare runtime
+/// `C stack overflow` with no location, which is what 5.4/5.5 keep. 5.1 has its
+/// own per-construct limits and never used this collective "C levels" message,
+/// so it also stays on the bare form here.
+fn enter_level(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     ls.recursion_depth += 1;
-    if ls.recursion_depth >= PARSER_MAX_C_CALLS {
-        Err(LuaError::syntax(format_args!("C stack overflow")))
+    if ls.recursion_depth < PARSER_MAX_C_CALLS {
+        return Ok(());
+    }
+    if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    ) {
+        let fs = ls.fs.as_ref().unwrap();
+        let where_clause: Vec<u8> = if fs.f.linedefined == 0 {
+            b"main function".to_vec()
+        } else {
+            format!("function at line {}", fs.f.linedefined).into_bytes()
+        };
+        let mut msg: Vec<u8> = Vec::new();
+        msg.extend_from_slice(b"too many C levels (limit is ");
+        msg.extend_from_slice(PARSER_MAX_C_CALLS.to_string().as_bytes());
+        msg.extend_from_slice(b") in ");
+        msg.extend_from_slice(&where_clause);
+        Err(lua_lex::syntax_error(&mut ls.lex, &msg))
     } else {
-        Ok(())
+        Err(LuaError::syntax(format_args!("C stack overflow")))
     }
 }
 
@@ -4271,12 +4297,16 @@ fn block_follow(ls: &LexState, withuntil: bool) -> bool {
 }
 
 fn statlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
+    let v51 = state.global().lua_version == lua_types::LuaVersion::V51;
     while !block_follow(ls, true) {
         if ls.t.token == TK_RETURN {
             statement(ls, state)?;
             return Ok(());
         }
         statement(ls, state)?;
+        if v51 {
+            test_next(ls, state, b';' as TokenKind)?;
+        }
     }
     Ok(())
 }
@@ -4555,6 +4585,11 @@ fn parlist(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
             let firstlocal = ls.fs.as_ref().unwrap().firstlocal;
             get_local_var_desc_mut(ls, firstlocal, vidx).kind = VarKind::VarArg;
         }
+        if has_arg_local {
+            let fs = ls.fs.as_mut().unwrap();
+            let arg_locvar = (fs.ndebugvars - 1) as usize;
+            fs.f.locvars[arg_locvar].startpc = 0;
+        }
     }
     // Reserve registers for parameters (plus the vararg-table parameter, if
     // present), in one call as upstream does (`luaK_reserveregs(fs, nactvar)`).
@@ -4700,13 +4735,35 @@ fn explist(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Result<
     Ok(n)
 }
 
-fn funcargs(ls: &mut LexState, state: &mut LuaState, f: &mut ExprDesc) -> Result<(), LuaError> {
+/// Parses a function call's argument list and emits the CALL.
+///
+/// `suffixed_line` is the line captured at the start of the enclosing
+/// [`suffixedexp`] (the callee's first line). Lua 5.2 and 5.3 attribute the
+/// CALL instruction to that line via `luaK_fixline`, so a runtime call-error on
+/// `a\n(\n23)` reports the callee's line (1), not the open-paren line (2). Lua
+/// 5.4/5.5 dropped that fixup and attribute the CALL to the open-paren line, so
+/// those versions keep using `ls.linenumber` at funcargs entry and their
+/// bytecode line info is unchanged.
+fn funcargs(
+    ls: &mut LexState,
+    state: &mut LuaState,
+    f: &mut ExprDesc,
+    suffixed_line: i32,
+) -> Result<(), LuaError> {
     let mut args = ExprDesc::default();
     // BEFORE consuming, so the OP_CALL/etc emissions attribute to the call site.
     // errors.lua tests `a\n(\n23)` expects error at line of `(`, not line of `a`.
     let line = ls.linenumber;
     match ls.t.token {
         c if c == b'(' as TokenKind => {
+            if state.global().lua_version == lua_types::LuaVersion::V51
+                && ls.linenumber != ls.lastline
+            {
+                return Err(lua_lex::syntax_error(
+                    &mut ls.lex,
+                    b"ambiguous syntax (function call x new statement)",
+                ));
+            }
             lex_next(ls, state)?; // skip '('
             if ls.t.token == b')' as TokenKind {
                 args.k = ExprKind::Void;
@@ -4757,7 +4814,15 @@ fn funcargs(ls: &mut LexState, state: &mut LuaState, f: &mut ExprDesc) -> Result
         2,
         0,
     );
-    let call_pc = emit_inst(ls.fs.as_mut().unwrap(), line, call_inst);
+    let call_line = if matches!(
+        state.global().lua_version,
+        lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53
+    ) {
+        suffixed_line
+    } else {
+        line
+    };
+    let call_pc = emit_inst(ls.fs.as_mut().unwrap(), call_line, call_inst);
     init_exp(f, ExprKind::Call, call_pc);
     ls.fs.as_mut().unwrap().freereg = base as u8 + 1;
     Ok(())
@@ -4785,6 +4850,7 @@ fn primaryexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Resu
 }
 
 fn suffixedexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Result<(), LuaError> {
+    let start_line = ls.linenumber;
     primaryexp(ls, state, v)?;
     loop {
         match ls.t.token {
@@ -4812,12 +4878,12 @@ fn suffixedexp(ls: &mut LexState, state: &mut LuaState, v: &mut ExprDesc) -> Res
                     &mut key,
                     keep_self_opcode_for_register_key,
                 )?;
-                funcargs(ls, state, v)?;
+                funcargs(ls, state, v, start_line)?;
             }
             c if c == b'(' as TokenKind || c == TK_STRING || c == b'{' as TokenKind => {
                 let line = ls.lastline;
                 cg_exp_to_next_reg(ls.fs.as_mut().unwrap(), line, v)?;
-                funcargs(ls, state, v)?;
+                funcargs(ls, state, v, start_line)?;
             }
             _ => return Ok(()),
         }
@@ -4965,7 +5031,7 @@ fn subexpr(
     v: &mut ExprDesc,
     limit: i32,
 ) -> Result<BinOpr, LuaError> {
-    enter_level(ls)?;
+    enter_level(ls, state)?;
 
     let uop = getunopr_versioned(ls.t.token, state);
     if uop != UnOpr::NoUnOpr {
@@ -5110,7 +5176,7 @@ fn restassign(
         if !nv_assign.v.k.is_indexed() {
             check_conflict(ls, state, lh, &nv_assign.v.clone())?;
         }
-        enter_level(ls)?;
+        enter_level(ls, state)?;
         restassign(ls, state, &mut nv_assign, nvars + 1)?;
         leave_level(ls);
     } else {
@@ -6046,9 +6112,11 @@ fn statement(ls: &mut LexState, state: &mut LuaState) -> Result<(), LuaError> {
     // AND for runtime-error line attribution on control-flow instructions
     // (FORPREP, etc). errors.lua's lineerror tests depend on this.
     let line = ls.linenumber;
-    enter_level(ls)?;
+    enter_level(ls, state)?;
     match ls.t.token {
-        c if c == b';' as TokenKind => {
+        c if c == b';' as TokenKind
+            && state.global().lua_version != lua_types::LuaVersion::V51 =>
+        {
             lex_next(ls, state)?;
         }
         TK_IF => {

@@ -1813,6 +1813,13 @@ impl Table {
         }
     }
 
+    fn raw_table_in_state(&self, lua: &Lua, state: &LuaState) -> Result<GcRef<RawLuaTable>> {
+        match self.root.raw_for_lua(lua, state)? {
+            RawLuaValue::Table(table) => Ok(table),
+            other => Err(type_error_raw(&other, "table")),
+        }
+    }
+
     pub fn get<K, V>(&self, key: K) -> Result<V>
     where
         K: IntoLua,
@@ -1849,6 +1856,109 @@ impl Table {
 
     pub fn len(&self) -> Result<u64> {
         Ok(self.raw_table()?.getn())
+    }
+
+    /// Raw table read, bypassing the `__index` metamethod.
+    ///
+    /// Behaves like [`Table::get`] but consults only the table's own
+    /// storage (the `rawget` semantics), so a hostile or rewriting
+    /// `__index` is never invoked. Returned values are GC-rooted exactly
+    /// like [`Table::get`].
+    pub fn raw_get<K, V>(&self, key: K) -> Result<V>
+    where
+        K: IntoLua,
+        V: FromLua,
+    {
+        let lua = self.root.lua.clone();
+        let key = key.into_lua(&lua)?;
+        let value_raw = lua.with_state(|state| {
+            let key_raw = key.to_raw_for_lua(&lua, state)?;
+            let table_raw = self.raw_table_in_state(&lua, state)?;
+            Ok::<_, Error>(table_raw.get(&key_raw))
+        })?;
+        let value = Value::from_raw(&lua, value_raw)?;
+        V::from_lua(value, &lua)
+    }
+
+    /// Raw table write, bypassing the `__newindex` metamethod.
+    ///
+    /// Behaves like [`Table::set`] but stores directly into the table's
+    /// own storage (the `rawset` semantics), so a hostile or rewriting
+    /// `__newindex` is never invoked. A nil key (or a NaN-float key) is an
+    /// error, matching the stdlib `rawset`.
+    pub fn raw_set<K, V>(&self, key: K, value: V) -> Result<()>
+    where
+        K: IntoLua,
+        V: IntoLua,
+    {
+        let lua = self.root.lua.clone();
+        let key = key.into_lua(&lua)?;
+        let value = value.into_lua(&lua)?;
+        lua.with_state(|state| {
+            let key_raw = key.to_raw_for_lua(&lua, state)?;
+            let value_raw = value.to_raw_for_lua(&lua, state)?;
+            let table_raw = self.raw_table_in_state(&lua, state)?;
+            table_raw.try_raw_set(key_raw, value_raw).map_err(Error::from)
+        })
+    }
+
+    /// Collect every raw `(key, value)` pair in the table, bypassing the
+    /// `__pairs` and `__index` metamethods.
+    ///
+    /// Walks the table's own storage using the same traversal the stdlib
+    /// `next` uses (array part then hash part), so a hostile `__pairs` or
+    /// `__index` is never invoked. Each returned [`Value`] is GC-rooted
+    /// exactly like [`Table::get`].
+    pub fn raw_pairs(&self) -> Result<Vec<(Value, Value)>> {
+        let lua = self.root.lua.clone();
+        lua.with_state(|state| {
+            let table_raw = self.raw_table_in_state(&lua, state)?;
+            let mut pairs = Vec::new();
+            let mut key_raw = RawLuaValue::Nil;
+            while let Some((next_key, next_value)) = table_raw.next_pair(&key_raw) {
+                let key = Value::from_raw_in_state(&lua, state, next_key.clone())?;
+                let value = Value::from_raw_in_state(&lua, state, next_value)?;
+                pairs.push((key, value));
+                key_raw = next_key;
+            }
+            Ok(pairs)
+        })
+    }
+
+    /// Install (or clear, with `None`) this table's metatable from Rust.
+    ///
+    /// Wraps the raw [`RawLuaTable::set_metatable`]; no `__metatable`
+    /// protection check is performed (that is a stdlib `setmetatable`
+    /// concern, not a raw operation).
+    pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
+        let table_raw = self.raw_table()?;
+        let mt_raw = match metatable {
+            Some(mt) => Some(mt.raw_table()?),
+            None => None,
+        };
+        table_raw.set_metatable(mt_raw);
+        Ok(())
+    }
+
+    /// Read this table's installed metatable, if any, as a rooted
+    /// [`Table`] wrapper.
+    ///
+    /// Wraps the raw [`RawLuaTable::metatable`]; it ignores any
+    /// `__metatable` field (returning the actual metatable), unlike the
+    /// stdlib `getmetatable`.
+    pub fn get_metatable(&self) -> Result<Option<Table>> {
+        let lua = self.root.lua.clone();
+        let mt_raw = self.raw_table()?.metatable();
+        match mt_raw {
+            Some(mt) => {
+                let value = Value::from_raw(&lua, RawLuaValue::Table(mt))?;
+                match value {
+                    Value::Table(table) => Ok(Some(table)),
+                    other => Err(type_error_value(&other, "table")),
+                }
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -3841,6 +3951,195 @@ mod tests {
         let value: String = table.get("k").expect("get should succeed");
         assert_eq!(value, "v");
         assert_eq!(table.len().expect("len should succeed"), 1);
+    }
+
+    #[test]
+    fn raw_get_bypasses_hostile_index_metamethod() {
+        let lua = Lua::new();
+        let table: Table = lua
+            .load(
+                r#"
+                local t = { present = "real" }
+                setmetatable(t, {
+                    __index = function() error("__index must not fire") end,
+                })
+                return t
+            "#,
+            )
+            .eval()
+            .expect("eval should build the hostile table");
+
+        let present: String = table.raw_get("present").expect("raw_get of present key");
+        assert_eq!(present, "real");
+
+        let absent: Value = table
+            .raw_get("missing")
+            .expect("raw_get of absent key must not trigger __index");
+        assert!(matches!(absent, Value::Nil));
+
+        let through_tm: Result<String> = table.get("missing");
+        assert!(
+            through_tm.is_err(),
+            "the with-tm get path SHOULD trigger __index and error"
+        );
+    }
+
+    #[test]
+    fn raw_set_bypasses_hostile_newindex_metamethod() {
+        let lua = Lua::new();
+        let table: Table = lua
+            .load(
+                r#"
+                local t = {}
+                setmetatable(t, {
+                    __newindex = function() error("__newindex must not fire") end,
+                })
+                return t
+            "#,
+            )
+            .eval()
+            .expect("eval should build the hostile table");
+
+        table
+            .raw_set("k", 7_i64)
+            .expect("raw_set must bypass __newindex");
+        let stored: i64 = table.raw_get("k").expect("raw_get reads the stored value");
+        assert_eq!(stored, 7);
+
+        let through_tm: Result<()> = table.set("other", 1_i64);
+        assert!(
+            through_tm.is_err(),
+            "the with-tm set path SHOULD trigger __newindex and error"
+        );
+    }
+
+    #[test]
+    fn raw_set_rejects_nil_key() {
+        let lua = Lua::new();
+        let table = lua.create_table().expect("table should allocate");
+        let err = table.raw_set(Value::Nil, 1_i64);
+        assert!(err.is_err(), "nil key is an error, matching rawset");
+    }
+
+    #[test]
+    fn raw_pairs_returns_all_entries_ignoring_hostile_metamethods() {
+        let lua = Lua::new();
+        let table: Table = lua
+            .load(
+                r#"
+                local t = { a = 1, b = 2, [1] = "x", [2] = "y" }
+                setmetatable(t, {
+                    __index = function() error("__index must not fire") end,
+                    __pairs = function() error("__pairs must not fire") end,
+                })
+                return t
+            "#,
+            )
+            .eval()
+            .expect("eval should build the hostile table");
+
+        let pairs = table.raw_pairs().expect("raw_pairs must not trigger metamethods");
+        assert_eq!(pairs.len(), 4, "all four raw entries should be visited");
+
+        let mut saw_a = false;
+        let mut saw_b = false;
+        let mut saw_one = false;
+        let mut saw_two = false;
+        for (k, v) in &pairs {
+            match (k, v) {
+                (Value::String(s), Value::Integer(n)) if s.to_str().unwrap() == "a" => {
+                    saw_a = true;
+                    assert_eq!(*n, 1);
+                }
+                (Value::String(s), Value::Integer(n)) if s.to_str().unwrap() == "b" => {
+                    saw_b = true;
+                    assert_eq!(*n, 2);
+                }
+                (Value::Integer(1), Value::String(s)) => {
+                    saw_one = true;
+                    assert_eq!(s.to_str().unwrap(), "x");
+                }
+                (Value::Integer(2), Value::String(s)) => {
+                    saw_two = true;
+                    assert_eq!(s.to_str().unwrap(), "y");
+                }
+                other => panic!("unexpected raw pair: {other:?}"),
+            }
+        }
+        assert!(saw_a && saw_b && saw_one && saw_two, "every entry observed exactly once");
+    }
+
+    #[test]
+    fn raw_pairs_values_survive_forced_collection() {
+        let lua = Lua::new();
+        let table = lua.create_table().expect("table should allocate");
+        table.set("k", "rooted-string").expect("set should succeed");
+
+        let pairs = table.raw_pairs().expect("raw_pairs should succeed");
+        lua.gc_collect();
+
+        assert_eq!(pairs.len(), 1);
+        let (key, value) = &pairs[0];
+        match (key, value) {
+            (Value::String(k), Value::String(v)) => {
+                assert_eq!(k.to_str().unwrap(), "k");
+                assert_eq!(v.to_str().unwrap(), "rooted-string");
+            }
+            other => panic!("unexpected pair after GC: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_and_get_metatable_round_trip_and_drive_index() {
+        let lua = Lua::new();
+        let table = lua.create_table().expect("data table should allocate");
+
+        assert!(
+            table.get_metatable().expect("get_metatable").is_none(),
+            "a fresh table has no metatable"
+        );
+
+        let metatable: Table = lua
+            .load(
+                r#"
+                return { __index = function(_, k) return "fallback:" .. k end }
+            "#,
+            )
+            .eval()
+            .expect("metatable should build");
+
+        table
+            .set_metatable(Some(&metatable))
+            .expect("set_metatable should succeed");
+
+        let read_back = table
+            .get_metatable()
+            .expect("get_metatable should succeed")
+            .expect("metatable should now be present");
+        let index_fn: Value = read_back
+            .raw_get("__index")
+            .expect("__index field should be present on the read-back metatable");
+        assert!(
+            matches!(index_fn, Value::Function(_)),
+            "round-tripped metatable carries the __index function"
+        );
+
+        let fallback: String = table
+            .get("anything")
+            .expect("with-tm get should now consult the installed __index");
+        assert_eq!(fallback, "fallback:anything");
+
+        table
+            .set_metatable(None)
+            .expect("clearing the metatable should succeed");
+        assert!(
+            table.get_metatable().expect("get_metatable").is_none(),
+            "metatable cleared"
+        );
+        let direct: Value = table
+            .get("anything")
+            .expect("with no metatable, with-tm get reads raw");
+        assert!(matches!(direct, Value::Nil), "no __index, so absent key is nil");
     }
 
     #[test]

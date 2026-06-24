@@ -524,10 +524,12 @@ fn return_resume_flush_buf(state: &mut LuaState, mut buf: Vec<(lua_vm::state::St
 /// then allocates before consuming them (`lua_getinfo`'s 'L'/'f' pushes),
 /// call [`RootedThreadBorrow::resnapshot`] after the pushes so the snapshot
 /// covers them too.
+#[cfg(feature = "debug")]
 pub(crate) struct RootedThreadBorrow<'a> {
     inner: std::cell::RefMut<'a, LuaState>,
 }
 
+#[cfg(feature = "debug")]
 impl RootedThreadBorrow<'_> {
     /// Re-copy the target's current live stack and open upvalues into the
     /// snapshot pushed at borrow time, covering values pushed onto the
@@ -548,6 +550,7 @@ impl RootedThreadBorrow<'_> {
     }
 }
 
+#[cfg(feature = "debug")]
 impl std::ops::Deref for RootedThreadBorrow<'_> {
     type Target = LuaState;
     fn deref(&self) -> &LuaState {
@@ -555,12 +558,14 @@ impl std::ops::Deref for RootedThreadBorrow<'_> {
     }
 }
 
+#[cfg(feature = "debug")]
 impl std::ops::DerefMut for RootedThreadBorrow<'_> {
     fn deref_mut(&mut self) -> &mut LuaState {
         &mut self.inner
     }
 }
 
+#[cfg(feature = "debug")]
 impl Drop for RootedThreadBorrow<'_> {
     fn drop(&mut self) {
         let mut g = self.inner.global_mut();
@@ -578,6 +583,7 @@ impl Drop for RootedThreadBorrow<'_> {
 /// Borrow `cell`'s thread state mutably with its stack rooted for the
 /// duration (see [`RootedThreadBorrow`]). Panics if the cell is already
 /// borrowed, matching the bare `borrow_mut()` call sites this replaces.
+#[cfg(feature = "debug")]
 pub(crate) fn borrow_thread_rooted<'a>(
     state: &mut LuaState,
     cell: &'a std::cell::RefCell<LuaState>,

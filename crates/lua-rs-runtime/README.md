@@ -9,7 +9,7 @@ either, use `mlua`.
 
 ```toml
 [dependencies]
-omnilua = "0.3.2"
+omnilua = "0.3.4"
 ```
 
 ## Calling Rust from Lua
@@ -54,6 +54,38 @@ borrows, and `AnyUserData::delegate` returns a sub-userdata that re-borrows a
 field of its parent per call, so an `App -> World -> Component` chain stays a
 chain of short borrows. Runnable example:
 `cargo run -p omnilua --example scope_world`.
+
+## Lean / sandboxed builds
+
+The default build links every standard library. An embedder that runs Lua in a
+sandbox — e.g. a Redis-style scripting host that exposes only `string`/`table`/
+`math` and never `io`, `os`, `package`/`require`, or `debug` — can compile those
+modules out entirely, which shrinks the binary (it matters for `wasm32`/edge
+bundles) and stops linking fs/loader/OS code the sandbox forbids.
+
+`base`, `string`, `table`, and `math` are always present. The droppable libraries
+are Cargo features, all on by default:
+
+| feature | library | notes |
+|---|---|---|
+| `io` | `io` | file/stream I/O |
+| `os` | `os` | whole `os` table |
+| `package` | `package` + `require` | dynamic loading |
+| `debug` | `debug` | implies `coroutine` (it introspects threads) |
+| `coroutine` | `coroutine` | |
+| `utf8` | `utf8` | 5.3+ |
+| `bit32` | `bit32` | 5.2/5.3 |
+
+```toml
+# Lean sandbox: only base/string/table/math.
+omnilua = { version = "0.3", default-features = false }
+
+# Keep just os and coroutine on top of the core.
+omnilua = { version = "0.3", default-features = false, features = ["os", "coroutine"] }
+```
+
+The lean profile is verified end-to-end by
+`cargo run -p omnilua --no-default-features --example sandbox_smoke`.
 
 ## Links
 

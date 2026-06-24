@@ -975,6 +975,7 @@ pub(crate) fn setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// environment to the module table. A non-Lua function (or a closure with no
 /// `_ENV` upvalue) is left unchanged, matching the inert-set behavior of
 /// `setfenv`. See specs/followup/5.1-fenv.md.
+#[cfg(feature = "package")]
 pub(crate) fn set_func_env_at_level(
     state: &mut LuaState,
     level: i64,
@@ -1006,6 +1007,7 @@ pub(crate) fn set_func_env_at_level(
 /// Gap: 5.1 userdata/thread environments live in fields this reused modern core
 /// does not expose, so those return `nil` here rather than their stored table.
 /// The common function/non-function cases match lua5.1.5.
+#[cfg(feature = "debug")]
 pub(crate) fn debug_getfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     if state.type_at(1) == LuaType::None {
         return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
@@ -1037,6 +1039,7 @@ pub(crate) fn debug_getfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> 
 /// fresh closed `_ENV` upvalue cell (the same private-environment isolation
 /// `setfenv` uses). An object whose environment cannot be set raises
 /// `'setfenv' cannot change environment of given object`.
+#[cfg(feature = "debug")]
 pub(crate) fn debug_setfenv_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_type(2, LuaType::Table)?;
     let new_env = state.value_at(2);

@@ -30,7 +30,7 @@ opcode-profile = ["lua-vm/opcode-profile"]
 lua-gc.workspace = true
 lua-types.workspace = true
 lua-vm.workspace = true
-lua-stdlib.workspace = true
+lua-stdlib = { workspace = true, features = ["full"] }
 lua-parse.workspace = true
 lua-rs-lfs.workspace = true
 libloading = "0.9"

@@ -15,6 +15,13 @@ unsafe_code = "allow"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# `default` ships the full stdlib (current behavior). A lean sandbox bundle is
+# `--no-default-features`, optionally re-enabling a subset via `omnilua`'s knobs
+# (e.g. `--no-default-features --features omnilua/os` to keep only `os`).
+[features]
+default = ["full"]
+full = ["omnilua/full"]
+
 [dependencies]
 lua-types.workspace = true
-omnilua.workspace = true
+omnilua = { workspace = true }

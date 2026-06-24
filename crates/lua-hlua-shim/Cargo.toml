@@ -18,5 +18,5 @@ workspace = true
 [dependencies]
 lua-types.workspace = true
 lua-vm.workspace = true
-lua-stdlib.workspace = true
+lua-stdlib = { workspace = true, features = ["full"] }
 lua-parse.workspace = true

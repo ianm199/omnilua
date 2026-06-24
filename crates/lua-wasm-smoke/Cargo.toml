@@ -18,4 +18,4 @@ unsafe_code = "allow"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-omnilua.workspace = true
+omnilua = { workspace = true, features = ["full"] }

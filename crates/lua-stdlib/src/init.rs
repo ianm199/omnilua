@@ -57,14 +57,20 @@ type LuaCFunction = fn(&mut LuaState) -> Result<usize, LuaError>;
 //   this table accordingly.
 static LOADED_LIBS: &[(&[u8], LuaCFunction)] = &[
     (b"_G", crate::base::open),
+    #[cfg(feature = "package")]
     (b"package", crate::loadlib::luaopen_package),
+    #[cfg(feature = "coroutine")]
     (b"coroutine", crate::coro_lib::open_coroutine),
     (b"table", crate::table_lib::open_table),
+    #[cfg(feature = "io")]
     (b"io", crate::io_lib::luaopen_io),
+    #[cfg(feature = "os")]
     (b"os", crate::os_lib::open_os),
     (b"string", crate::string_lib::luaopen_string),
     (b"math", crate::math_lib::luaopen_math),
+    #[cfg(feature = "utf8")]
     (b"utf8", crate::utf8_lib::open_utf8),
+    #[cfg(feature = "debug")]
     (b"debug", crate::debug_lib::open_debug),
 ];
 
@@ -105,6 +111,7 @@ pub fn open_libs(state: &mut LuaState) -> Result<(), LuaError> {
     // and 5.3, and was removed in 5.4 (`specs/research/5.3-upstream-delta.md`
     // delta #11). Register it only under those backends. Verified against
     // lua5.2.4 and lua5.3.6: `type(bit32)` == "table".
+    #[cfg(feature = "bit32")]
     if matches!(
         state.global().lua_version,
         lua_types::LuaVersion::V52 | lua_types::LuaVersion::V53

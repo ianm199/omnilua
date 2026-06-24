@@ -12,6 +12,30 @@ homepage.workspace = true
 unsafe_code = "forbid"
 unused_must_use = "deny"
 
+# Sandbox-forbidden stdlib modules are feature-gated so embedders that run
+# omnilua in a Redis-style sandbox (e.g. Valdr/EdgeStash on wasm) can compile
+# them out entirely — both to shrink the bundle and to avoid linking fs/loader/
+# OS code the sandbox deliberately forbids. `default` enables everything, so a
+# normal build, LuaRocks, and the official suite are unchanged. A lean build is
+# `--no-default-features` plus whatever subset the embedder actually exposes.
+[features]
+default = ["full"]
+# `full` is every standard library — the all-on profile. `default` maps to it so
+# a direct `lua-stdlib` dependency is unchanged. In-workspace consumers that want
+# everything ask for `features = ["full"]`, because the workspace dependency is
+# declared `default-features = false` (a workspace-inherited `default-features`
+# override is silently ignored by Cargo, so the off-switch must live at the root).
+full = ["io", "os", "package", "debug", "coroutine", "utf8", "bit32"]
+io = []
+os = []
+package = []
+coroutine = []
+utf8 = []
+bit32 = []
+# `debug.traceback`/`getinfo` introspect coroutine threads through coro_lib
+# helpers, so the debug library cannot compile without the coroutine library.
+debug = ["coroutine"]
+
 [dependencies]
 lua-types.workspace = true
 lua-vm.workspace = true

@@ -17,6 +17,20 @@ path = "src/lib.rs"
 unsafe_code = "allow"
 
 [features]
+default = ["full"]
+# `full` enables every standard library — the current, default behavior.
+# A sandboxed/embedded host (e.g. Valdr/EdgeStash on wasm) builds with
+# `default-features = false` and re-enables only the subset it exposes; the
+# fs/loader/OS modules it forbids are then never compiled or linked. Each knob
+# forwards to the matching `lua-stdlib` feature.
+full = ["io", "os", "package", "debug", "coroutine", "utf8", "bit32"]
+io = ["lua-stdlib/io"]
+os = ["lua-stdlib/os"]
+package = ["lua-stdlib/package"]
+debug = ["lua-stdlib/debug"]
+coroutine = ["lua-stdlib/coroutine"]
+utf8 = ["lua-stdlib/utf8"]
+bit32 = ["lua-stdlib/bit32"]
 # Re-export the derive macros (LuaUserData, lua_methods) from this crate.
 derive = ["dep:lua-rs-derive"]
 
@@ -28,6 +42,6 @@ required-features = ["derive"]
 lua-gc.workspace = true
 lua-types.workspace = true
 lua-vm.workspace = true
-lua-stdlib.workspace = true
+lua-stdlib = { workspace = true }
 lua-parse.workspace = true
 lua-rs-derive = { workspace = true, optional = true }

@@ -4,6 +4,39 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-06-24
+
+### Added — feature-gated standard library for lean / sandboxed embeds
+
+`omnilua` now lets an embedder compile out the sandbox-forbidden standard
+libraries — `io`, `os`, `package`/`require`, `debug` (and optionally
+`coroutine`, `utf8`, `bit32`) — so a build that runs Lua in a Redis-style
+sandbox (e.g. Valdr/EdgeStash on `wasm32`) ships neither their code nor the
+fs/loader/OS surface it forbids. `base`, `string`, `table`, and `math` are
+always present.
+
+- New Cargo features on `omnilua` and `lua-stdlib`, **all on by default** — a
+  default build, LuaRocks, and the full official suite are unchanged. A lean
+  build is `default-features = false`, re-enabling any subset (e.g.
+  `features = ["os", "coroutine"]`).
+- Each feature gates both the module's compilation and its registration in
+  `luaL_openlibs`; `debug` implies `coroutine` (it introspects coroutine
+  threads).
+- Verified end-to-end: `cargo run -p omnilua --no-default-features --example
+  sandbox_smoke` (core libs work, gated libs absent) and a lean
+  `wasm32-unknown-unknown` check that strips the libraries from the bundle.
+  No behavior change on the default profile (44/44 official 5.4 suite green).
+
+## [0.3.3] - 2026-06-23
+
+### Added — metamethod-free `Table` access on the embedding API
+
+Exposes raw, metamethod-bypassing table access on `omnilua::Table`:
+`raw_get` / `raw_set` / `raw_pairs` (raw iteration) plus `set_metatable` /
+`get_metatable`. Needed by embedders that require metamethod-free table access
+(the redis-rs-port mlua-exit scripting backend). No runtime behavior change to
+the language; embedding-API surface only.
+
 ## [0.3.2] - 2026-06-22
 
 Same library code as 0.3.1 (all five Lua versions at 100%); this patch unblocks

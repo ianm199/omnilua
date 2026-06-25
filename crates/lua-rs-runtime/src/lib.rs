@@ -3605,6 +3605,40 @@ impl Value {
     }
 }
 
+impl Lua {
+    /// The Lua registry table — a store that scripts cannot reach (unlike
+    /// globals), used to hold host-owned values across calls.
+    fn registry_table(&self) -> Result<Table> {
+        let raw = self.with_state(|state| state.registry_value());
+        match Value::from_raw(self, raw)? {
+            Value::Table(t) => Ok(t),
+            other => Err(type_error_value(&other, "table")),
+        }
+    }
+
+    /// Store a value in the registry under a string name, where scripts cannot
+    /// see it. Retrieve it later with [`Lua::named_registry_value`]. Because
+    /// handles root themselves, this also keeps the value alive across calls.
+    pub fn set_named_registry_value<V: IntoLua>(
+        &self,
+        name: impl AsRef<[u8]>,
+        value: V,
+    ) -> Result<()> {
+        self.registry_table()?.raw_set(name.as_ref(), value)
+    }
+
+    /// Read a value previously stored with [`Lua::set_named_registry_value`].
+    /// A name that was never set (or was cleared) reads as `nil`.
+    pub fn named_registry_value<V: FromLua>(&self, name: impl AsRef<[u8]>) -> Result<V> {
+        self.registry_table()?.raw_get(name.as_ref())
+    }
+
+    /// Remove a value from the registry, allowing it to be collected.
+    pub fn unset_named_registry_value(&self, name: impl AsRef<[u8]>) -> Result<()> {
+        self.registry_table()?.raw_set(name.as_ref(), Value::Nil)
+    }
+}
+
 fn coerce_int(dst: &Lua, i: i64) -> Value {
     match dst.version().number_model() {
         NumberModel::FloatOnly => Value::Number(i as f64),

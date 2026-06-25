@@ -3642,6 +3642,42 @@ impl Lua {
     }
 }
 
+impl Function {
+    /// Serialize this function to a binary chunk, like `string.dump`.
+    ///
+    /// `strip` drops debug info (line numbers, local/upvalue names) for a
+    /// smaller chunk. The bytes load back with [`Lua::load`], which auto-detects
+    /// binary input — but only into an instance of the *same* Lua version (the
+    /// chunk header records the version and a mismatch is rejected at load).
+    /// Only Lua functions can be dumped; a function created from Rust (a C
+    /// closure) returns an error, as in stock Lua.
+    pub fn dump(&self, strip: bool) -> Result<Vec<u8>> {
+        let lua = self.root.lua.clone();
+        lua.with_state(|state| {
+            let raw = self.root.raw_for_lua(&lua, state)?;
+            let saved_top = state.top_idx();
+            state.push(raw);
+            let mut buf = Vec::new();
+            let dumped = {
+                let mut writer = |chunk: &[u8]| -> std::result::Result<(), LuaError> {
+                    buf.extend_from_slice(chunk);
+                    Ok(())
+                };
+                lua_vm::api::dump(state, &mut writer, strip)
+            };
+            state.set_top_idx(saved_top);
+            match dumped {
+                Ok(true) => Ok(buf),
+                Ok(false) => Err(LuaError::runtime(format_args!(
+                    "cannot dump a function that is not a Lua function"
+                ))
+                .into()),
+                Err(err) => Err(lua.capture_error_in_state(state, err)),
+            }
+        })
+    }
+}
+
 fn coerce_int(dst: &Lua, i: i64) -> Value {
     match dst.version().number_model() {
         NumberModel::FloatOnly => Value::Number(i as f64),

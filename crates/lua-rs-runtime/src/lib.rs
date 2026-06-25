@@ -1635,6 +1635,29 @@ impl Lua {
     pub fn gc_collect(&self) {
         self.with_state(|state| state.gc().full_collect());
     }
+
+    /// Bytes currently tracked by the collector — like `collectgarbage("count")`
+    /// but reported in bytes rather than kilobytes.
+    pub fn gc_used_memory(&self) -> usize {
+        self.with_state(|state| state.global().total_bytes())
+    }
+
+    /// Whether automatic collection is currently running (i.e. not paused by
+    /// [`Lua::gc_stop`]).
+    pub fn gc_is_running(&self) -> bool {
+        self.with_state(|state| state.global().is_gc_running())
+    }
+
+    /// Pause automatic collection, like `collectgarbage("stop")`. Explicit
+    /// [`Lua::gc_collect`] still works while paused.
+    pub fn gc_stop(&self) {
+        self.with_state(|state| state.global_mut().set_gc_stop_user());
+    }
+
+    /// Resume automatic collection, like `collectgarbage("restart")`.
+    pub fn gc_restart(&self) {
+        self.with_state(|state| state.global_mut().clear_gc_stop());
+    }
 }
 
 pub struct Chunk {

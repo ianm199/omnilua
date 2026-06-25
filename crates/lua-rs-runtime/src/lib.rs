@@ -3642,6 +3642,103 @@ impl Lua {
     }
 }
 
+impl Function {
+    /// Serialize this function to a binary chunk, like `string.dump`.
+    ///
+    /// `strip` drops debug info (line numbers, local/upvalue names) for a
+    /// smaller chunk. The bytes load back with [`Lua::load`], which auto-detects
+    /// binary input — but only into an instance of the *same* Lua version (the
+    /// chunk header records the version and a mismatch is rejected at load).
+    /// Only Lua functions can be dumped; a function created from Rust (a C
+    /// closure) returns an error, as in stock Lua.
+    pub fn dump(&self, strip: bool) -> Result<Vec<u8>> {
+        let lua = self.root.lua.clone();
+        lua.with_state(|state| {
+            let raw = self.root.raw_for_lua(&lua, state)?;
+            let saved_top = state.top_idx();
+            state.push(raw);
+            let mut buf = Vec::new();
+            let dumped = {
+                let mut writer = |chunk: &[u8]| -> std::result::Result<(), LuaError> {
+                    buf.extend_from_slice(chunk);
+                    Ok(())
+                };
+                lua_vm::api::dump(state, &mut writer, strip)
+            };
+            state.set_top_idx(saved_top);
+            match dumped {
+                Ok(true) => Ok(buf),
+                Ok(false) => Err(LuaError::runtime(format_args!(
+                    "cannot dump a function that is not a Lua function"
+                ))
+                .into()),
+                Err(err) => Err(lua.capture_error_in_state(state, err)),
+            }
+        })
+    }
+}
+
+impl Table {
+    /// Append `value` at position `#t + 1` (like `table.insert(t, value)`).
+    pub fn push<V: IntoLua>(&self, value: V) -> Result<()> {
+        let n = self.len()?;
+        self.raw_set(n + 1, value)
+    }
+
+    /// Insert `value` at 1-based `pos`, shifting later elements up by one (like
+    /// `table.insert(t, pos, value)`). `pos` must be in `1..=#t + 1`.
+    pub fn insert<V: IntoLua>(&self, pos: u64, value: V) -> Result<()> {
+        let n = self.len()?;
+        if pos < 1 || pos > n + 1 {
+            return Err(LuaError::runtime(format_args!(
+                "bad position {pos} to 'insert' (out of bounds)"
+            ))
+            .into());
+        }
+        let mut i = n;
+        while i >= pos {
+            let moved: Value = self.raw_get(i)?;
+            self.raw_set(i + 1, moved)?;
+            i -= 1;
+        }
+        self.raw_set(pos, value)
+    }
+
+    /// Remove and return the element at 1-based `pos`, shifting later elements
+    /// down by one (like `table.remove(t, pos)`). Returns `nil` when `pos` is
+    /// outside `1..=#t`.
+    pub fn remove(&self, pos: u64) -> Result<Value> {
+        let n = self.len()?;
+        if n == 0 || pos < 1 || pos > n {
+            return Ok(Value::Nil);
+        }
+        let removed: Value = self.raw_get(pos)?;
+        let mut i = pos;
+        while i < n {
+            let moved: Value = self.raw_get(i + 1)?;
+            self.raw_set(i, moved)?;
+            i += 1;
+        }
+        self.raw_set(n, Value::Nil)?;
+        Ok(removed)
+    }
+
+    /// Remove and return the last element (like `table.remove(t)`); `nil` when
+    /// the table is empty.
+    pub fn pop(&self) -> Result<Value> {
+        let n = self.len()?;
+        self.remove(n)
+    }
+
+    /// Remove every key, leaving the table empty.
+    pub fn clear(&self) -> Result<()> {
+        for (k, _v) in self.raw_pairs()? {
+            self.raw_set(k, Value::Nil)?;
+        }
+        Ok(())
+    }
+}
+
 fn coerce_int(dst: &Lua, i: i64) -> Value {
     match dst.version().number_model() {
         NumberModel::FloatOnly => Value::Number(i as f64),

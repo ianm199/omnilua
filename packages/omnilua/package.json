@@ -1,6 +1,6 @@
 {
   "name": "omnilua",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Every Lua, everywhere — pure-Rust Lua 5.1–5.5, suite-passing, LuaRocks-compatible, wasm-ready.",
   "type": "module",
   "exports": {

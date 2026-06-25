@@ -1694,6 +1694,35 @@ impl Chunk {
             .collect::<Result<Vec<_>>>()?;
         T::from_lua_multi(values, &self.lua)
     }
+
+    /// Compile this chunk once into a reusable [`Function`] without running it.
+    ///
+    /// `exec`/`eval` parse the source on every call; `into_function` parses and
+    /// compiles a single time, so the resulting function can be invoked many
+    /// times (each call re-runs the chunk's top level with the supplied
+    /// arguments bound to `...`). A syntax error surfaces here, at compile time,
+    /// rather than on each call.
+    pub fn into_function(self) -> Result<Function> {
+        let raw = self.lua.with_state(|state| {
+            let saved_top = state.top_idx();
+            let status = load_buffer(state, &self.source, &self.name)
+                .map_err(|err| self.lua.capture_error_in_state(state, err))?;
+            if status != 0 {
+                let err = state.pop();
+                let captured =
+                    self.lua.capture_error_in_state(state, LuaError::from_value(err));
+                state.set_top_idx(saved_top);
+                return Err(captured);
+            }
+            let raw = state.pop();
+            state.set_top_idx(saved_top);
+            Ok(raw)
+        })?;
+        match Value::from_raw(&self.lua, raw)? {
+            Value::Function(f) => Ok(f),
+            other => Err(type_error_value(&other, "function")),
+        }
+    }
 }
 
 #[derive(Debug)]

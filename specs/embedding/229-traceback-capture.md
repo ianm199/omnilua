@@ -1,6 +1,11 @@
 # Spec #229 — Stack-traceback capture in the embedding `Error`
 
-Status: design, **revised after Codex adversarial review (VERDICT: REVISE — all
+Status: **IMPLEMENTED** (commit 9f11f008). The pcall_k error-contract open
+question was resolved by reading `protected_call_raw` (state.rs:3589): on error it
+cleans the stack to `func` and the handler sits below `func`, so it survives the
+unwind and the `rotate`+`set_top` removal is valid on both paths. 7 tests green;
+capture-off byte-identical (oracle 184 + CLI traceback oracle 16). Originally
+design, **revised after Codex adversarial review (VERDICT: REVISE — all
 findings adopted)**. The readable-message half shipped in 0.3.5. This is the
 traceback **capture** half. Reviewer focus held: **capture must never change the
 error message** for code that opts in OR out.

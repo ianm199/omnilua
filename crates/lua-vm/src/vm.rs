@@ -630,12 +630,8 @@ fn intop_bxor(a: i64, b: i64) -> i64 {
 
 /// f64 has 53 bits of mantissa (including implicit leading 1).
 /// All i64 values with |i| <= 2^53 are exactly representable.
-///
-/// This is the correct exactness test — unlike `i as f64 as i64 == i`, which
-/// saturates at the i64 boundary and falsely accepts inexact values. Public so
-/// the embedding number-model seam can reuse one source of truth.
 #[inline]
-pub fn int_fits_float(i: i64) -> bool {
+fn int_fits_float(i: i64) -> bool {
     const MAXINTFITSF: u64 = 1u64 << f64::MANTISSA_DIGITS;
     (MAXINTFITSF.wrapping_add(i as u64)) <= 2 * MAXINTFITSF
 }

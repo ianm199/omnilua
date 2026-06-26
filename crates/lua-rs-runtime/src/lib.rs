@@ -1300,6 +1300,13 @@ impl Lua {
     where
         T: UserData,
     {
+        if nuvalue > i32::MAX as usize {
+            return Err(LuaError::runtime(format_args!(
+                "too many uservalue slots: {nuvalue} (max {})",
+                i32::MAX
+            ))
+            .into());
+        }
         let metatable = self.userdata_metatable::<T>()?;
         self.attach_userdata(data, metatable, nuvalue)
     }
@@ -3858,15 +3865,27 @@ enum LoweredInt {
     Float(f64),
 }
 
+/// Whether `i` round-trips through `f64` exactly. The range guard is essential:
+/// `i as f64` rounds `i64::MAX` up to 2^63, and casting that back saturates to
+/// `i64::MAX`, so the unguarded `i as f64 as i64 == i` would falsely accept it.
+/// Unlike `vm::int_fits_float` (the conservative |i| ≤ 2^53 "always-safe" range),
+/// this accepts exact values above 2^53 such as `1 << 60` and `i64::MIN`.
+fn int_is_exact_f64(i: i64) -> bool {
+    const MIN_F: f64 = -9_223_372_036_854_775_808.0;
+    const MAX_PLUS_1_F: f64 = 9_223_372_036_854_775_808.0;
+    let f = i as f64;
+    f >= MIN_F && f < MAX_PLUS_1_F && f as i64 == i
+}
+
 /// The host→Lua integer lowering seam — single source of truth. On a dual-subtype
 /// instance (5.3+) an `i64` stays an integer; on a float-only instance (5.1/5.2) it
-/// becomes a float, exactly when representable (`int_fits_float`, |i| ≤ 2^53),
-/// otherwise per `policy`.
+/// becomes a float — always under `WidenLossy`, or only when it round-trips
+/// exactly under `ErrorOnInexact`.
 fn lower_host_int(version: LuaVersion, policy: LossyIntPolicy, i: i64) -> Result<LoweredInt> {
     match version.number_model() {
         NumberModel::Dual => Ok(LoweredInt::Int(i)),
         NumberModel::FloatOnly => {
-            if lua_vm::vm::int_fits_float(i) || policy == LossyIntPolicy::WidenLossy {
+            if policy == LossyIntPolicy::WidenLossy || int_is_exact_f64(i) {
                 Ok(LoweredInt::Float(i as f64))
             } else {
                 Err(LuaError::runtime(format_args!(

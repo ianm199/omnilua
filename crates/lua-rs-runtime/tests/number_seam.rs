@@ -27,18 +27,25 @@ fn host_int_stays_integer_in_5_4() {
 }
 
 #[test]
-fn exact_at_2pow53_inexact_above_under_error_policy() {
+fn exactness_under_error_policy_is_true_round_trip() {
     let lua = Lua::new_versioned(LuaVersion::V51);
     lua.set_lossy_int_policy(LossyIntPolicy::ErrorOnInexact);
 
-    let exact = 1i64 << 53;
-    lua.globals().set("x", exact).unwrap();
+    // Exactly representable — must be accepted (including powers of 2 above 2^53
+    // and i64::MIN, which `int_fits_float`'s |i|<=2^53 range would wrongly reject).
+    for exact in [1i64 << 53, 1i64 << 60, i64::MIN, 0, -1, 1_000_000] {
+        lua.globals()
+            .set("x", exact)
+            .unwrap_or_else(|e| panic!("{exact} is exact but errored: {e}"));
+    }
 
-    let inexact = (1i64 << 53) + 1;
-    assert!(
-        lua.globals().set("y", inexact).is_err(),
-        "an inexact integer under ErrorOnInexact must error, not saturate"
-    );
+    // Not representable — must error, not saturate.
+    for inexact in [(1i64 << 53) + 1, i64::MAX, i64::MAX - 1] {
+        assert!(
+            lua.globals().set("y", inexact).is_err(),
+            "{inexact} is inexact and must error under ErrorOnInexact"
+        );
+    }
 }
 
 #[test]

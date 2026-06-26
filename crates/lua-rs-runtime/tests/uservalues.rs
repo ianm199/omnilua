@@ -51,6 +51,13 @@ fn zero_slot_userdata_rejects_set() {
 }
 
 #[test]
+fn unreachable_slot_count_errors_not_ooms() {
+    let lua = Lua::new();
+    let r = lua.create_userdata_with_uservalues(Holder, usize::MAX);
+    assert!(r.is_err(), "an unaddressable slot count must Err, not allocate");
+}
+
+#[test]
 fn table_uservalue_retrievable_after_collection() {
     let lua = Lua::new();
     let ud = lua.create_userdata_with_uservalues(Holder, 1).unwrap();

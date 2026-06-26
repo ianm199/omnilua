@@ -23,7 +23,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
@@ -36,18 +36,18 @@ authors = ["omniLua contributors"]
 unsafe_code = "forbid"
 
 [workspace.dependencies]
-lua-types   = { path = "crates/lua-types", version = "0.3.6" }
-lua-lex     = { path = "crates/lua-lex", version = "0.3.6" }
-lua-parse   = { path = "crates/lua-parse", version = "0.3.6" }
-lua-code    = { path = "crates/lua-code", version = "0.3.6" }
-lua-vm      = { path = "crates/lua-vm", version = "0.3.6" }
-lua-stdlib  = { path = "crates/lua-stdlib", version = "0.3.6", default-features = false }
-lua-gc      = { path = "crates/lua-gc", version = "0.3.6" }
-lua-coro    = { path = "crates/lua-coro", version = "0.3.6" }
-lua-rs-lfs  = { path = "crates/lua-rs-lfs", version = "0.3.6" }
-omnilua     = { path = "crates/lua-rs-runtime", version = "0.3.6", default-features = false }
-lua-rs-derive = { path = "crates/lua-rs-derive", version = "0.3.6" }
-lua-wasm = { path = "crates/lua-wasm", version = "0.3.6" }
+lua-types   = { path = "crates/lua-types", version = "0.3.7" }
+lua-lex     = { path = "crates/lua-lex", version = "0.3.7" }
+lua-parse   = { path = "crates/lua-parse", version = "0.3.7" }
+lua-code    = { path = "crates/lua-code", version = "0.3.7" }
+lua-vm      = { path = "crates/lua-vm", version = "0.3.7" }
+lua-stdlib  = { path = "crates/lua-stdlib", version = "0.3.7", default-features = false }
+lua-gc      = { path = "crates/lua-gc", version = "0.3.7" }
+lua-coro    = { path = "crates/lua-coro", version = "0.3.7" }
+lua-rs-lfs  = { path = "crates/lua-rs-lfs", version = "0.3.7" }
+omnilua     = { path = "crates/lua-rs-runtime", version = "0.3.7", default-features = false }
+lua-rs-derive = { path = "crates/lua-rs-derive", version = "0.3.7" }
+lua-wasm = { path = "crates/lua-wasm", version = "0.3.7" }
 
 [profile.release]
 opt-level = 3

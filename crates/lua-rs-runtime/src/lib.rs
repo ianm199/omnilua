@@ -1368,10 +1368,9 @@ impl Lua {
     where
         T: UserData,
     {
-        if nuvalue > i32::MAX as usize {
+        if nuvalue > MAX_USERVALUE_SLOTS {
             return Err(LuaError::runtime(format_args!(
-                "too many uservalue slots: {nuvalue} (max {})",
-                i32::MAX
+                "too many uservalue slots: {nuvalue} (max {MAX_USERVALUE_SLOTS})"
             ))
             .into());
         }
@@ -1388,15 +1387,23 @@ impl Lua {
         metatable: GcRef<RawLuaTable>,
         nuvalue: usize,
     ) -> Result<AnyUserData> {
+        let mut uv = Vec::new();
+        uv.try_reserve_exact(nuvalue).map_err(|_| {
+            Error::from(LuaError::runtime(format_args!(
+                "cannot allocate {nuvalue} uservalue slots"
+            )))
+        })?;
+        uv.resize(nuvalue, RawLuaValue::Nil);
+
         let cell: Rc<dyn Any> = Rc::new(UserDataCell {
             value: RefCell::new(data),
         });
         let host_value = cell.clone();
         let root = self.with_state(|state| {
-            let userdata = with_heap_guard(state, || {
+            let userdata = with_heap_guard(state, move || {
                 let ud = GcRef::new(RawLuaUserData {
                     data: Box::new([]),
-                    uv: RefCell::new(vec![RawLuaValue::Nil; nuvalue]),
+                    uv: RefCell::new(uv),
                     metatable: RefCell::new(None),
                     host_value: RefCell::new(None),
                 });
@@ -3874,6 +3881,12 @@ impl Table {
         Ok(())
     }
 }
+
+/// Upper bound on uservalue slots a userdata may be created with. Generous (real
+/// usage is a handful) but bounded, so an absurd request is a clean `Err` rather
+/// than a multi-GB allocation — deterministic across targets including wasm,
+/// where `try_reserve` can't be relied on under overcommit.
+const MAX_USERVALUE_SLOTS: usize = u16::MAX as usize;
 
 /// A valid 1-based uservalue slot as `i32`, or `None` if `n` is 0 or exceeds
 /// `i32::MAX` (which would otherwise wrap to a spurious valid slot).

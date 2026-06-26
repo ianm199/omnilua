@@ -51,10 +51,18 @@ fn zero_slot_userdata_rejects_set() {
 }
 
 #[test]
-fn unreachable_slot_count_errors_not_ooms() {
+fn oversized_slot_counts_error_not_oom() {
     let lua = Lua::new();
-    let r = lua.create_userdata_with_uservalues(Holder, usize::MAX);
-    assert!(r.is_err(), "an unaddressable slot count must Err, not allocate");
+    // usize::MAX (unaddressable) AND a large-but-in-i32-range count (e.g. 1e9,
+    // which would be tens of GB) must both Err — never attempt the allocation.
+    assert!(lua.create_userdata_with_uservalues(Holder, usize::MAX).is_err());
+    assert!(lua
+        .create_userdata_with_uservalues(Holder, 1_000_000_000)
+        .is_err());
+    // a sane count just above the cap also errors cleanly.
+    assert!(lua
+        .create_userdata_with_uservalues(Holder, (u16::MAX as usize) + 1)
+        .is_err());
 }
 
 #[test]

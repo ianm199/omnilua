@@ -1784,6 +1784,65 @@ impl Lua {
     pub fn gc_collect(&self) {
         self.with_state(|state| state.gc().full_collect());
     }
+
+    /// A handle to this instance's garbage collector, mirroring mlua's GC
+    /// control surface. The methods drive the `collectgarbage` builtin, so they
+    /// match `collectgarbage(...)` exactly — including the per-version option
+    /// roster (e.g. `is_running` is absent before 5.2 and errors there).
+    pub fn gc(&self) -> GcControl {
+        GcControl { lua: self.clone() }
+    }
+}
+
+/// A small handle over a [`Lua`] instance's garbage collector, returned by
+/// [`Lua::gc`]. Each method is the host-side equivalent of the matching
+/// `collectgarbage` option.
+pub struct GcControl {
+    lua: Lua,
+}
+
+impl GcControl {
+    fn collectgarbage(&self) -> Result<Function> {
+        self.lua.globals().get("collectgarbage")
+    }
+
+    /// Run a full garbage-collection cycle. Equivalent to
+    /// `collectgarbage("collect")`.
+    pub fn collect(&self) -> Result<()> {
+        self.collectgarbage()?.call("collect")
+    }
+
+    /// Perform an incremental GC step sized by `kb` kilobytes (`0` runs a basic
+    /// step). Returns `true` if a collection cycle finished. Equivalent to
+    /// `collectgarbage("step", kb)`.
+    pub fn step(&self, kb: i32) -> Result<bool> {
+        self.collectgarbage()?.call(("step", kb as i64))
+    }
+
+    /// Stop automatic collection. Equivalent to `collectgarbage("stop")`.
+    pub fn stop(&self) -> Result<()> {
+        self.collectgarbage()?.call("stop")
+    }
+
+    /// Restart automatic collection. Equivalent to
+    /// `collectgarbage("restart")`.
+    pub fn restart(&self) -> Result<()> {
+        self.collectgarbage()?.call("restart")
+    }
+
+    /// Total memory currently in use by Lua, in kilobytes. Equivalent to the
+    /// first result of `collectgarbage("count")`.
+    pub fn count(&self) -> Result<f64> {
+        self.collectgarbage()?.call("count")
+    }
+
+    /// Whether automatic collection is currently running. Equivalent to
+    /// `collectgarbage("isrunning")`; this option does not exist before Lua
+    /// 5.2 and errors there (typed `Unsupported` divergence reporting arrives
+    /// with the multi-version backend seam, issue #234).
+    pub fn is_running(&self) -> Result<bool> {
+        self.collectgarbage()?.call("isrunning")
+    }
 }
 
 pub struct Chunk {

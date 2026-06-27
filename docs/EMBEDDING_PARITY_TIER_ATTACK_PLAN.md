@@ -131,3 +131,40 @@ only if you want the reconcile + the coroutine bug off the critical path.
 - `specs/oracle/check.sh` (×5 per the PR-gate rung)
 - hooks satisfied: no-inline-comment, PORT STATUS trailer, unsafe-budget, forbidden-import
 - Summarize what closes and what ships as the next minor; #234-full and #113 remain open with a pointer to Track 3.
+
+---
+
+## 5. Final status — 2026-06-26 (batch complete, gate green)
+
+**Track 1 closed** (already-shipped in 0.3.7): **#227, #229, #235** — verified
+green and closed with evidence comments.
+
+**Track 2 landed** on `feat/embedding-hard-tier` (left open; ship in the next
+minor, then close):
+
+| Issue | Commit | Test | Result |
+|---|---|---|---|
+| #239 resume(running()) wording | `e57d768c` | `multiversion_oracle::resume_main_thread_is_non_suspended_not_dead` | 185 pass, matches ref 5.2–5.5 |
+| #230 host coroutines | `c8b21794` | `tests/host_coroutine.rs` | 6 pass |
+| #226 keyed RegistryKey | `d1263972` | `tests/registry_key.rs` | 5 pass |
+| #231 GC control surface | `d3e534ca` | `tests/gc_control.rs` | 5 pass |
+| #232 lazy iteration | `cd430dd5` | `tests/table_helpers.rs` | 10 pass |
+
+**Done gate (all green):** `cargo test --workspace` 0 fail; `run_official_all.sh`
+44/44 (100%); `check.sh` ×5 versions all PASS; hooks unsafe-budget /
+forbidden-import / type-vocabulary exit 0.
+
+**Design notes worth keeping:**
+- #230/#231/#232 all **drive the corresponding Lua builtins** (`coroutine.*`,
+  `collectgarbage`, `pairs`/`next`) rather than reimplementing them — so behavior
+  is identical to pure Lua, per-version nuances come for free, and provenance is
+  automatic. Trade-off: a script that reassigns those builtins is observed by the
+  host (documented on each method).
+- #231's typed `Unsupported` for version-divergent knobs is **deferred to #234**
+  (which owns the divergence registry); today `is_running()` on 5.1 surfaces the
+  standard Lua error.
+- The oracle caught a wrong test assumption on #232: `luaB_pairs` still consults
+  `__pairs` in 5.4/5.5 (dropped from the manual, not the code) — only 5.1 lacks it.
+
+**Still open, routed to Track 3 (deep-spec → codex-review → execute):** #234-full
+(Engine/Backend seam), #113 (GC pacing / object diet).

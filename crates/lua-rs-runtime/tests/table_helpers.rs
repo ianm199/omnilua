@@ -1,9 +1,15 @@
-//! Table sequence helpers — issue #232.
+//! Table sequence helpers + lazy iteration — issue #232.
 //!
 //! `push`/`insert`/`remove`/`pop`/`clear` mirror `table.insert`/`table.remove`;
 //! the insert/remove cases assert parity against the stdlib functions.
+//! `pairs`/`raw_pairs_iter` are the lazy iterators (no eager `Vec`), with
+//! `__pairs` honored per version.
 
-use omnilua::{Lua, Value};
+use omnilua::{Lua, LuaVersion, Table, Value};
+
+const META_PAIRS_TABLE: &str = "return setmetatable({ a = 1, b = 2, c = 3 }, {
+    __pairs = function(tbl) return function() return nil end, tbl, nil end
+})";
 
 fn int(v: Value) -> i64 {
     match v {
@@ -104,4 +110,79 @@ fn insert_out_of_bounds_errors() {
     let t = lua.create_table().unwrap();
     t.push(1i64).unwrap();
     assert!(t.insert(5, 9i64).is_err());
+}
+
+#[test]
+fn lazy_pairs_iterates_every_entry() {
+    let lua = Lua::new();
+    let t = lua.create_table().unwrap();
+    for i in 1..=1000i64 {
+        t.push(i).unwrap();
+    }
+
+    let mut count = 0i64;
+    let mut sum = 0i64;
+    for pair in t.pairs().unwrap() {
+        let (_k, v) = pair.unwrap();
+        if let Value::Integer(n) = v {
+            sum += n;
+        }
+        count += 1;
+    }
+    assert_eq!(count, 1000);
+    assert_eq!(sum, 1000 * 1001 / 2);
+}
+
+#[test]
+fn lazy_pairs_can_stop_early_without_materializing_all() {
+    let lua = Lua::new();
+    let t = lua.create_table().unwrap();
+    for i in 1..=10_000i64 {
+        t.push(i).unwrap();
+    }
+
+    let first_three: Vec<_> = t
+        .pairs()
+        .unwrap()
+        .take(3)
+        .map(|pair| pair.unwrap())
+        .collect();
+    assert_eq!(first_three.len(), 3);
+}
+
+#[test]
+fn pairs_honors_metamethod_on_5_2_plus() {
+    // __pairs was added in 5.2 and is still consulted by luaB_pairs through 5.5
+    // (it was dropped from the manual, not the implementation). Verified
+    // against every reference: pairs(t) with this immediate-nil custom iterator
+    // yields zero pairs.
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        let lua = Lua::new_versioned(v);
+        let t: Table = lua.load(META_PAIRS_TABLE).eval().unwrap();
+
+        assert_eq!(
+            t.pairs().unwrap().count(),
+            0,
+            "__pairs custom iterator should be honored on {v:?}"
+        );
+        assert_eq!(
+            t.raw_pairs_iter().unwrap().count(),
+            3,
+            "raw_pairs_iter must ignore __pairs on {v:?}"
+        );
+    }
+}
+
+#[test]
+fn pairs_ignores_metamethod_on_5_1() {
+    // 5.1 has no __pairs metamethod, so pairs() iterates the real contents.
+    let lua = Lua::new_versioned(LuaVersion::V51);
+    let t: Table = lua.load(META_PAIRS_TABLE).eval().unwrap();
+    assert_eq!(t.pairs().unwrap().count(), 3);
+    assert_eq!(t.raw_pairs_iter().unwrap().count(), 3);
 }

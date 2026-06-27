@@ -2060,6 +2060,46 @@ pub struct Table {
     root: RootedValue,
 }
 
+/// A lazy iterator over a [`Table`]'s key/value pairs, created by
+/// [`Table::pairs`] or [`Table::raw_pairs_iter`]. It steps the underlying Lua
+/// iterator (`next`, or a `__pairs` iterator) one pair at a time, so it never
+/// allocates the whole pair set up front. Iteration ends at the first `nil`
+/// key; a step that raises yields one `Err` and then stops.
+pub struct TablePairs {
+    iter_fn: Function,
+    state: Value,
+    control: Value,
+    done: bool,
+}
+
+impl Iterator for TablePairs {
+    type Item = Result<(Value, Value)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match self
+            .iter_fn
+            .call::<_, (Value, Value)>((self.state.clone(), self.control.clone()))
+        {
+            Ok((key, value)) => {
+                if matches!(key, Value::Nil) {
+                    self.done = true;
+                    None
+                } else {
+                    self.control = key.clone();
+                    Some(Ok((key, value)))
+                }
+            }
+            Err(err) => {
+                self.done = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
 impl Table {
     fn raw_table(&self) -> Result<GcRef<RawLuaTable>> {
         match self.root.raw()? {
@@ -2177,6 +2217,38 @@ impl Table {
                 key_raw = next_key;
             }
             Ok(pairs)
+        })
+    }
+
+    /// A lazy iterator over this table's key/value pairs, yielding one pair at
+    /// a time rather than materializing a `Vec` up front (the difference from
+    /// [`Table::raw_pairs`]). Drives the `pairs` builtin, so a `__pairs`
+    /// metamethod is honored where the running version supports it (5.2/5.3;
+    /// 5.4+ removed `__pairs` and always iterates with `next`). Each item is a
+    /// `Result` because a custom `__pairs` iterator can raise.
+    pub fn pairs(&self) -> Result<TablePairs> {
+        let lua = self.root.lua.clone();
+        let pairs_fn: Function = lua.globals().get("pairs")?;
+        let (iter_fn, state, control): (Function, Value, Value) =
+            pairs_fn.call(Value::Table(self.clone()))?;
+        Ok(TablePairs {
+            iter_fn,
+            state,
+            control,
+            done: false,
+        })
+    }
+
+    /// A lazy iterator over this table's pairs using raw `next`, ignoring any
+    /// `__pairs` metamethod. The lazy counterpart to [`Table::raw_pairs`].
+    pub fn raw_pairs_iter(&self) -> Result<TablePairs> {
+        let lua = self.root.lua.clone();
+        let next_fn: Function = lua.globals().get("next")?;
+        Ok(TablePairs {
+            iter_fn: next_fn,
+            state: Value::Table(self.clone()),
+            control: Value::Nil,
+            done: false,
         })
     }
 

@@ -4,6 +4,20 @@ All notable changes to `lua-rs` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-27
+
+### Added — serde integration (`LuaSerdeExt`)
+
+`Lua::to_value` / `from_value` convert between any `Serialize`/`Deserialize` Rust
+type and a Lua `Value`, mirroring `mlua`'s `LuaSerdeExt`. Pure-Rust and
+feature-gated (`serde`), so it also builds for `wasm32-unknown-unknown` — which a
+C-backed binding cannot. Host integers cross the version number-model seam via
+`LossyIntPolicy`; `None`/`null` use a non-nil sentinel (`null()`) and sequences
+carry an array-marker metatable (`array_metatable()`) so empty arrays round-trip
+distinctly from empty maps. Conventions match `mlua` (externally tagged enums,
+byte-safe strings). Also ships `specs/embedding/async-integration.md`, the design
+spec for a future async lane (not implemented).
+
 ## [0.4.0] - 2026-06-26
 
 ### Added — embedding-API parity tier: host coroutines, registry keys, GC control, lazy iteration
@@ -26,18 +40,6 @@ the same code purely in Lua (per-version nuances and provenance come for free).
   running version does — 5.2–5.5) and `Table::raw_pairs_iter`, yielding one
   pair at a time via the new `TablePairs` iterator instead of materializing a
   `Vec` (the eager `raw_pairs()` is unchanged).
-
-### Added — serde integration (`LuaSerdeExt`)
-
-`Lua::to_value` / `from_value` convert between any `Serialize`/`Deserialize` Rust
-type and a Lua `Value`, mirroring `mlua`'s `LuaSerdeExt`. Pure-Rust and
-feature-gated (`serde`), so it also builds for `wasm32-unknown-unknown` — which a
-C-backed binding cannot. Host integers cross the version number-model seam via
-`LossyIntPolicy`; `None`/`null` use a non-nil sentinel (`null()`) and sequences
-carry an array-marker metatable (`array_metatable()`) so empty arrays round-trip
-distinctly from empty maps. Conventions match `mlua` (externally tagged enums,
-byte-safe strings). Also ships `specs/embedding/async-integration.md`, the design
-spec for a future async lane (not implemented).
 
 ### Fixed
 

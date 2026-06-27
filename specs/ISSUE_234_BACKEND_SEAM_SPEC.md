@@ -1,7 +1,19 @@
-# #234 — Multi-version capability seam: implementation spec (rev 3)
+# #234 — Multi-version capability seam: implementation spec (rev 4, final)
 
-**Status:** spec, post-codex-review rounds 1 & 2 (both REVISE — all findings
-accepted). deep-spec → codex-review → execute.
+**Status:** spec, post-codex-review rounds 1–3 (each REVISE; all findings accepted
+and folded in). Architecture decisions (Engine-struct deferral §0, direct-host-only
+`Unsupported` §3) were explicitly **approved** in round 2. The round-3 findings are
+probe/API-detail corrections (now incorporated), not architecture — so the design
+is settled and this proceeds to execute. The oracle (reference-fixture generation +
+official suites) is the final truth-teller, per project rule.
+
+> **Round-3 review note (codex ran the reference binaries to verify).** Three
+> concrete fixes folded in: (1) parse probes are not 5.1-safe — `load(string)`
+> errors on 5.1 (`loadstring` is the loader); all probes now `pcall` +
+> `(loadstring or load)` (§2.3). (2) `EnvSandbox` is a two-part semantic probe
+> covering both `_ENV` and `load(.., env)` (§2.3). (3) `Lua::supports` must AND
+> version capability with compile-time stdlib-feature availability, distinct from
+> the build-independent `LuaVersion::supports` (§2.4/§4).
 
 > **Round-2 review note.** Codex caught the cardinal-rule violation: rev 2's
 > cross-check probed *our own engine* (`Lua::new_versioned`), which is circular
@@ -211,8 +223,17 @@ library *and* the self-probe agrees. So:
    agrees with the reference (which the official suites already largely enforce),
    explicitly **not** the authority for the matrix.
 
+**Every probe runs inside `pcall` and loads source via `(loadstring or load)`
+(round-3 Finding 1).** On Lua 5.1 `load` takes a *reader function*, not a string
+(`load("x")` → `bad argument #1 ... (function expected, got string)`); the string
+loader is `loadstring`. A probe that called `load("…")` directly would fail on 5.1
+for the wrong reason and could abort the generator. So each parse probe is
+`pcall(function() return (loadstring or load)(SRC) ~= nil end)` and a `false`/error
+result means "absent". Verified against `lua5.1.5` (`load(string)` errors there;
+`loadstring(string)` works).
+
 The probes — each must cover the *whole named capability* (round-2 Finding 4) and
-test *semantics* where parsing alone is ambiguous (round-2 Finding 3):
+test *semantics* where parsing alone is ambiguous (round-2/3 Findings 3):
 
 | Feature | Reference probe (truthy ⇒ supported) |
 |---|---|
@@ -232,7 +253,7 @@ test *semantics* where parsing alone is ambiguous (round-2 Finding 3):
 | `NamedVararg` | `load("local function f(a, ...t) end") ~= nil` |
 | `GcIsRunning` | `pcall(collectgarbage, "isrunning")` truthy |
 | `GcParam` | `pcall(collectgarbage, "param", "pause")` truthy (param **name** required) |
-| `EnvSandbox` | **semantic** — `(load("local _ENV={x=3}; return x") or function() end)() == 3` (5.1: `_ENV` is an ordinary name, `x` stays a global → `nil`; 5.2+: resolves via `_ENV` → `3`) |
+| `EnvSandbox` | **semantic, two-part** — both `local _ENV={x=3}; return x` evaluates to `3` *and* `load("return y", nil, nil, {y=4})()` evaluates to `4` (the `load(.., env)` form). 5.1: `_ENV` is an ordinary name → `x` stays a global → `nil`, and 5.1 `load` has no env arg → `false`. 5.2+: both `3` and `4`. Codex-verified against `lua5.1.5`..`lua5.5.0` (5.1 → false, 5.2+ → true). |
 | `TableLenMetamethod` | **semantic** — `#setmetatable({}, {__len=function() return 42 end}) == 42` (5.1 ignores `__len` on tables → `0`) |
 
 `GcParam` and `param` printing: probe with `pcall` so a rejecting version is
@@ -242,10 +263,24 @@ test *semantics* where parsing alone is ambiguous (round-2 Finding 3):
 
 `init.rs` currently gates with inline `matches!(version, V51|V52)` (utf8) and
 `matches!(version, V52|V53)` (bit32). Change both to consult
-`version.supports(Feature::Utf8Lib)` / `Feature::Bit32Lib`. Now the matrix is the
-*source* for library registration, not a parallel copy. `lua-stdlib` already
-depends on `lua-types`, so this is a local edit; the official suites are the
-guard that behavior is unchanged.
+`version.supports(Feature::Utf8Lib)` / `Feature::Bit32Lib` — **keeping the existing
+`#[cfg(feature = "utf8"/"bit32")]` compile-time gate** (registration =
+`cfg(feature) && version.supports(f)`). Now the matrix is the *source* for the
+version dimension of library registration, not a parallel copy. `lua-stdlib`
+already depends on `lua-types`; the official suites guard that behavior is
+unchanged.
+
+**`LuaVersion::supports` vs `Lua::supports` — two distinct semantics (round-3
+Finding 3).** Because library modules are Cargo-feature-gated (#223: a lean build
+can compile out `utf8`/`bit32`/`coroutine`), the two queries must differ:
+- `LuaVersion::supports(f)` — pure **version capability**, the reference-backed
+  matrix (§2.3). Build-independent. This is what `init.rs` consumes.
+- `Lua::supports(f)` — **this instance, in this build**: `version().supports(f)`
+  ANDed with compile-time availability for library-backed rows
+  (`Bit32Lib`/`Utf8Lib` gated by `cfg!(feature=...)`; non-library rows pass
+  through). A build with `--no-default-features` (no `utf8`) reports
+  `lua53.supports(Utf8Lib) == false` even though the *version* has it — matching
+  what the host can actually call. A test asserts this under the gated build.
 
 ---
 
@@ -311,9 +346,12 @@ pub fn is_running(&self) -> Result<bool> {
 }
 ```
 
-`Lua::supports(&self, f) -> bool` = `self.version().supports(f)` is the host
-pre-check. This replaces the current behavior where 5.1 `is_running()` surfaces a
-raw `invalid option 'isrunning'` Lua error.
+`Lua::supports(&self, f) -> bool` is the host pre-check, with the build-aware
+semantics from §2.4 (version capability AND compile-time availability). The
+`is_running` gate above uses `GcIsRunning`, which is not library-feature-gated, so
+for that row `Lua::supports` and `version().supports` agree. This replaces the
+current behavior where 5.1 `is_running()` surfaces a raw `invalid option
+'isrunning'` Lua error.
 
 ---
 

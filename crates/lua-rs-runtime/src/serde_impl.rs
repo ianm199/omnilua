@@ -29,6 +29,7 @@
 //! - A `u64` larger than `i64::MAX` has no exact Lua integer and is rejected
 //!   rather than silently widened to a float.
 
+use std::cell::Cell;
 use std::fmt::Display;
 
 use serde::de::{
@@ -113,6 +114,39 @@ fn is_marked_array(lua: &Lua, table: &Table) -> Result<bool> {
     match table.get_metatable()? {
         Some(mt) => Ok(mt.to_pointer()? == array_metatable(lua)?.to_pointer()?),
         None => Ok(false),
+    }
+}
+
+/// Maximum container-nesting depth honored during deserialization. Bounds
+/// recursion so a self-referential Lua table (`t.self = t`) reports an error
+/// instead of overflowing the stack — important when the input is untrusted.
+const MAX_DEPTH: u32 = 128;
+
+thread_local! {
+    static DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// RAII depth counter for the recursive value deserializer. Entering a container
+/// increments it (erroring past [`MAX_DEPTH`]); dropping the guard decrements.
+struct DepthGuard;
+
+impl DepthGuard {
+    fn enter() -> Result<DepthGuard> {
+        DEPTH.with(|d| {
+            if d.get() >= MAX_DEPTH {
+                return Err(serde_error(
+                    "maximum table nesting depth exceeded (possible cyclic table)",
+                ));
+            }
+            d.set(d.get() + 1);
+            Ok(DepthGuard)
+        })
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
     }
 }
 
@@ -255,6 +289,27 @@ impl<'a> Serializer for LuaSerializer<'a> {
             Ok(i) => self.integer(i),
             Err(_) => Err(serde_error(format_args!(
                 "u64 value {v} exceeds the i64 range Lua can represent exactly"
+            ))),
+        }
+    }
+
+    /// `i128` is accepted when it fits Lua's signed-64-bit integer, else
+    /// rejected (rather than serde's default "unsupported" error).
+    fn serialize_i128(self, v: i128) -> Result<Value> {
+        match i64::try_from(v) {
+            Ok(i) => self.integer(i),
+            Err(_) => Err(serde_error(format_args!(
+                "i128 value {v} exceeds the i64 range Lua can represent exactly"
+            ))),
+        }
+    }
+
+    /// `u128` is accepted when it fits Lua's signed-64-bit integer, else rejected.
+    fn serialize_u128(self, v: u128) -> Result<Value> {
+        match i64::try_from(v) {
+            Ok(i) => self.integer(i),
+            Err(_) => Err(serde_error(format_args!(
+                "u128 value {v} exceeds the i64 range Lua can represent exactly"
             ))),
         }
     }
@@ -670,6 +725,7 @@ impl<'a, 'de> Deserializer<'de> for LuaDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
+        let _depth = DepthGuard::enter()?;
         if is_null(&self.value) {
             return visitor.visit_unit();
         }
@@ -837,6 +893,7 @@ impl<'a, 'de> Deserializer<'de> for LuaDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
+        let _depth = DepthGuard::enter()?;
         match self.value {
             Value::Table(t) => visitor.visit_seq(SeqAccessor {
                 lua: self.lua,
@@ -872,6 +929,7 @@ impl<'a, 'de> Deserializer<'de> for LuaDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
+        let _depth = DepthGuard::enter()?;
         match self.value {
             Value::Table(t) => visitor.visit_map(MapAccessor {
                 lua: self.lua,
@@ -906,6 +964,7 @@ impl<'a, 'de> Deserializer<'de> for LuaDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
+        let _depth = DepthGuard::enter()?;
         match self.value {
             Value::String(_) => visitor.visit_enum(EnumAccessor {
                 lua: self.lua,
@@ -936,11 +995,15 @@ impl<'a, 'de> Deserializer<'de> for LuaDeserializer<'a> {
         }
     }
 
+    /// Skip an ignored field without materializing it: the value is already
+    /// owned, so drop it. This avoids failing a struct just because an *unknown*
+    /// extra field holds a function/userdata/thread, and avoids descending into
+    /// (possibly cyclic) extras.
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        visitor.visit_unit()
     }
 
     serde::forward_to_deserialize_any! {

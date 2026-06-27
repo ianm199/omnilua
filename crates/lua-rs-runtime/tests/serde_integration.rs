@@ -305,6 +305,43 @@ fn explicit_sequence_target_rejects_non_array_tables() {
     assert_eq!(ok, vec![10, 20], "a genuine dense array still deserializes into Vec");
 }
 
+#[derive(Debug, PartialEq, Deserialize)]
+struct JustA {
+    a: i64,
+}
+
+#[test]
+fn unknown_fields_with_non_serde_values_are_ignored() {
+    let lua = Lua::new();
+    let t = lua.create_table().unwrap();
+    t.set("a", 5i64).unwrap();
+    let f = lua.create_function(|_, ()| Ok(())).unwrap();
+    t.set("extra", f).unwrap();
+    let parsed: JustA = lua
+        .from_value(Value::Table(t))
+        .expect("an unknown function-valued field must be ignored, not deserialized");
+    assert_eq!(parsed, JustA { a: 5 });
+}
+
+#[test]
+fn cyclic_table_errors_instead_of_overflowing() {
+    let lua = Lua::new();
+    let t = lua.create_table().unwrap();
+    t.set("self_ref", &t).unwrap();
+    let r: Result<serde_json::Value, _> = lua.from_value(Value::Table(t));
+    assert!(r.is_err(), "a self-referential table must error, not overflow the stack");
+}
+
+#[test]
+fn i128_in_range_roundtrips_out_of_range_errors() {
+    let lua = Lua::new();
+    let back: i128 = lua.from_value(lua.to_value(&5i128).unwrap()).unwrap();
+    assert_eq!(back, 5i128);
+    assert!(lua.to_value(&i128::MAX).is_err(), "an out-of-range i128 must error");
+    let ub: u128 = lua.from_value(lua.to_value(&9u128).unwrap()).unwrap();
+    assert_eq!(ub, 9u128);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:        (no C analog — serde integration tests)

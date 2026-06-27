@@ -49,17 +49,60 @@ fn is_null(value: &Value) -> bool {
     matches!(value, Value::LightUserData(p) if std::ptr::eq(*p as *const u8, &NULL_SENTINEL))
 }
 
-/// Extract a host `i64` from an integer or an exactly-integral finite float —
-/// the float case is how 5.1/5.2 (float-only) store integers. Mirrors the
-/// `FromLua for i64` rule.
+/// Extract a host `i64` from an integer or an exactly-integral, in-range finite
+/// float — the float case is how 5.1/5.2 (float-only) store integers. The range
+/// guard avoids the saturating `as i64` cast (e.g. `1e20 as i64` would silently
+/// become `i64::MAX`).
 fn as_i64(value: &Value) -> Result<i64> {
+    const MIN_F: f64 = -9_223_372_036_854_775_808.0;
+    const MAX_PLUS_1_F: f64 = 9_223_372_036_854_775_808.0;
     match value {
         Value::Integer(i) => Ok(*i),
-        Value::Number(n) if n.is_finite() && n.fract() == 0.0 => Ok(*n as i64),
+        Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
+            if *n >= MIN_F && *n < MAX_PLUS_1_F {
+                Ok(*n as i64)
+            } else {
+                Err(serde_error(format_args!(
+                    "Lua number {n} is out of range for a 64-bit integer"
+                )))
+            }
+        }
         other => Err(serde_error(format_args!(
             "expected an integer, found Lua {}",
             value_type_name(other)
         ))),
+    }
+}
+
+/// The registry key under which each instance caches its serde array-marker
+/// metatable.
+const ARRAY_METATABLE_KEY: &str = "__omnilua_serde_array_metatable";
+
+/// The per-instance array-marker metatable: an empty table (no metamethods) used
+/// only as an identity tag so a Lua table that came from a serde sequence is
+/// recognized as an array even when empty — otherwise an empty array and an
+/// empty map are indistinguishable. Mirrors `mlua`'s `array_metatable`.
+fn array_metatable(lua: &Lua) -> Result<Table> {
+    let existing: Value = lua.named_registry_value(ARRAY_METATABLE_KEY)?;
+    if let Value::Table(t) = existing {
+        return Ok(t);
+    }
+    let mt = lua.create_table()?;
+    lua.set_named_registry_value(ARRAY_METATABLE_KEY, &mt)?;
+    Ok(mt)
+}
+
+/// Tag `table` as a serde array (give it the array-marker metatable).
+fn mark_as_array(lua: &Lua, table: &Table) -> Result<()> {
+    let mt = array_metatable(lua)?;
+    table.set_metatable(Some(&mt))
+}
+
+/// Whether `table` carries the array-marker metatable.
+fn is_marked_array(lua: &Lua, table: &Table) -> Result<bool> {
+    match table.get_metatable()? {
+        Some(mt) => Ok(mt.to_pointer()? == array_metatable(lua)?.to_pointer()?),
+        None => Ok(false),
     }
 }
 
@@ -94,6 +137,11 @@ pub trait LuaSerdeExt {
     /// `null` / `None` so it can be stored in a table slot. Deserializing it
     /// yields `None` / unit / `null` again.
     fn null(&self) -> Value;
+
+    /// The array-marker metatable. Tables produced from serde sequences carry it
+    /// so they round-trip as arrays even when empty; set it on a table yourself
+    /// to force `from_value` to treat it as a sequence.
+    fn array_metatable(&self) -> Result<Table>;
 }
 
 impl LuaSerdeExt for Lua {
@@ -113,6 +161,10 @@ impl LuaSerdeExt for Lua {
 
     fn null(&self) -> Value {
         null_value()
+    }
+
+    fn array_metatable(&self) -> Result<Table> {
+        array_metatable(self)
     }
 }
 
@@ -184,12 +236,16 @@ impl<'a> Serializer for LuaSerializer<'a> {
         self.integer(i64::from(v))
     }
 
-    /// A `u64` above `i64::MAX` has no Lua integer representation (Lua integers
-    /// are signed 64-bit), so it becomes a float — the only available widening.
+    /// A `u64` above `i64::MAX` has no exact Lua integer representation (Lua
+    /// integers are signed 64-bit), so rather than silently widen it to a lossy
+    /// float, reject it — the caller can opt into a lossless encoding (e.g. a
+    /// string) on their own type.
     fn serialize_u64(self, v: u64) -> Result<Value> {
         match i64::try_from(v) {
             Ok(i) => self.integer(i),
-            Err(_) => Ok(Value::Number(v as f64)),
+            Err(_) => Err(serde_error(format_args!(
+                "u64 value {v} exceeds the i64 range Lua can represent exactly"
+            ))),
         }
     }
 
@@ -269,9 +325,11 @@ impl<'a> Serializer for LuaSerializer<'a> {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<SeqSerializer<'a>> {
+        let table = self.lua.create_table()?;
+        mark_as_array(self.lua, &table)?;
         Ok(SeqSerializer {
             lua: self.lua,
-            table: self.lua.create_table()?,
+            table,
             idx: 1,
         })
     }
@@ -295,10 +353,12 @@ impl<'a> Serializer for LuaSerializer<'a> {
         variant: &'static str,
         _len: usize,
     ) -> Result<TupleVariantSerializer<'a>> {
+        let table = self.lua.create_table()?;
+        mark_as_array(self.lua, &table)?;
         Ok(TupleVariantSerializer {
             lua: self.lua,
             variant,
-            table: self.lua.create_table()?,
+            table,
             idx: 1,
         })
     }
@@ -599,6 +659,12 @@ impl<'a, 'de> Deserializer<'de> for LuaDeserializer<'a> {
                 }
             }
             Value::Table(t) => {
+                if is_marked_array(self.lua, &t)? {
+                    return visitor.visit_seq(SeqAccessor {
+                        lua: self.lua,
+                        items: table_seq_values(&t)?.into_iter(),
+                    });
+                }
                 let pairs = t.raw_pairs()?;
                 match sequence_len(&pairs) {
                     Some(_) => visitor.visit_seq(SeqAccessor {

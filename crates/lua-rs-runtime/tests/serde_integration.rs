@@ -253,6 +253,36 @@ fn integer_crosses_the_number_model_seam() {
     );
 }
 
+#[test]
+fn empty_arrays_stay_arrays_via_array_metatable() {
+    let lua = Lua::new();
+    let arr = serde_json::json!([]);
+    let back: serde_json::Value = lua.from_value(lua.to_value(&arr).unwrap()).unwrap();
+    assert_eq!(arr, back, "an empty array must round-trip as an array, not a map");
+
+    let mixed = serde_json::json!({ "a": [], "b": {}, "c": [1, 2] });
+    let back: serde_json::Value = lua.from_value(lua.to_value(&mixed).unwrap()).unwrap();
+    assert_eq!(mixed, back, "empty array and empty object must stay distinct");
+}
+
+#[test]
+fn unrepresentable_numbers_are_rejected_not_corrupted() {
+    let lua = Lua::new();
+    assert!(
+        lua.to_value(&u64::MAX).is_err(),
+        "u64 beyond i64 range must error, not silently widen to a lossy float"
+    );
+
+    let small: u64 = 1000;
+    let back: u64 = lua.from_value(lua.to_value(&small).unwrap()).unwrap();
+    assert_eq!(back, small, "an in-range u64 still round-trips");
+
+    assert!(
+        lua.from_value::<i64>(Value::Number(1e20)).is_err(),
+        "an out-of-range integral float must error rather than saturate to i64::MAX"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:        (no C analog — serde integration tests)

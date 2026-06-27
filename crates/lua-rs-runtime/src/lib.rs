@@ -3888,6 +3888,61 @@ impl Lua {
     pub fn unset_named_registry_value(&self, name: impl AsRef<[u8]>) -> Result<()> {
         self.registry_table()?.raw_set(name.as_ref(), Value::Nil)
     }
+
+    /// Store a value in the registry under a fresh anonymous key, mirroring
+    /// mlua's `create_registry_value`. The returned [`RegistryKey`] keeps the
+    /// value alive until it is dropped or passed to
+    /// [`Lua::remove_registry_value`]. This is the keyed counterpart to the
+    /// named registry: use it to stash a value (typically a callback) and
+    /// retrieve it on a later call without choosing a name, holding the key in
+    /// a host-side collection instead.
+    ///
+    /// omniLua handles already root themselves across calls, so holding a
+    /// [`Function`]/[`Table`] directly is often enough; the registry adds an
+    /// untyped, explicitly-freed slot and mlua source compatibility.
+    pub fn create_registry_value<T: IntoLua>(&self, value: T) -> Result<RegistryKey> {
+        let value = value.into_lua(self)?;
+        let raw = self.with_state(|state| value.to_raw_for_lua(self, state))?;
+        Ok(RegistryKey {
+            root: self.root_raw(raw),
+        })
+    }
+
+    /// Read a value previously stored with [`Lua::create_registry_value`],
+    /// converting it to `T`. The key is provenance-checked: a key created by a
+    /// different [`Lua`] is rejected rather than read.
+    pub fn registry_value<T: FromLua>(&self, key: &RegistryKey) -> Result<T> {
+        self.check_registry_provenance(key)?;
+        let value = Value::from_raw(self, key.root.raw()?)?;
+        T::from_lua(value, self)
+    }
+
+    /// Remove a value created by [`Lua::create_registry_value`], freeing its
+    /// registry slot immediately. Dropping the [`RegistryKey`] does the same;
+    /// this is the explicit form, and it provenance-checks the key first.
+    pub fn remove_registry_value(&self, key: RegistryKey) -> Result<()> {
+        self.check_registry_provenance(&key)?;
+        drop(key);
+        Ok(())
+    }
+
+    fn check_registry_provenance(&self, key: &RegistryKey) -> Result<()> {
+        if Rc::ptr_eq(&self.inner, &key.root.lua.inner) {
+            Ok(())
+        } else {
+            Err(Error::from(LuaError::runtime(format_args!(
+                "RegistryKey belongs to a different state"
+            ))))
+        }
+    }
+}
+
+/// An anonymous handle to a value held in the Lua registry, created by
+/// [`Lua::create_registry_value`]. The value stays alive while the key exists;
+/// dropping the key (or calling [`Lua::remove_registry_value`]) releases it.
+/// Provenance-bound to its parent [`Lua`].
+pub struct RegistryKey {
+    root: RootedValue,
 }
 
 impl Function {

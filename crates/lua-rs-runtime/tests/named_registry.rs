@@ -1,5 +1,5 @@
-//! Named registry — issue #226 (named half; the anonymous RegistryKey token is
-//! deferred since omniLua handles already root themselves across calls).
+//! Named registry — issue #226 (named half; the anonymous `RegistryKey` token
+//! lives in `registry_key.rs`).
 //!
 //! The registry is a value store scripts cannot reach, for host-owned values
 //! that must outlive a single call.

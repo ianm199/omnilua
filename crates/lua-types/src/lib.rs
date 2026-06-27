@@ -36,7 +36,7 @@ pub use table::LuaTable;
 pub use upval::UpVal;
 pub use userdata::LuaUserData;
 pub use value::{F2Imod, LuaValue};
-pub use version::{LuaVersion, NumberModel};
+pub use version::{Feature, LuaVersion, NumberModel, Unsupported};
 
 // ── Top-level newtypes ──────────────────────────────────────────────────
 

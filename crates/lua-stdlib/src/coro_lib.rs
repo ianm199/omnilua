@@ -270,6 +270,14 @@ fn aux_status(state: &mut LuaState, co: &GcRef<lua_types::value::LuaThread>) -> 
 /// Returns the number of result values (≥ 0) on success, or `-1` on error
 /// with the error object left on top of `state`'s stack.
 ///
+/// A registry miss is normally a genuinely dead coroutine (`cannot resume dead
+/// coroutine`). The one exception is the main thread, which is deliberately
+/// never stored in `GlobalState::threads` (`main_thread_id == 0`): resuming it
+/// is a non-suspended error, not a dead one, matching the reference's
+/// `cannot resume non-suspended coroutine` (5.2+) / `cannot resume running
+/// coroutine` (5.1). This mirrors `aux_status`, which already classifies the
+/// main thread as `COS_NORM` rather than `COS_DEAD`.
+///
 /// Cross-thread open-upvalue mirroring rides the resume boundary: before
 /// yielding control, the parent's open-upvalue values are snapshotted into
 /// `GlobalState::cross_thread_upvals` so the coroutine body can read and write
@@ -287,8 +295,14 @@ fn aux_resume(state: &mut LuaState, co: GcRef<lua_types::value::LuaThread>, narg
         match g.threads.get(&co_id) {
             Some(e) => e.state.clone(),
             None => {
+                let is_main = co_id == g.main_thread_id;
                 drop(g);
-                push_lit_or_nil(state, b"cannot resume dead coroutine");
+                if is_main {
+                    let msg = non_suspended_resume_message(state);
+                    push_lit_or_nil(state, msg);
+                } else {
+                    push_lit_or_nil(state, b"cannot resume dead coroutine");
+                }
                 return -1;
             }
         }

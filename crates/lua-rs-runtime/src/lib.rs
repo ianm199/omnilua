@@ -124,7 +124,7 @@ use lua_vm::state::{
     TempNameHook, UnixTimeHook,
 };
 
-pub use lua_types::{LuaError, LuaFileHandle, LuaVersion, NumberModel};
+pub use lua_types::{Feature, LuaError, LuaFileHandle, LuaVersion, NumberModel, Unsupported};
 pub use lua_vm::state::{DynLibId, DynamicSymbol, OsExecuteReason, OsExecuteResult};
 
 #[cfg(feature = "derive")]
@@ -170,6 +170,13 @@ pub struct Error {
     /// the instance ([`Lua::set_capture_tracebacks`]) at the time of the error.
     /// The error *message* is unaffected by capture.
     traceback: Option<Vec<u8>>,
+    /// Typed classification when this error is a #234 [`Unsupported`] divergence
+    /// raised by a host-API verb. A side-channel on the wrapper: it survives only
+    /// while the error stays an `omnilua::Error` returned directly to the host —
+    /// converting back to the inner VM `LuaError` (e.g. a callback re-raising
+    /// through Lua) drops it, leaving the message. Set only by
+    /// [`Error::unsupported`].
+    unsupported: Option<Unsupported>,
 }
 
 impl Error {
@@ -208,9 +215,42 @@ impl Error {
     /// The GC root (if any) is dropped, so the returned [`LuaError`] is once
     /// again subject to the #189 hazard — only call this when the value has
     /// already been consumed or when no collection can intervene before the
-    /// returned error is read.
+    /// returned error is read. The typed [`Unsupported`] classification, if any,
+    /// is also dropped: it lives on the wrapper, not the VM error.
     pub fn into_lua_error(self) -> LuaError {
         self.inner
+    }
+
+    /// Build the error for a #234 [`Unsupported`] divergence — a host-API verb
+    /// asked for a [`Feature`] the active version lacks. This is the **only**
+    /// path that couples the typed payload with its message, so the two cannot
+    /// desync: the inner `LuaError` is a `Runtime` error carrying
+    /// `"<feature> is not available in <version>"`, and the same record is
+    /// stored typed for [`Error::as_unsupported`].
+    pub(crate) fn unsupported(feature: Feature, version: LuaVersion) -> Self {
+        let record = Unsupported { feature, version };
+        let mut err = Error::from(LuaError::runtime(format_args!("{record}")));
+        err.unsupported = Some(record);
+        err
+    }
+
+    /// The typed [`Unsupported`] classification if this error was produced by a
+    /// host-API verb for a version-absent feature, else `None`.
+    ///
+    /// Note: this reflects the classification only for an error returned
+    /// **directly** from the host API. An `Unsupported` error raised inside a
+    /// Rust callback and re-raised through Lua loses the typed record when it is
+    /// converted to the inner VM error (only the message survives), and
+    /// [`Error::kind`] still returns the inner `Runtime` payload either way — so
+    /// match on this, not on `kind()`, to detect the divergence.
+    pub fn as_unsupported(&self) -> Option<&Unsupported> {
+        self.unsupported.as_ref()
+    }
+
+    /// Whether this error is a #234 [`Unsupported`] divergence (see
+    /// [`Error::as_unsupported`]).
+    pub fn is_unsupported(&self) -> bool {
+        self.unsupported.is_some()
     }
 }
 
@@ -224,7 +264,7 @@ impl Deref for Error {
 
 impl From<LuaError> for Error {
     fn from(inner: LuaError) -> Self {
-        Error { inner, _root: None, traceback: None }
+        Error { inner, _root: None, traceback: None, unsupported: None }
     }
 }
 
@@ -928,6 +968,17 @@ impl Lua {
         self.inner.version
     }
 
+    /// Whether this instance supports a [`Feature`] — *as built*. This is
+    /// [`LuaVersion::supports`] (the reference-backed version capability) ANDed
+    /// with compile-time availability for library-backed features: a lean build
+    /// that compiles out `utf8`/`bit32`/`coroutine` reports those absent even on
+    /// a version that has them, matching what the host can actually call. Use
+    /// this as the pre-check before a version-divergent host verb; use
+    /// `self.version().supports(f)` for the build-independent answer.
+    pub fn supports(&self, f: Feature) -> bool {
+        self.version().supports(f) && feature_compiled_in(f)
+    }
+
     /// Set how a host `i64` with no exact `f64` representation is lowered when it
     /// crosses into a float-only (5.1/5.2) instance. Default [`LossyIntPolicy::WidenLossy`].
     pub fn set_lossy_int_policy(&self, policy: LossyIntPolicy) {
@@ -1098,7 +1149,7 @@ impl Lua {
             _ => None,
         };
         let root = payload.map(|value| self.root_raw_in_state(state, value));
-        Error { inner: err, _root: root, traceback: None }
+        Error { inner: err, _root: root, traceback: None, unsupported: None }
     }
 
     fn userdata_cell<'a, T: 'static>(
@@ -1164,6 +1215,33 @@ impl Lua {
             })
         })?;
         Ok(LuaString { root })
+    }
+
+    /// Fetch a function from the `coroutine` standard library table, e.g.
+    /// `create` / `resume` / `status`. The host-driven [`Thread`] API drives
+    /// these builtins so its behavior is identical to running the same
+    /// coroutine purely in Lua — the registry-tested `aux_resume` path, the
+    /// per-version nuances (5.1 rejecting C-function bodies), and provenance
+    /// checks all come for free. The trade-off is that a script which
+    /// reassigns `coroutine.resume` will be observed by the host; hosts that
+    /// need tamper-proof coroutines should drive them before yielding control
+    /// to untrusted Lua.
+    fn coroutine_builtin(&self, name: &str) -> Result<Function> {
+        let coroutine: Table = self.globals().get("coroutine")?;
+        coroutine.get(name)
+    }
+
+    /// Create a new coroutine that will run `func`, as if by
+    /// `coroutine.create(func)`. The returned [`Thread`] is provenance-bound to
+    /// this instance; resuming it from a different [`Lua`] errors cleanly.
+    pub fn create_thread(&self, func: Function) -> Result<Thread> {
+        let create = self.coroutine_builtin("create")?;
+        match create.call::<_, Value>(func)? {
+            Value::Thread(thread) => Ok(thread),
+            _ => Err(Error::from(LuaError::runtime(format_args!(
+                "coroutine.create did not return a thread"
+            )))),
+        }
     }
 
     pub fn create_function<A, R, F>(&self, func: F) -> Result<Function>
@@ -1762,6 +1840,71 @@ impl Lua {
     pub fn gc_collect(&self) {
         self.with_state(|state| state.gc().full_collect());
     }
+
+    /// A handle to this instance's garbage collector, mirroring mlua's GC
+    /// control surface. The methods drive the `collectgarbage` builtin, so they
+    /// match `collectgarbage(...)` exactly — including the per-version option
+    /// roster (e.g. `is_running` is absent before 5.2 and errors there).
+    pub fn gc(&self) -> GcControl {
+        GcControl { lua: self.clone() }
+    }
+}
+
+/// A small handle over a [`Lua`] instance's garbage collector, returned by
+/// [`Lua::gc`]. Each method is the host-side equivalent of the matching
+/// `collectgarbage` option.
+pub struct GcControl {
+    lua: Lua,
+}
+
+impl GcControl {
+    fn collectgarbage(&self) -> Result<Function> {
+        self.lua.globals().get("collectgarbage")
+    }
+
+    /// Run a full garbage-collection cycle. Equivalent to
+    /// `collectgarbage("collect")`.
+    pub fn collect(&self) -> Result<()> {
+        self.collectgarbage()?.call("collect")
+    }
+
+    /// Perform an incremental GC step sized by `kb` kilobytes (`0` runs a basic
+    /// step). Returns `true` if a collection cycle finished. Equivalent to
+    /// `collectgarbage("step", kb)`.
+    pub fn step(&self, kb: i32) -> Result<bool> {
+        self.collectgarbage()?.call(("step", kb as i64))
+    }
+
+    /// Stop automatic collection. Equivalent to `collectgarbage("stop")`.
+    pub fn stop(&self) -> Result<()> {
+        self.collectgarbage()?.call("stop")
+    }
+
+    /// Restart automatic collection. Equivalent to
+    /// `collectgarbage("restart")`.
+    pub fn restart(&self) -> Result<()> {
+        self.collectgarbage()?.call("restart")
+    }
+
+    /// Total memory currently in use by Lua, in kilobytes. Equivalent to the
+    /// first result of `collectgarbage("count")`.
+    pub fn count(&self) -> Result<f64> {
+        self.collectgarbage()?.call("count")
+    }
+
+    /// Whether automatic collection is currently running. Equivalent to
+    /// `collectgarbage("isrunning")`. The `isrunning` option does not exist
+    /// before Lua 5.2; on such an instance this returns a typed
+    /// [`Error::is_unsupported`] error ([`Feature::GcIsRunning`]) rather than the
+    /// raw Lua "invalid option" message (issue #234). Pre-check with
+    /// [`Lua::supports`].
+    pub fn is_running(&self) -> Result<bool> {
+        let version = self.lua.version();
+        if !version.supports(Feature::GcIsRunning) {
+            return Err(Error::unsupported(Feature::GcIsRunning, version));
+        }
+        self.collectgarbage()?.call("isrunning")
+    }
 }
 
 pub struct Chunk {
@@ -1979,6 +2122,46 @@ pub struct Table {
     root: RootedValue,
 }
 
+/// A lazy iterator over a [`Table`]'s key/value pairs, created by
+/// [`Table::pairs`] or [`Table::raw_pairs_iter`]. It steps the underlying Lua
+/// iterator (`next`, or a `__pairs` iterator) one pair at a time, so it never
+/// allocates the whole pair set up front. Iteration ends at the first `nil`
+/// key; a step that raises yields one `Err` and then stops.
+pub struct TablePairs {
+    iter_fn: Function,
+    state: Value,
+    control: Value,
+    done: bool,
+}
+
+impl Iterator for TablePairs {
+    type Item = Result<(Value, Value)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match self
+            .iter_fn
+            .call::<_, (Value, Value)>((self.state.clone(), self.control.clone()))
+        {
+            Ok((key, value)) => {
+                if matches!(key, Value::Nil) {
+                    self.done = true;
+                    None
+                } else {
+                    self.control = key.clone();
+                    Some(Ok((key, value)))
+                }
+            }
+            Err(err) => {
+                self.done = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
 impl Table {
     fn raw_table(&self) -> Result<GcRef<RawLuaTable>> {
         match self.root.raw()? {
@@ -2096,6 +2279,38 @@ impl Table {
                 key_raw = next_key;
             }
             Ok(pairs)
+        })
+    }
+
+    /// A lazy iterator over this table's key/value pairs, yielding one pair at
+    /// a time rather than materializing a `Vec` up front (the difference from
+    /// [`Table::raw_pairs`]). Drives the `pairs` builtin, so a `__pairs`
+    /// metamethod is honored where the running version supports it (5.2/5.3;
+    /// 5.4+ removed `__pairs` and always iterates with `next`). Each item is a
+    /// `Result` because a custom `__pairs` iterator can raise.
+    pub fn pairs(&self) -> Result<TablePairs> {
+        let lua = self.root.lua.clone();
+        let pairs_fn: Function = lua.globals().get("pairs")?;
+        let (iter_fn, state, control): (Function, Value, Value) =
+            pairs_fn.call(Value::Table(self.clone()))?;
+        Ok(TablePairs {
+            iter_fn,
+            state,
+            control,
+            done: false,
+        })
+    }
+
+    /// A lazy iterator over this table's pairs using raw `next`, ignoring any
+    /// `__pairs` metamethod. The lazy counterpart to [`Table::raw_pairs`].
+    pub fn raw_pairs_iter(&self) -> Result<TablePairs> {
+        let lua = self.root.lua.clone();
+        let next_fn: Function = lua.globals().get("next")?;
+        Ok(TablePairs {
+            iter_fn: next_fn,
+            state: Value::Table(self.clone()),
+            control: Value::Nil,
+            done: false,
         })
     }
 
@@ -2433,6 +2648,40 @@ impl AnyUserData {
 #[derive(Debug, Clone)]
 pub struct Thread {
     root: RootedValue,
+}
+
+/// The lifecycle state of a coroutine, mirroring the four strings
+/// `coroutine.status` returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadStatus {
+    /// Suspended at a `yield` or freshly created — resumable.
+    Suspended,
+    /// Currently running — the thread that observed its own status.
+    Running,
+    /// Active but has resumed another coroutine, so it cannot be resumed.
+    Normal,
+    /// Finished or errored — not resumable.
+    Dead,
+}
+
+impl ThreadStatus {
+    fn from_status_bytes(bytes: &[u8]) -> Result<Self> {
+        match bytes {
+            b"suspended" => Ok(ThreadStatus::Suspended),
+            b"running" => Ok(ThreadStatus::Running),
+            b"normal" => Ok(ThreadStatus::Normal),
+            b"dead" => Ok(ThreadStatus::Dead),
+            other => Err(Error::from(LuaError::runtime(format_args!(
+                "coroutine.status returned an unknown status: {}",
+                String::from_utf8_lossy(other)
+            )))),
+        }
+    }
+
+    /// Whether a coroutine in this state can be resumed.
+    pub fn is_resumable(self) -> bool {
+        matches!(self, ThreadStatus::Suspended)
+    }
 }
 
 /// Variable argument or return list converted element-by-element.
@@ -3697,6 +3946,50 @@ impl Thread {
     pub fn to_pointer(&self) -> Result<usize> {
         handle_pointer(&self.root, "thread")
     }
+
+    /// Resume this coroutine with `args`, as if by `coroutine.resume(self,
+    /// ...)`. On a normal yield or return, the yielded/returned values are
+    /// converted to `R`. If the coroutine raises, the error is returned as an
+    /// `Err` carrying the Lua error value — matching the `false, err` form
+    /// `coroutine.resume` produces, surfaced here as a `Result`.
+    pub fn resume<A, R>(&self, args: A) -> Result<R>
+    where
+        A: IntoLuaMulti,
+        R: FromLuaMulti,
+    {
+        let lua = self.root.lua.clone();
+        let resume = lua.coroutine_builtin("resume")?;
+        let mut call_args = Vec::new();
+        call_args.push(Value::Thread(self.clone()));
+        call_args.extend(args.into_lua_multi(&lua)?);
+        let mut returns = resume
+            .call::<_, Variadic<Value>>(Variadic::from(call_args))?
+            .into_vec();
+        let ok = match returns.first() {
+            Some(Value::Boolean(ok)) => *ok,
+            _ => {
+                return Err(Error::from(LuaError::runtime(format_args!(
+                    "coroutine.resume did not return a status boolean"
+                ))))
+            }
+        };
+        returns.remove(0);
+        if ok {
+            R::from_lua_multi(returns, &lua)
+        } else {
+            let err_val = returns.into_iter().next().unwrap_or(Value::Nil);
+            let raw = lua.with_state(|state| err_val.to_raw_for_lua(&lua, state))?;
+            Err(Error::from(LuaError::from_value(raw)))
+        }
+    }
+
+    /// This coroutine's lifecycle state, as `coroutine.status(self)` reports it.
+    pub fn status(&self) -> Result<ThreadStatus> {
+        let lua = self.root.lua.clone();
+        let status = lua.coroutine_builtin("status")?;
+        let name = status.call::<_, LuaString>(Value::Thread(self.clone()))?;
+        ThreadStatus::from_status_bytes(&name.as_bytes()?)
+    }
 }
 
 impl PartialEq for Thread {
@@ -3788,6 +4081,61 @@ impl Lua {
     pub fn unset_named_registry_value(&self, name: impl AsRef<[u8]>) -> Result<()> {
         self.registry_table()?.raw_set(name.as_ref(), Value::Nil)
     }
+
+    /// Store a value in the registry under a fresh anonymous key, mirroring
+    /// mlua's `create_registry_value`. The returned [`RegistryKey`] keeps the
+    /// value alive until it is dropped or passed to
+    /// [`Lua::remove_registry_value`]. This is the keyed counterpart to the
+    /// named registry: use it to stash a value (typically a callback) and
+    /// retrieve it on a later call without choosing a name, holding the key in
+    /// a host-side collection instead.
+    ///
+    /// omniLua handles already root themselves across calls, so holding a
+    /// [`Function`]/[`Table`] directly is often enough; the registry adds an
+    /// untyped, explicitly-freed slot and mlua source compatibility.
+    pub fn create_registry_value<T: IntoLua>(&self, value: T) -> Result<RegistryKey> {
+        let value = value.into_lua(self)?;
+        let raw = self.with_state(|state| value.to_raw_for_lua(self, state))?;
+        Ok(RegistryKey {
+            root: self.root_raw(raw),
+        })
+    }
+
+    /// Read a value previously stored with [`Lua::create_registry_value`],
+    /// converting it to `T`. The key is provenance-checked: a key created by a
+    /// different [`Lua`] is rejected rather than read.
+    pub fn registry_value<T: FromLua>(&self, key: &RegistryKey) -> Result<T> {
+        self.check_registry_provenance(key)?;
+        let value = Value::from_raw(self, key.root.raw()?)?;
+        T::from_lua(value, self)
+    }
+
+    /// Remove a value created by [`Lua::create_registry_value`], freeing its
+    /// registry slot immediately. Dropping the [`RegistryKey`] does the same;
+    /// this is the explicit form, and it provenance-checks the key first.
+    pub fn remove_registry_value(&self, key: RegistryKey) -> Result<()> {
+        self.check_registry_provenance(&key)?;
+        drop(key);
+        Ok(())
+    }
+
+    fn check_registry_provenance(&self, key: &RegistryKey) -> Result<()> {
+        if Rc::ptr_eq(&self.inner, &key.root.lua.inner) {
+            Ok(())
+        } else {
+            Err(Error::from(LuaError::runtime(format_args!(
+                "RegistryKey belongs to a different state"
+            ))))
+        }
+    }
+}
+
+/// An anonymous handle to a value held in the Lua registry, created by
+/// [`Lua::create_registry_value`]. The value stays alive while the key exists;
+/// dropping the key (or calling [`Lua::remove_registry_value`]) releases it.
+/// Provenance-bound to its parent [`Lua`].
+pub struct RegistryKey {
+    root: RootedValue,
 }
 
 impl Function {
@@ -3985,6 +4333,20 @@ fn int_is_exact_f64(i: i64) -> bool {
 /// instance (5.3+) an `i64` stays an integer; on a float-only instance (5.1/5.2) it
 /// becomes a float — always under `WidenLossy`, or only when it round-trips
 /// exactly under `ErrorOnInexact`.
+/// Whether a library-backed [`Feature`] was compiled into this build. Library
+/// modules are Cargo-feature-gated (a lean/sandboxed build can omit
+/// `utf8`/`bit32`/`coroutine`), so [`Lua::supports`] narrows the version
+/// capability by what is actually present. Non-library features are always
+/// "compiled in" — their availability is purely a version question.
+fn feature_compiled_in(f: Feature) -> bool {
+    match f {
+        Feature::Utf8Lib => cfg!(feature = "utf8"),
+        Feature::Bit32Lib => cfg!(feature = "bit32"),
+        Feature::CoroutineClose => cfg!(feature = "coroutine"),
+        _ => true,
+    }
+}
+
 fn lower_host_int(version: LuaVersion, policy: LossyIntPolicy, i: i64) -> Result<LoweredInt> {
     match version.number_model() {
         NumberModel::Dual => Ok(LoweredInt::Int(i)),

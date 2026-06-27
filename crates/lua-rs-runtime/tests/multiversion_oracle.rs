@@ -2843,6 +2843,28 @@ fn v51_body_behavior_deltas() {
 }
 
 #[test]
+fn resume_main_thread_is_non_suspended_not_dead() {
+    // #239: coroutine.resume(coroutine.running()) on the main thread is a
+    // non-suspended error, not a dead one. The main thread is never stored in
+    // GlobalState.threads, so the resume registry-miss path must special-case it
+    // to match the reference wording per version (aux_status already classifies
+    // it as normal). 5.1 returns nil from running() — a different path, covered
+    // by the running()==nil assertion above.
+    for v in [
+        LuaVersion::V52,
+        LuaVersion::V53,
+        LuaVersion::V54,
+        LuaVersion::V55,
+    ] {
+        eq(
+            v,
+            "local ok, msg = coroutine.resume(coroutine.running()); return tostring(ok)..'|'..msg",
+            "false|cannot resume non-suspended coroutine",
+        );
+    }
+}
+
+#[test]
 fn v51_syntax_rejections() {
     // goto is NOT reserved in 5.1 — it stays a valid identifier.
     eq(LuaVersion::V51, "local goto = 5; return goto", "5");

@@ -10,16 +10,20 @@ references it; do not duplicate the tables into the goal.
 
 ---
 
-## 0. Headline finding — the tracker is stale
+## 0. Headline finding — the tracker is stale (and Track 2 has since shipped)
 
 The `feat/embedding-hard-tier` branch implemented several "open" issues as part of
-the 0.3.7 hard-tier work but never closed them. Before doing *any* new work, the
-done-but-open issues must be verified against the oracle and closed. The real
-remaining surface is ~6 issues, not 10.
+the 0.3.7 hard-tier work but never closed them, *and since this doc was first
+written, the entire Track-2 batch below landed too* (commits `e57d768c` #239,
+`c8b21794` #230, `d1263972` #226, `d3e534ca` #231 — all on this branch at HEAD
+`d3e534ca`, all with green test files). The done-but-open issues must be verified
+and closed. **The real remaining surface is now just: #232 (lazy iteration half),
+#234-full (Engine/Backend seam), #113 (GC perf), plus the cross-cutting gaps async
+and serde** — not the 10 the GitHub tracker shows.
 
-Grounding evidence was gathered by grepping `crates/lua-rs-runtime/src/lib.rs`,
-`crates/lua-vm/src/state.rs`, `crates/lua-stdlib/src/coro_lib.rs`, and the
-integration tests in `crates/lua-rs-runtime/tests/`.
+Grounding evidence was re-verified 2026-06-26 by grepping
+`crates/lua-rs-runtime/src/lib.rs` and running the new test files
+(`host_coroutine.rs`, `registry_key.rs`, `gc_control.rs` — all green).
 
 ---
 
@@ -31,11 +35,11 @@ integration tests in `crates/lua-rs-runtime/tests/`.
 | **#229** tracebacks to host | med | open | ✅ **DONE + tested** | `Error::traceback_bytes/_lossy`, `set_capture_tracebacks`; `tests/traceback_capture.rs` |
 | **#235** cross-instance bridge `marshal_from` | low | open | ✅ **looks DONE + tested** (cycle-safe recursion + `seen` set) | `lib.rs:4091`; `tests/cross_version_bridge.rs` |
 | **#232** table ergonomics | low | open | 🟡 **HALF** — `push/insert/remove/clear` done+tested; **lazy `__pairs` iterator NOT done** (still `raw_pairs()→Vec` at `lib.rs:2081`) | `lib.rs:3826`; `tests/table_helpers.rs` |
-| **#226** registry | med | open | 🟡 **HALF** — `set_/named_/unset_named_registry_value` done+tested; **keyed `RegistryKey` API NOT done** (no `RegistryKey` type exists) | `lib.rs:3758+`; `tests/named_registry.rs` |
+| **#226** registry | med | open | ✅ **DONE + tested** (now full) — named *and* keyed `RegistryKey` (`create_/registry_value`/`remove_registry_value`) landed `d1263972` | `lib.rs:3922+,3962`; `tests/named_registry.rs`, `tests/registry_key.rs` (6 green) |
 | **#234** WebLua Engine/Backend seam | high | open | 🟡 **SLICE 1 only** — number-model marshaling (`LossyIntPolicy`, `lower_host_int`) done+tested; **`enum Engine` / `Backend` trait / `Unsupported` registry NOT done** | `lib.rs:927+,1957`; `tests/number_seam.rs` |
-| **#230** host-driven coroutines | med | open | ❌ **NOT started** — `Thread` has only `to_pointer`; no `create_thread`/`resume`/`status` | `lib.rs:3690` (impl Thread) |
-| **#231** GC control surface | low | open | ❌ **NOT started** — only `Lua::gc_collect()` | `lib.rs:1757` |
-| **#239** `resume(running())` wording bug | bug/5.4 | open | ❌ **NOT fixed** | `state.rs:~1808`, `coro_lib.rs:~229/283` |
+| **#230** host-driven coroutines | med | open | ✅ **DONE + tested** — `create_thread`/`Thread::resume`/`Thread::status`/`ThreadStatus` landed `c8b21794` | `lib.rs:1181,3810+,2522`; `tests/host_coroutine.rs` (5 green) |
+| **#231** GC control surface | low | open | ✅ **DONE + tested** — `Lua::gc() -> GcControl` (`collect`/`step`/`stop`/`restart`/`count`/`is_running`) landed `d3e534ca` | `lib.rs:1792,1804+`; `tests/gc_control.rs` (5 green) |
+| **#239** `resume(running())` wording bug | bug/5.4 | open | ✅ **FIXED** — landed `e57d768c` | `state.rs`, `coro_lib.rs` |
 | **#113** GC pacing / object diet (RSS) | med/arch | open | ❌ **NOT fixed** | `state.rs` `generational_step`/`stepgenfull` |
 
 ---
@@ -51,6 +55,10 @@ Each must also survive the multiversion oracle. If green, close. If a gap shows,
 leave open and record the gap here.
 
 ### Track 2 — Finish the parity tier (the headline batch → next minor release)
+**STATUS 2026-06-26: items 1–4 (#239, #230, #226, #231) SHIPPED on this branch
+(see §0). Only item 5 (#232 lazy iteration) remains.** Historical plan retained
+below for the record.
+
 Cohesive: all in `lua-rs-runtime` + `lua-vm`/`lua-stdlib`, each with an oracle
 acceptance. Ordered by dependency, smallest-cause-first:
 

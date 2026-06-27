@@ -1,41 +1,71 @@
 # Embedding API Implementation Status
 
-Status as of commit `a096e24`: `lua-rs-runtime` has a Rust-native embedding API.
-It is a preview surface, but the core substrate is implemented and verified:
-owned rooted handles, re-entrant callbacks, captured Rust closures, userdata
-methods/metamethods, and conversion traits.
+`omnilua` (crate dir `crates/lua-rs-runtime`) exposes a Rust-native embedding API
+shaped after `mlua`. Unlike `mlua` it is pure safe Rust: it builds for
+`wasm32-unknown-unknown` and needs no C toolchain or `liblua`.
 
-This document describes what exists now. The design rationale lives in
-[docs/design/EMBEDDING_API.md](design/EMBEDDING_API.md), and the original
-implementation plan lives in
-[docs/design/EMBEDDING_API_SPEC.md](design/EMBEDDING_API_SPEC.md).
+This document describes what exists now, verified against the code and its
+integration tests rather than from prose. **Do not trust a hardcoded status here
+over the source** — confirm any claim with the matching test file in
+`crates/lua-rs-runtime/tests/` and the live backlog (`gh issue list`). The parity
+push and the remaining-gap reconciliation live in
+[EMBEDDING_PARITY_TIER_ATTACK_PLAN.md](EMBEDDING_PARITY_TIER_ATTACK_PLAN.md); the
+design rationale lives in [docs/design/EMBEDDING_API.md](design/EMBEDDING_API.md).
 
 ## Public Surface
 
 The primary API lives in `crates/lua-rs-runtime/src/lib.rs`.
 
-- `Lua`: cheap-clone, single-threaded embedding handle.
-- `Lua::new`, `Lua::try_new`, `Lua::with_hooks`: construct a state with parser,
-  stdlib, and optional host hooks.
-- `Lua::load(...).set_name(...).exec()` and `Lua::load(...).eval()`: run chunks.
-- `Lua::globals`, `Lua::create_table`, `Lua::create_string`,
-  `Lua::create_function`, `Lua::create_function_mut`, `Lua::create_userdata`.
-- Owned handles: `Value`, `Table`, `Function`, `LuaString`, `AnyUserData`,
-  and a rooted `Thread` wrapper.
-- Table/function operations: `Table::get`, `Table::set`, `Table::len`,
-  `Function::call`.
-- Userdata traits: `UserData`, `UserDataMethods`, `MetaMethod`.
-- Conversion traits: `IntoLua`, `FromLua`, `IntoLuaMulti`, `FromLuaMulti`.
-- Conversion helpers: primitives, strings, `Option<T>`, `Vec<T>`, `HashMap<K,V>`,
-  tuples up to three values, and `Variadic<T>`.
-
-`LuaRuntime` remains available for the older low-level runtime shape and can be
-converted into `Lua` with `LuaRuntime::into_lua`.
+- **Construct & run.** `Lua::new`; `Lua::new_versioned` / `Lua::version` for the
+  5.1–5.5 selection; `lua.load(src).set_name(..).exec()` / `.eval()`;
+  `Chunk::into_function()` to compile once and call many times.
+- **Sandbox.** `Lua::sandboxed(SandboxConfig) -> (Lua, Sandbox)` and
+  `Lua::install_sandbox` — uncatchable instruction budget + memory ceiling +
+  capability stripping; `Sandbox::reset` refills the budget. (tests:
+  `sandbox.rs`, `runtime_sandbox.rs`)
+- **Values & tables.** `globals`, `create_table`, `create_string`; `Table::get`,
+  `set`, `len`, `raw_pairs`, and the sequence helpers `push` / `insert` /
+  `remove` / `pop` / `clear`. (tests: `table_helpers.rs`)
+- **Functions & userdata.** `create_function`, `create_function_mut`,
+  `create_userdata`, `create_userdata_with_uservalues`; `AnyUserData::borrow` /
+  `borrow_mut` / `set_user_value` / `user_value`; the `UserData`,
+  `UserDataMethods`, and `MetaMethod` traits. (tests: `uservalues.rs`)
+- **Handles & identity.** Owned `Value`, `Table`, `Function`, `LuaString`,
+  `AnyUserData`, `Thread`; `to_pointer` plus `PartialEq`/`Eq` (references by
+  identity, strings by bytes). (tests: `handle_identity.rs`)
+- **Registry.** Named: `set_named_registry_value` / `named_registry_value` /
+  `unset_named_registry_value`. Keyed: `create_registry_value -> RegistryKey`,
+  `registry_value`, `remove_registry_value`. (tests: `named_registry.rs`,
+  `registry_key.rs`)
+- **Host-driven coroutines.** `create_thread(Function) -> Thread`;
+  `Thread::resume::<A, R>(args)`; `Thread::status() -> ThreadStatus`. (tests:
+  `host_coroutine.rs`)
+- **GC control.** `lua.gc() -> GcControl` with `collect` / `step` / `stop` /
+  `restart` / `count` / `is_running` (version-divergent knobs error rather than
+  lie); plus the shorthand `gc_collect()`. (tests: `gc_control.rs`)
+- **Errors & tracebacks.** `Error` / `LuaError` with `Display`, `to_status`,
+  `into_value`, `message_lossy`; `set_capture_tracebacks(true)` then
+  `Error::traceback_bytes` / `traceback_lossy` (off by default → byte-identical
+  errors). (tests: `traceback_capture.rs`, `error_display.rs`)
+- **Bytecode.** `Function::dump(strip) -> Vec<u8>`; `load` auto-detects a binary
+  chunk and enforces the version header. (tests: `bytecode.rs`, `dump_kit.rs`)
+- **Multi-version bridging.** `set_lossy_int_policy` / `lossy_int_policy`
+  (`LossyIntPolicy::{WidenLossy, ErrorOnInexact}`) for the host-int → float-only
+  number-model seam; cross-instance `Lua::marshal_from(&src, &value)` copies a
+  value between two engines (cycle-safe tables, number-model translation,
+  function call-proxies). (tests: `number_seam.rs`, `cross_version_bridge.rs`)
+- **Scope (non-`'static` borrow).** `Lua::scope`, `Scope::create_userdata_ref_mut`
+  — lend Lua a `&mut T` for one call; a handle that escapes errors cleanly
+  instead of dangling. (tests: `scope_delegate.rs`, `scope_error_rooting.rs`,
+  `scope_world_smoke.rs`)
+- **Conversions.** `IntoLua`, `FromLua`, `IntoLuaMulti`, `FromLuaMulti`;
+  primitives, bytes/strings, `Option<T>`, `Vec<T>`, `HashMap<K, V>`, small
+  tuples, and `Variadic<T>`.
 
 ## Example
 
 ```rust
-use lua_rs_runtime::{Lua, Result, UserData, UserDataMethods};
+use omnilua::{Lua, Result, UserData, UserDataMethods};
 
 #[derive(Default)]
 struct Counter {
@@ -117,14 +147,19 @@ including captured Lua handles.
 `Lua::create_userdata` stores Rust values inside `Rc<dyn Any>` payloads with
 runtime borrow tracking. `AnyUserData::borrow` and `borrow_mut` expose typed
 borrows and report Lua runtime errors for borrow conflicts.
+`create_userdata_with_uservalues` pre-allocates uservalue slots; `set_user_value`
+drives the barriered slot setter so the write is visible to the generational
+collector.
 
 `UserDataMethods` builds a metatable backed by the same closure machinery as
-`create_function`. Supported metamethod names include `__index`, `__newindex`,
-arithmetic/comparison methods, `__call`, and `__tostring`.
+`create_function`. Supported metamethods are the common set: `__index`,
+`__newindex`, the arithmetic and comparison operators, `__call`, `__tostring`,
+`__len`, `__concat`, and `__pairs` (see Known Limits for the ones not yet
+exposed).
 
 ### GC Allocation Boundaries
 
-Embedding-side allocations that create GC-managed objects now run under a
+Embedding-side allocations that create GC-managed objects run under a
 `lua_gc::HeapGuard`. This includes table/string creation, callback closure
 payloads, userdata allocation, and parser-hook closure allocation.
 
@@ -135,87 +170,67 @@ embedding boundary.
 
 ## Verification
 
-The landed implementation was verified with:
+The embedding surface is covered by the integration tests in
+`crates/lua-rs-runtime/tests/` (one file per capability, named above). Run them —
+do not trust a count written here:
 
 ```bash
-cargo test -p lua-rs-runtime --lib
-cargo test -p lua-vm --lib external_root
-cargo check -p lua-rs-runtime
-cargo build -p lua-cli --bin lua-rs
-cargo build --release -p lua-cli
-./harness/canaries/gc/run_canaries.sh
-.claude/hooks/unsafe-budget.sh
-target/debug/lua-rs reference/lua-5.4.7-tests/gc.lua
-target/debug/lua-rs reference/lua-5.4.7-tests/gengc.lua
-TEST_TIMEOUT_S=60 ./harness/run_official_all.sh
-cargo check --manifest-path ../bms-lua-rs/bevy_mod_scripting_lua_rs/Cargo.toml
+cargo test -p omnilua                  # all embedding integration tests
+cargo test -p omnilua --test host_coroutine --test registry_key --test gc_control
+./harness/canaries/gc/run_canaries.sh  # uservalue barriers + accounting, both GC modes
 ```
 
-Observed results:
-
-- `lua-rs-runtime` tests: 14/14 pass.
-- VM external-root tests: 2/2 pass.
-- GC canaries: 10/10 pass across incremental and generational modes.
-- Official `gc.lua` and `gengc.lua`: both reach `OK`.
-- Full official suite: 44/44 pass.
-- Downstream `bms-lua-rs` proof-of-concept check: pass.
-
-Miri was not run because the local stable Apple Silicon toolchain did not have
-Miri available.
+The GC-sensitive additions (uservalues, external roots) are gated on the GC
+canaries in incremental and generational modes, not just unit tests.
 
 ## Performance
 
-The embedding work is intended to keep cost at Rust/Lua boundaries and avoid
-the VM opcode dispatch loop. The full benchmark matrix after `a096e24` reported
-an overall wall-clock ratio of `1.31x` lua-rs/reference over the harness
-workloads. The quick smoke remained stable:
-
-- `fibonacci`: `1.90x` in the full matrix after `1.91x` in the smoke.
-- `mandelbrot`: `1.88x` in both runs.
-
-Benchmark artifacts:
-
-- `harness/bench/results/20260526T140617Z-a096e24-compare.tsv`
-- `harness/bench/results/20260526T140617Z-a096e24-compare.json`
+Embedding cost is kept at the Rust/Lua boundary, out of the opcode dispatch loop.
+The tracked lua-rs / reference-C ratio (wall + RSS) lives in the benchmark
+dashboard, not in this doc — see `harness/bench/history/index.html` and
+`docs/MEASUREMENT_PROTOCOL.md`. Do not cite a frozen ratio from here.
 
 ## Known Limits
 
-This is not a full `mlua` clone.
+This is not a full `mlua` clone. The remaining gaps vs `mlua`, verified against
+the current surface:
 
-- No async API.
-- No scoped-handle API like `mlua::Scope`.
-- Tuple conversion coverage is intentionally small.
-- No serde integration.
-- `Thread` is only a rooted value wrapper, not a polished coroutine API.
-- Error types are still `LuaError` shaped; they are not yet a rich public
-  `mlua::Error` equivalent.
-- Host hooks are still mostly function-pointer based; closure-capable host hooks
-  are future work.
-- The API is preview-level and not yet published as a standalone stable crate.
+- **No async API.** No `create_async_function` / `Future` integration.
+- **No serde integration.** No Lua ⇄ serde value bridge.
+- **Table iteration materializes a `Vec`** (`raw_pairs`); there is no lazy /
+  streaming `pairs()` iterator yet (issue #232). `__pairs` is honored by the
+  value machinery, but the host helper does not stream.
+- **Metamethod coverage is the common set.** Bitwise (`__band`/`__bor`/`__bxor`/
+  `__bnot`/`__shl`/`__shr`), `__idiv`, `__close`, and `__name` are not yet
+  exposed through `MetaMethod`.
+- **Multi-version seam is partial.** Value marshaling between engines works
+  (`marshal_from` + `LossyIntPolicy`), but the formal `enum Engine` / `Backend`
+  trait / `Unsupported` divergence registry from
+  `specs/WEBLUA_MULTIVERSION_API_SPEC.md` is deferred (issue #234).
+- **Interpreter only.** No LuaJIT-class speed; not Luau.
+- **Preview maturity.** The API is shaped after `mlua` but is not
+  source-compatible, and has a far smaller user base / less battle-testing.
+
+### Where it exceeds `mlua`
+
+- Builds for `wasm32-unknown-unknown` with no C toolchain (mlua cannot).
+- 5.1–5.5 from one core, runtime-selected, with cross-instance `marshal_from`
+  (mlua is one version per build, no value transfer between states).
+- Uncatchable sandbox (budget + memory ceiling + capability stripping) for
+  standard Lua; mlua's hardened sandbox is Luau-only.
+- `scope` borrow model for non-`'static` `&mut T`.
+- Result-based error discipline — no user-facing panic in the surface.
 
 ## Future Opportunities
 
-The next useful work falls into five tracks:
-
-1. Stabilization and examples.
-   Add rustdoc examples, crate-level docs, bms-oriented migration notes, and a
-   small standalone embedding example crate.
-
-2. mlua parity where it matters.
-   Add scoped handles, broader tuple impls, richer error variants, more userdata
-   helpers, and ergonomic API aliases where direct bms/mlua migration asks for
-   them.
-
-3. Soundness hardening.
-   Add Miri coverage once available, randomized create/clone/drop/GC stress
-   tests, callback-GC torture tests, and leak checks for external-root slots.
-
-4. Sandboxed embedding.
-   Build `Lua::sandboxed` or a builder API for stdlib selection, instruction
-   budgets, memory limits, fuel-style interruption, host-hook policies, and
-   deterministic time/randomness. See [docs/design/SANDBOXING.md](design/SANDBOXING.md).
-
-5. Ecosystem integration.
-   Continue the bms backend port, keep WASM host embedding aligned with the new
-   `Lua` API, and treat any C API/ABI compatibility work as a separate subsystem
-   rather than part of the Rust embedding API.
+1. **Async + serde** — the two largest remaining `mlua`-parity features.
+2. **Lazy table iteration** (#232) and **extended metamethods** (bitwise,
+   `__idiv`, `__close`, `__name`).
+3. **The full multi-version seam** (#234) — `enum Engine` / `Backend` /
+   `Unsupported`. This is the differentiator, not just parity: it turns the
+   working `marshal_from` bridge into a first-class, machine-checkable API.
+4. **Stabilization** — rustdoc examples, a standalone embedding example crate,
+   and migration notes for projects coming from `mlua` (e.g. a `bevy_scriptum`
+   backend).
+5. **Soundness hardening** — Miri coverage, randomized create/clone/drop/GC
+   stress, callback-GC torture tests, external-root leak checks.

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coming from mlua — omniLua docs</title>
+  <meta name="description" content="How omniLua maps to mlua: a close-but-not-identical embedding API, plus what omniLua adds (wasm, five versions) and what it lacks (LuaJIT speed).">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="./docs.js" defer></script>
+</head>
+<body>
+  <main class="frame">
+    <div class="docs-layout">
+      <aside class="docs-side" id="docs-side"></aside>
+      <article class="doc">
+        <div class="doc-lede">
+          <h1>Coming from <em>mlua</em></h1>
+          <p>omniLua's API is shaped after mlua, so most code reads the same. It isn't source-compatible — names and details differ — but the shapes carry over.</p>
+        </div>
+
+        <section class="doc-sec">
+          <h2>What's the same</h2>
+          <ul>
+            <li><code>Lua::new</code>, <code>load(..).exec()</code> / <code>.eval()</code>, <code>globals()</code>.</li>
+            <li><code>create_function</code>, the <code>UserData</code> / <code>UserDataMethods</code> traits.</li>
+            <li><code>FromLua</code> / <code>IntoLua</code> conversions, <code>scope</code> for non-<code>'static</code> borrows.</li>
+            <li>serde integration (<code>to_value</code> / <code>from_value</code>) behind the <code>serde</code> feature.</li>
+          </ul>
+        </section>
+
+        <section class="doc-sec">
+          <h2>What omniLua adds</h2>
+          <ul>
+            <li>Compiles to <code>wasm32-unknown-unknown</code> — runs in the browser, which mlua can't.</li>
+            <li>Lua 5.1 through 5.5 from one build, selected per instance.</li>
+            <li>A sandbox for standard Lua (mlua's hardened sandbox is Luau only).</li>
+          </ul>
+        </section>
+
+        <section class="doc-sec">
+          <h2>What it lacks</h2>
+          <ul>
+            <li>LuaJIT speed — omniLua is an interpreter. If you need that throughput, stay on mlua.</li>
+            <li>A decades-mature ecosystem and C API/ABI compatibility.</li>
+          </ul>
+          <div class="note">
+            <span class="nl">In short</span>
+            <p>Move to omniLua for the browser, multiple versions, or a sandbox. Stay on mlua for LuaJIT speed.</p>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Next</h2>
+          <div class="next">
+            <a class="btn" href="embedding.html">The embedding API ▸</a>
+            <a class="btn ghost" href="versions.html">Choosing a version ▸</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

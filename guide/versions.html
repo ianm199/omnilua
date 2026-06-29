@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Choosing a version — omniLua docs</title>
+  <meta name="description" content="Pick a Lua version (5.1 through 5.5) per instance, from one build, and know the differences that matter — integers vs floats, math.random, and the stdlib roster.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="./docs.js" defer></script>
+</head>
+<body>
+  <main class="frame">
+    <div class="docs-layout">
+      <aside class="docs-side" id="docs-side"></aside>
+      <article class="doc">
+        <div class="doc-lede">
+          <h1>Choosing a <em>version</em></h1>
+          <p>All five versions run from one build. Pick one per instance; the rest of the API is the same across versions.</p>
+        </div>
+
+        <section class="doc-sec">
+          <h2>Selecting a version</h2>
+          <div class="codeblock">
+            <div class="cb-head">rust</div>
+            <pre><span class="kw">use</span> omnilua::{Lua, LuaVersion};
+<span class="kw">let</span> lua = Lua::new_versioned(LuaVersion::V53);</pre>
+          </div>
+          <div class="codeblock">
+            <div class="cb-head">CLI / wasm</div>
+            <pre><span class="pr">$</span> OMNILUA_VERSION=5.3 omnilua script.lua
+<span class="cm">// js: loadLuaRs(luaRsWasmUrl, { version: "5.3" })</span></pre>
+          </div>
+          <p>The default is 5.4. 5.4 is the most thoroughly tested; it passes the full official PUC-Rio suite. The others run their own upstream suites and are checked against the reference <code>lua</code> binary.</p>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Differences that matter</h2>
+          <ul>
+            <li><b>Numbers.</b> 5.1 and 5.2 have no integer type — every number is a float. 5.3+ have integers, so <code>3 / 3</code> prints <code>1.0</code> on 5.4 and <code>1</code> on 5.1.</li>
+            <li><b><code>math.random</code>.</b> Uses a Rust PRNG, so the sequence won't match reference C.</li>
+            <li><b>Standard library.</b> The version sets the roster: <code>bit32</code> is 5.2 only; <code>utf8</code> and <code>string.pack</code> are 5.3+; <code>goto</code> is 5.2+.</li>
+          </ul>
+          <div class="note">
+            <span class="nl">See it</span>
+            <p>The <a href="../index.html#playground">playground</a> runs one snippet across all five versions so you can watch the output diverge.</p>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Next</h2>
+          <div class="next">
+            <a class="btn" href="embedding.html">The embedding API ▸</a>
+            <a class="btn ghost" href="game-scripting.html">Game scripting ▸</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sandboxing scripts — omniLua docs</title>
+  <meta name="description" content="Run untrusted Lua with hard CPU and memory limits and the standard library removed. The limits can't be caught from Lua and refill per run.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="./docs.js" defer></script>
+</head>
+<body>
+  <main class="frame">
+    <div class="docs-layout">
+      <aside class="docs-side" id="docs-side"></aside>
+      <article class="doc">
+        <div class="doc-lede">
+          <h1>Sandboxing <em>scripts</em></h1>
+          <p>Run scripts you don't trust — mods, plugins, user submissions — with hard CPU and memory limits and host access removed.</p>
+        </div>
+
+        <section class="doc-sec">
+          <h2>Set limits and run</h2>
+          <p><code>Lua::sandboxed</code> returns a Lua state plus a handle to refill its budget. The limits apply to every thread, including coroutines, and can't be caught with <code>pcall</code>.</p>
+          <div class="codeblock">
+            <div class="cb-head">rust</div>
+            <pre><span class="kw">use</span> omnilua::{Lua, SandboxConfig};
+
+<span class="kw">let</span> (lua, sandbox) = Lua::sandboxed(SandboxConfig::strict())?;
+lua.load(untrusted_source).exec().ok();
+sandbox.reset(); <span class="cm">// refill the budget before the next run</span></pre>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>What strict mode does</h2>
+          <ul>
+            <li>Caps total instructions and memory; exceeding either stops the run.</li>
+            <li>Removes host access (no <code>os.execute</code>, <code>io</code>, <code>require</code>, <code>load</code>, <code>debug</code>).</li>
+            <li>Refills on <code>reset()</code>, so one state can run many scripts.</li>
+          </ul>
+          <div class="note">
+            <span class="nl">In the browser</span>
+            <p>The same sandbox is available over wasm with <code>setLimits</code>. See <a href="browser.html">Lua in the browser</a>.</p>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Next</h2>
+          <div class="next">
+            <a class="btn" href="game-scripting.html">Game scripting ▸</a>
+            <a class="btn ghost" href="embedding.html">The embedding API ▸</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

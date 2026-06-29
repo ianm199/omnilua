@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game scripting — omniLua docs</title>
+  <meta name="description" content="Embed omniLua to script your game in Lua, lend engine state into Lua for one call, and keep your scripting when the game ships to the browser (wasm).">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="./docs.js" defer></script>
+</head>
+<body>
+  <main class="frame">
+    <div class="docs-layout">
+      <aside class="docs-side" id="docs-side"></aside>
+      <article class="doc">
+        <div class="doc-lede">
+          <h1>Game <em>scripting</em></h1>
+          <p>Embed omniLua to script your game in Lua. Because it's pure Rust, the scripting comes along when the game ships to the browser — which a C-backed Lua can't do.</p>
+        </div>
+
+        <section class="doc-sec">
+          <h2>Why Lua scripting that runs on the web</h2>
+          <p>Most Rust game engines reach for a C-backed Lua (mlua, usually with LuaJIT) for scripting. Those can't compile to <code>wasm32-unknown-unknown</code>, so a game that targets the browser has to drop Lua or switch scripting languages for the web build.</p>
+          <p>omniLua is written in Rust and compiles to the same target your game does. The Lua you script with on desktop is the Lua that runs in the browser — one scripting layer, every platform.</p>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Add omniLua</h2>
+          <div class="codeblock">
+            <div class="cb-head">Cargo.toml</div>
+            <pre>omnilua = <span class="str">"0.4"</span></pre>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Expose game actions to Lua</h2>
+          <p>Implement <code>UserData</code> on a type to give Lua methods that act on it. Here a small game exposes <code>spawn</code>:</p>
+          <div class="codeblock">
+            <div class="cb-head">game.rs<span class="lang">rust</span></div>
+            <pre><span class="kw">use</span> omnilua::{Lua, UserData, UserDataMethods};
+
+<span class="kw">struct</span> Game { entities: Vec&lt;String&gt; }
+
+<span class="kw">impl</span> UserData <span class="kw">for</span> Game {
+    <span class="kw">fn</span> add_methods&lt;M: UserDataMethods&lt;Self&gt;&gt;(m: &amp;<span class="kw">mut</span> M) {
+        m.add_method_mut(<span class="str">"spawn"</span>, |_, game, name: String| {
+            game.entities.push(name);
+            Ok(())
+        });
+    }
+}</pre>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Lend the game to Lua for one call</h2>
+          <p>Game state isn't <code>'static</code>, so you can't store it in Lua globals. <code>scope</code> lends a <code>&amp;mut</code> borrow to Lua for the duration of one call. When the scope ends, any Lua handle to it is invalidated — using it returns an error instead of dangling.</p>
+          <div class="codeblock">
+            <div class="cb-head">one update<span class="lang">rust</span></div>
+            <pre><span class="kw">let</span> lua = Lua::new();
+<span class="kw">let mut</span> game = Game { entities: vec![] };
+
+lua.scope(|s| {
+    <span class="kw">let</span> g = s.create_userdata_ref_mut(&amp;lua, &amp;<span class="kw">mut</span> game)?;
+    lua.globals().set(<span class="str">"game"</span>, &amp;g)?;
+    lua.load(<span class="str">r#"game:spawn("goblin")"#</span>).exec()
+})?;
+<span class="cm">// `game.entities` now contains "goblin"</span></pre>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Run a script each frame</h2>
+          <p>In your update step, compile the script once and run it each frame with the world lent in. Use <code>Chunk::into_function</code> to parse a script a single time and call it repeatedly:</p>
+          <div class="codeblock">
+            <div class="cb-head">update loop<span class="lang">rust</span></div>
+            <pre><span class="cm">// once, at load:</span>
+<span class="kw">let</span> tick = lua.load(player_script).into_function()?;
+
+<span class="cm">// each frame:</span>
+lua.scope(|s| {
+    <span class="kw">let</span> g = s.create_userdata_ref_mut(&amp;lua, &amp;<span class="kw">mut</span> game)?;
+    lua.globals().set(<span class="str">"game"</span>, &amp;g)?;
+    tick.call::&lt;_, ()&gt;(())
+})?;</pre>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Ship to the browser</h2>
+          <p>Build for the web the same way you build any wasm Rust game. The Lua runtime is already pure Rust, so nothing extra is needed for scripting:</p>
+          <div class="codeblock">
+            <div class="cb-head">shell</div>
+            <pre><span class="pr">$</span> cargo build --target wasm32-unknown-unknown --release</pre>
+          </div>
+          <p>The in-repo <a href="https://github.com/ianm199/omnilua/tree/main/examples/bevy">Bevy example</a> drives an entity from a Lua script each frame and builds to wasm.</p>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Player mods and untrusted scripts</h2>
+          <p>If players can supply their own scripts, run them in a sandbox with CPU and memory limits and the standard library removed. See <a href="sandboxing.html">Sandboxing scripts</a>.</p>
+          <div class="note">
+            <span class="nl">Try it</span>
+            <p>Open the <a href="../index.html#playground">playground</a> and paste a Lua snippet to see it run across all five versions.</p>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Next</h2>
+          <div class="next">
+            <a class="btn" href="sandboxing.html">Sandboxing scripts ▸</a>
+            <a class="btn ghost" href="embedding.html">The embedding API ▸</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

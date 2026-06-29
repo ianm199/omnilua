@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>omniLua docs</title>
+  <meta name="description" content="How to run Lua with omniLua — on the command line, embedded in Rust, or in the browser. Install, a first embed, and guides for game scripting, the browser, sandboxing, and more.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="./docs.js" defer></script>
+</head>
+<body>
+  <main class="frame">
+    <div class="docs-layout">
+      <aside class="docs-side" id="docs-side"></aside>
+      <article class="doc">
+        <div class="doc-lede">
+          <h1>omniLua <em>docs</em></h1>
+          <p>How to run Lua with omniLua — on the command line, embedded in a Rust program, or in the browser. Start here, then jump to a guide for whatever you're building.</p>
+        </div>
+
+        <section class="doc-sec" id="install">
+          <h2>Install</h2>
+          <p>Pick the surface you need. All three run the same Lua.</p>
+          <div class="codeblock">
+            <div class="cb-head">command line<span class="lang">shell</span></div>
+            <pre><span class="pr">$</span> cargo install omnilua-cli   <span class="cm"># installs the `omnilua` binary</span></pre>
+          </div>
+          <div class="codeblock">
+            <div class="cb-head">embed in Rust<span class="lang">Cargo.toml</span></div>
+            <pre>omnilua = <span class="str">"0.4"</span></pre>
+          </div>
+          <div class="codeblock">
+            <div class="cb-head">browser / Node<span class="lang">shell</span></div>
+            <pre><span class="pr">$</span> npm install omnilua</pre>
+          </div>
+        </section>
+
+        <section class="doc-sec" id="embed">
+          <h2>Your first embed</h2>
+          <p>Create a Lua state, register a Rust function, and run a script:</p>
+          <div class="codeblock">
+            <div class="cb-head">main.rs<span class="lang">rust</span></div>
+            <pre><span class="kw">use</span> omnilua::Lua;
+
+<span class="kw">let</span> lua = Lua::new();
+<span class="kw">let</span> greet = lua.create_function(|_, name: String| Ok(<span class="kw">format!</span>(<span class="str">"hello, {name}"</span>)))?;
+lua.globals().set(<span class="str">"greet"</span>, greet)?;
+lua.load(<span class="str">r#"print(greet("omniLua"))"#</span>).exec()?;
+<span class="cm">// hello, omniLua</span></pre>
+          </div>
+          <p>To run Lua snippets without installing anything, use the <a href="../index.html#playground">playground</a> — it runs all five versions in the browser.</p>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Guides</h2>
+          <p>Each guide covers one thing you might build.</p>
+          <ul>
+            <li><a href="game-scripting.html">Game scripting</a> — embed omniLua in your engine and keep Lua working when the game ships to the browser.</li>
+            <li><a href="browser.html">Lua in the browser</a> — run Lua in a web page or Node from the npm package.</li>
+            <li><a href="embedding.html">Embedding in Rust</a> — the API: functions, userdata, tables, errors.</li>
+            <li><a href="sandboxing.html">Sandboxing scripts</a> — run untrusted scripts with CPU and memory limits.</li>
+            <li><a href="from-mlua.html">Coming from mlua</a> — what maps across, and what differs.</li>
+            <li><a href="versions.html">Choosing a version</a> — pick among Lua 5.1–5.5 and know what changes.</li>
+          </ul>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

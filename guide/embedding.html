@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embedding in Rust — omniLua docs</title>
+  <meta name="description" content="The omnilua embedding API: create a state, call between Rust and Lua, pass values and userdata, lend borrows with scope, and handle errors.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="./docs.js" defer></script>
+</head>
+<body>
+  <main class="frame">
+    <div class="docs-layout">
+      <aside class="docs-side" id="docs-side"></aside>
+      <article class="doc">
+        <div class="doc-lede">
+          <h1>Embedding in <em>Rust</em></h1>
+          <p>The <code>omnilua</code> crate has an API close to mlua's. This page covers the basics; the full reference is on <a href="https://docs.rs/omnilua">docs.rs</a>.</p>
+        </div>
+
+        <section class="doc-sec">
+          <h2>Run code, call functions</h2>
+          <div class="codeblock">
+            <div class="cb-head">rust</div>
+            <pre><span class="kw">use</span> omnilua::Lua;
+
+<span class="kw">let</span> lua = Lua::new();
+lua.load(<span class="str">"x = 1 + 2"</span>).exec()?;
+<span class="kw">let</span> x: i64 = lua.globals().get(<span class="str">"x"</span>)?;        <span class="cm">// 3</span>
+<span class="kw">let</span> sum: i64 = lua.load(<span class="str">"return 6 * 7"</span>).eval()?;  <span class="cm">// 42</span></pre>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Expose Rust to Lua</h2>
+          <div class="codeblock">
+            <div class="cb-head">rust</div>
+            <pre><span class="kw">let</span> add = lua.create_function(|_, (a, b): (i64, i64)| Ok(a + b))?;
+lua.globals().set(<span class="str">"add"</span>, add)?;
+lua.load(<span class="str">"print(add(2, 3))"</span>).exec()?; <span class="cm">// 5</span></pre>
+          </div>
+          <p>Implement <code>UserData</code> to give a Rust type methods callable from Lua. To lend non-<code>'static</code> state for one call, use <code>scope</code> — see <a href="game-scripting.html">Game scripting</a>.</p>
+        </section>
+
+        <section class="doc-sec">
+          <h2>More</h2>
+          <ul>
+            <li>Conversions for primitives, strings, <code>Option</code>, <code>Vec</code>, <code>HashMap</code>, tuples, and serde types (<code>serde</code> feature).</li>
+            <li>Registry keys, bytecode dump/load, tracebacks, GC control, and host-driven coroutines.</li>
+            <li>Async host functions with the <code>async</code> feature.</li>
+          </ul>
+          <div class="note">
+            <span class="nl">Reference</span>
+            <p>Every type and method is documented on <a href="https://docs.rs/omnilua">docs.rs/omnilua</a>.</p>
+          </div>
+        </section>
+
+        <section class="doc-sec">
+          <h2>Next</h2>
+          <div class="next">
+            <a class="btn" href="from-mlua.html">Coming from mlua ▸</a>
+            <a class="btn ghost" href="sandboxing.html">Sandboxing scripts ▸</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

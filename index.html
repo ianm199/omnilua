@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>omniLua — every Lua, everywhere</title>
+  <title>omniLua — Lua 5.1–5.5 in Rust</title>
   <meta name="description" content="One pure-Rust runtime for Lua 5.1–5.5 — standalone, embedded in Rust, or in the browser. No C dependency, no unsafe FFI. Passes the official PUC-Rio suites; runs stock LuaRocks. Try five Luas side by side, in-page.">
-  <meta property="og:title" content="omniLua — every Lua, everywhere">
+  <meta property="og:title" content="omniLua — Lua 5.1–5.5 in Rust">
   <meta property="og:description" content="One pure-Rust runtime for Lua 5.1–5.5: standalone, embedded, or in the browser. No C dependency. Run one snippet across all five versions, live.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://ianm199.github.io/omnilua/">
   <meta property="og:image" content="https://ianm199.github.io/omnilua/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="omniLua — every Lua, everywhere">
+  <meta name="twitter:title" content="omniLua — Lua 5.1–5.5 in Rust">
   <meta name="twitter:description" content="One pure-Rust runtime for Lua 5.1–5.5. Run one snippet across all five versions, in the browser.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f4efe4'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-style='italic' font-weight='700' fill='%23221c15' text-anchor='middle'%3Eo%3Ctspan fill='%23b3411f'%3EL%3C/tspan%3E%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -24,9 +24,10 @@
     <div class="frame">
       <a class="wordmark" href="#top">omniLua</a>
       <nav class="mast-nav">
-        <a href="#capabilities">Capabilities</a>
         <a href="#playground">Playground</a>
-        <a href="./docs.html">Docs</a>
+        <a href="#why">Why omniLua</a>
+        <a href="#use-cases">Use cases</a>
+        <a href="https://docs.rs/omnilua">Docs ↗</a>
         <a href="./performance.html">Performance</a>
         <a class="cta" href="https://github.com/ianm199/omnilua">GitHub ↗</a>
       </nav>
@@ -36,12 +37,12 @@
   <main class="frame" id="top">
     <section class="hero hero-split">
       <div class="hero-pitch">
-        <h1 class="rise">Every Lua,<br><em>everywhere.</em></h1>
-        <p class="sub rise d1">omniLua is a Lua interpreter written in pure, safe Rust. One codebase runs Lua 5.1 through 5.5 with no C dependency — on the command line, embedded in a Rust program, or in the browser and Node.</p>
+        <h1 class="rise">Lua 5.1–5.5,<br>written in <em>Rust</em>.</h1>
+        <p class="sub rise d1">omniLua is a Lua interpreter written in Rust. It runs Lua 5.1 through 5.5 on the command line, embedded in your code, or in the browser. No C dependency.</p>
         <div class="hero-cta rise d2">
           <span class="cmd"><span class="pr">$</span> cargo install omnilua-cli</span>
         </div>
-        <p class="proof rise d3">It passes the official PUC-Rio test suites, runs the stock LuaRocks client, and keeps <code>unsafe</code> out of everything but the garbage collector.</p>
+        <p class="proof rise d3">It passes the official PUC-Rio test suite and runs the stock LuaRocks client.</p>
       </div>
 
       <div class="hero-demo rise d2">
@@ -127,98 +128,104 @@ lua.exec(<span class="str">"print(6 * 7)"</span>);</pre>
       <div id="gallery" class="gallery"></div>
     </section>
 
-    <section id="capabilities">
+    <section id="why">
       <div class="sec-head">
-        <span class="sec-num">§&nbsp;01</span>
-        <h2>Capabilities</h2>
+        <h2>Why omniLua</h2>
         <span class="sec-rule"></span>
       </div>
 
-      <p class="lead">It's one runtime underneath: the same code runs Lua 5.1 through 5.5, chosen at startup, and builds either natively or to <code>wasm32</code> from a single source.</p>
+      <p class="lead">omniLua is written in Rust, so the same build runs natively and compiles to WebAssembly. mlua and rlua are C-backed and can't run in the browser. That, plus five Lua versions from one build and a sandbox for untrusted scripts, is the reason to pick it.</p>
 
-      <div class="modes">
+      <table class="spec">
+        <thead><tr><th></th><th>omniLua</th><th>mlua</th></tr></thead>
+        <tbody>
+          <tr><td>Pure Rust, no C</td><td>yes</td><td>no</td></tr>
+          <tr><td>Runs in the browser (wasm)</td><td>yes</td><td>no</td></tr>
+          <tr><td>Lua versions</td><td>5.1–5.5</td><td>one per build</td></tr>
+          <tr><td>Sandbox for untrusted scripts</td><td>yes</td><td>Luau only</td></tr>
+          <tr><td>LuaJIT speed</td><td>no</td><td>yes</td></tr>
+        </tbody>
+      </table>
+      <p class="methodology">Use mlua if you need LuaJIT speed or a mature C binding. Use omniLua for the browser, multiple versions, or a sandbox.</p>
+    </section>
+
+    <section id="use-cases">
+      <div class="sec-head">
+        <h2>What you can build</h2>
+        <span class="sec-rule"></span>
+      </div>
+
+      <div class="modes" style="grid-template-columns:repeat(3,1fr)">
         <div class="mode">
           <div class="m-idx">i.</div>
-          <h3>Standalone</h3>
-          <div class="m-sub">the omnilua interpreter</div>
-          <p>A drop-in <code>lua</code> for files, one-liners, and the REPL. Pick a version with <code>OMNILUA_VERSION</code>.</p>
-          <div class="m-cmd"><span class="pr">$</span> omnilua script.lua</div>
+          <h3>Game scripting</h3>
+          <div class="m-sub">embed in your engine</div>
+          <p>Script your game in Lua and keep that scripting when the game ships to the browser. The repo has a Bevy example that drives an entity from Lua each frame and builds to wasm.</p>
+          <div class="m-cmd"><span class="pr">#</span> omnilua = "0.4"</div>
         </div>
         <div class="mode">
           <div class="m-idx">ii.</div>
-          <h3>Embedded</h3>
-          <div class="m-sub">the omnilua crate</div>
-          <p>An <code>mlua</code>-shaped API in pure Rust, with no <code>liblua</code> and no C toolchain. Borrow host state with <code>scope</code>, or sandbox untrusted scripts.</p>
-          <div class="m-cmd"><span class="pr">#</span> omnilua = "0.2"</div>
+          <h3>Untrusted scripts</h3>
+          <div class="m-sub">mods, plugins, user code</div>
+          <p>Run user-supplied scripts in a sandbox with hard CPU and memory limits and the standard library removed. The limits can't be caught from Lua and refill per run.</p>
+          <div class="m-cmd">Lua::sandboxed(..)</div>
         </div>
         <div class="mode">
           <div class="m-idx">iii.</div>
-          <h3>Browser</h3>
-          <div class="m-sub">npm · wasm</div>
-          <p>The whole runtime as a single <code>.wasm</code> — Lua in the page, with no Emscripten and no bundled interpreter.</p>
+          <h3>Lua everywhere</h3>
+          <div class="m-sub">CLI · Rust · browser · Node</div>
+          <p>One build runs as a command-line interpreter, an embedded Rust library, and an npm package for the browser or Node. All five Lua versions come from the same core.</p>
           <div class="m-cmd"><span class="pr">$</span> npm install omnilua</div>
         </div>
-        <div class="mode">
-          <div class="m-idx">iv.</div>
-          <h3>Node</h3>
-          <div class="m-sub">same package, server-side</div>
-          <p>The same <code>.wasm</code> on the server, with <strong>no node-gyp and no native build</strong>. It runs anywhere JavaScript does.</p>
-          <div class="m-cmd">import "omnilua/node"</div>
-        </div>
       </div>
+    </section>
 
-      <div class="aside">
-        <p>Pure Rust, so it compiles to wasm. Ship a game or app to the browser and the scripting layer comes with it — a C-backed Lua binding <b>can't</b>.
-        <span class="src">— a Bevy demo drives an entity from Lua each frame and builds to wasm32, in the <a href="https://github.com/ianm199/omnilua">repository</a>.</span></p>
+    <section id="proof">
+      <div class="sec-head">
+        <h2>Proof</h2>
+        <span class="sec-rule"></span>
       </div>
 
       <div class="features">
-        <div class="feat"><b>Conformance you can check</b><span>5.4 passes the full upstream PUC-Rio suite; <code>./harness/run_official_all.sh</code> reports the live count against the unmodified tests.</span></div>
-        <div class="feat"><b>Sandboxing</b><span>Untrusted scripts get uncatchable CPU and memory caps with host access stripped — <code>Lua::sandboxed(SandboxConfig::strict())</code>, refillable per run.</span></div>
-        <div class="feat"><b>Scoped borrows</b><span><code>Lua::scope</code> lends a non-<code>'static</code> borrow (a game engine's <code>&mut World</code>) for one call; an escaped handle errors cleanly instead of dangling.</span></div>
-        <div class="feat"><b>LuaRocks</b><span>Runs the stock LuaRocks 3.11.1 client and installs pure-Lua rocks — <code>inspect</code>, <code>dkjson</code>, <code>argparse</code>, <code>middleclass</code>, <code>say</code>, <code>luassert</code>.</span></div>
-        <div class="feat"><b>Memory safety, measured</b><span>Zero <code>unsafe</code> outside the GC, the dylib loader, and the wasm ABI. The safety tax is measured at ~0%, not assumed.</span></div>
-        <div class="feat"><b>One core, five versions</b><span>Float-only 5.1/5.2 through integer-aware 5.3/5.4/5.5 — one dispatch loop, chosen at runtime.</span></div>
+        <div class="feat"><b>Official test suite</b><span>5.4 passes the full upstream PUC-Rio suite, run unmodified by <code>./harness/run_official_all.sh</code>.</span></div>
+        <div class="feat"><b>LuaRocks</b><span>Runs the stock LuaRocks 3.11.1 client and installs pure-Lua rocks such as <code>inspect</code>, <code>dkjson</code>, and <code>argparse</code>.</span></div>
+        <div class="feat"><b>Memory safety</b><span>No <code>unsafe</code> outside the garbage collector, the dynamic-library loader, and the wasm ABI.</span></div>
       </div>
 
       <table class="spec">
-        <caption>Supported versions — verified against the reference, per version</caption>
-        <thead><tr><th>Version</th><th>Status</th><th>Verified against</th></tr></thead>
+        <caption>Each version is tested against real Lua</caption>
+        <thead><tr><th>Version</th><th>Tested against</th></tr></thead>
         <tbody>
-          <tr><td>5.4</td><td><span class="pill stable">stable · production</span></td><td>Full upstream PUC-Rio suite</td></tr>
-          <tr><td>5.3 / 5.5</td><td><span class="pill beta">beta · long tails closed</span></td><td>Their own upstream test trees + reference binary</td></tr>
-          <tr><td>5.1 / 5.2</td><td><span class="pill beta">supported</span></td><td>Behavioral battery + upstream example programs</td></tr>
+          <tr><td>5.4</td><td>The full official PUC-Rio suite</td></tr>
+          <tr><td>5.3 / 5.5</td><td>Their own upstream test suites</td></tr>
+          <tr><td>5.1 / 5.2</td><td>The reference <code>lua</code> binary</td></tr>
         </tbody>
       </table>
-      <p class="methodology">This is Lua source/runtime compatibility, not C&nbsp;API/ABI compatibility. 5.1/5.2 are float-only number families; <code>math.random</code> sequences differ from C (host PRNG). Native C rocks are not supported in LuaRocks yet — pure-Lua rocks are.</p>
+      <p class="methodology">This is Lua source compatibility, not C API/ABI compatibility. 5.1 and 5.2 have no integer type, and <code>math.random</code> uses a Rust PRNG, so its sequence differs from C.</p>
     </section>
 
 
     <section id="performance">
       <div class="sec-head">
-        <span class="sec-num">§&nbsp;02</span>
         <h2>Performance</h2>
         <span class="sec-rule"></span>
       </div>
-      <p class="sec-intro">Competitive with reference C, not faster, not LuaJIT. Numbers tracked per-commit; the cost of safety is measured.</p>
+      <p class="sec-intro">Competitive with reference C, tracked per commit. It's an interpreter, not a JIT.</p>
 
       <div class="stats">
-        <div class="stat"><div class="s-num">1.37<span class="x">×</span></div><div class="s-lbl">wall-time geomean<br>vs reference C (stock)</div></div>
+        <div class="stat"><div class="s-num">1.37<span class="x">×</span></div><div class="s-lbl">wall-time geomean<br>vs reference C</div></div>
         <div class="stat win"><div class="s-num">0.42<span class="x">×</span></div><div class="s-lbl">fastest workload<br>2.4× faster than C</div></div>
-        <div class="stat win"><div class="s-num">~0<span class="x">%</span></div><div class="s-lbl">safety tax<br>bounds checks + guards</div></div>
-        <div class="stat"><div class="s-num">1.72<span class="x">×</span></div><div class="s-lbl">peak memory geomean<br>vs reference C</div></div>
+        <div class="stat win"><div class="s-num">~0<span class="x">%</span></div><div class="s-lbl">safety cost<br>bounds checks + guards</div></div>
       </div>
 
-      <p class="lead" style="margin-top:40px">The gap to C is <em style="font-style:italic;color:var(--accent)">representation, not safety</em>. Bounds checks and <code>RefCell</code> guards cost ~0% of wall time; three workloads already beat C outright.</p>
-      <div class="hero-cta">
-        <a class="btn" href="./performance.html">Full benchmarks &amp; methodology ▸</a>
-        <a class="btn ghost" href="./harness/bench/history/">Live per-commit dashboard ↗</a>
+      <div class="hero-cta" style="margin-top:32px">
+        <a class="btn" href="./performance.html">Full benchmarks ▸</a>
+        <a class="btn ghost" href="./harness/bench/history/">Live dashboard ↗</a>
       </div>
     </section>
 
     <section id="install">
       <div class="sec-head">
-        <span class="sec-num">§&nbsp;03</span>
         <h2>Get omniLua</h2>
         <span class="sec-rule"></span>
       </div>
@@ -230,7 +237,7 @@ lua.exec(<span class="str">"print(6 * 7)"</span>);</pre>
         </div>
         <div class="install">
           <div class="ih">Embed in Rust</div>
-          <code><span class="cm"># Cargo.toml</span><br>omnilua = "0.2"</code>
+          <code><span class="cm"># Cargo.toml</span><br>omnilua = "0.4"</code>
         </div>
         <div class="install">
           <div class="ih">Browser / Node</div>
@@ -261,7 +268,7 @@ lua.load(<span style="color:var(--good)">r#"print(greet("omniLua"))"#</span>).ex
         <a href="https://docs.rs/omnilua">docs.rs ↗</a>
         <a href="./performance.html">Performance</a>
       </div>
-      <p class="honesty">≈1.37× of reference-C wall time (≈1.3× with PGO). Not LuaJIT — if you need that speed or a mature binding, use <a href="https://github.com/mlua-rs/mlua">mlua</a>. 5.4 is production-ready; the rest are newer.</p>
+      <p class="fineprint">omniLua is an interpreter, about 1.37× reference-C wall time (1.3× with PGO). For LuaJIT speed, use <a href="https://github.com/mlua-rs/mlua">mlua</a>.</p>
       <p class="colophon">omniLua is a port of <a href="https://www.lua.org/">Lua</a>, created by Roberto Ierusalimschy, Luiz Henrique de Figueiredo, and Waldemar Celes at PUC-Rio. Lua and this port are both distributed under the MIT license. <em>Set in Fraunces, Spectral &amp; IBM&nbsp;Plex&nbsp;Mono.</em></p>
     </div>
   </footer>

@@ -355,7 +355,7 @@ textarea#code::selection { background: rgba(179, 65, 31, 0.20); }
 footer { border-top: 1px solid var(--rule-strong); padding: 54px 0 64px; margin-top: 20px; }
 footer .flinks { display: flex; flex-wrap: wrap; gap: 26px; font-family: var(--mono); font-size: 14px; margin-bottom: 30px; }
 footer .flinks a { color: var(--ink); }
-footer .honesty { max-width: 760px; color: var(--ink-soft); font-size: 17px; line-height: 1.55; margin: 0 0 16px; }
+footer .fineprint { max-width: 760px; color: var(--ink-soft); font-size: 17px; line-height: 1.55; margin: 0 0 16px; }
 footer .colophon { max-width: 760px; font-size: 14.5px; color: var(--muted); line-height: 1.55; border-top: 1px solid var(--rule); padding-top: 22px; margin-top: 30px; }
 footer .colophon em { font-style: italic; color: var(--ink-soft); }
 

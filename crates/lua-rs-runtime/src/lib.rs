@@ -2273,7 +2273,12 @@ impl Table {
             let key_raw = key.to_raw_for_lua(&lua, state)?;
             let value_raw = value.to_raw_for_lua(&lua, state)?;
             let table_raw = self.raw_table_in_state(&lua, state)?;
-            table_raw.try_raw_set(key_raw, value_raw).map_err(Error::from)
+            // `table_raw_set` barriers a newly inserted key; the value needs
+            // its own barrier, as in the C API's `lua_rawset`.
+            state.gc_table_barrier_back(&table_raw, &value_raw);
+            state
+                .table_raw_set(&RawLuaValue::Table(table_raw), key_raw, value_raw)
+                .map_err(Error::from)
         })
     }
 

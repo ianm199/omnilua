@@ -74,3 +74,29 @@ fn is_running_is_unavailable_before_5_2() {
     lua.gc().stop().unwrap();
     lua.gc().restart().unwrap();
 }
+
+#[test]
+fn gc_collect_runs_pending_finalizers() {
+    let lua = Lua::new();
+    lua.load(
+        "finalized = 0
+         local mt = {__gc = function() finalized = finalized + 1 end}
+         for i = 1, 10 do setmetatable({}, mt) end",
+    )
+    .exec()
+    .unwrap();
+    lua.gc_collect();
+    lua.gc_collect();
+    let n: i64 = lua.globals().get("finalized").unwrap();
+    assert_eq!(n, 10);
+}
+
+#[test]
+fn gc_collect_discards_finalizer_errors() {
+    let lua = Lua::new_versioned(LuaVersion::V53);
+    lua.load("setmetatable({}, {__gc = function() error('in gc') end})")
+        .exec()
+        .unwrap();
+    lua.gc_collect();
+    lua.gc().collect().unwrap();
+}

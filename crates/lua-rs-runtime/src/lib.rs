@@ -2334,17 +2334,27 @@ impl Table {
 
     /// Install (or clear, with `None`) this table's metatable from Rust.
     ///
-    /// Wraps the raw [`RawLuaTable::set_metatable`]; no `__metatable`
-    /// protection check is performed (that is a stdlib `setmetatable`
-    /// concern, not a raw operation).
+    /// Goes through the same path as the C API's `lua_setmetatable`, so the
+    /// write barrier runs, a `__mode` metatable makes the table weak, and a
+    /// `__gc` metatable registers the table for finalization (5.2+). No
+    /// `__metatable` protection check is performed (that is a stdlib
+    /// `setmetatable` concern, not a raw operation). A metatable from a
+    /// different [`Lua`] is an error.
     pub fn set_metatable(&self, metatable: Option<&Table>) -> Result<()> {
-        let table_raw = self.raw_table()?;
-        let mt_raw = match metatable {
-            Some(mt) => Some(mt.raw_table()?),
-            None => None,
-        };
-        table_raw.set_metatable(mt_raw);
-        Ok(())
+        let lua = self.root.lua.clone();
+        lua.with_state(|state| {
+            let table_raw = self.raw_table_in_state(&lua, state)?;
+            let mt_raw = match metatable {
+                Some(mt) => RawLuaValue::Table(mt.raw_table_in_state(&lua, state)?),
+                None => RawLuaValue::Nil,
+            };
+            let saved_top = state.top_idx();
+            state.push(RawLuaValue::Table(table_raw));
+            state.push(mt_raw);
+            let result = lua_vm::api::set_metatable(state, -2);
+            state.set_top_idx(saved_top);
+            result.map(|_| ()).map_err(Error::from)
+        })
     }
 
     /// Read this table's installed metatable, if any, as a rooted

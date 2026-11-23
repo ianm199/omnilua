@@ -9,7 +9,7 @@ integration tests rather than from prose. **Do not trust a hardcoded status here
 over the source** — confirm any claim with the matching test file in
 `crates/lua-rs-runtime/tests/` and the live backlog (`gh issue list`). The parity
 push and the remaining-gap reconciliation live in
-[EMBEDDING_PARITY_TIER_ATTACK_PLAN.md](EMBEDDING_PARITY_TIER_ATTACK_PLAN.md); the
+[EMBEDDING_PARITY_TIER_ATTACK_PLAN.md](archive/EMBEDDING_PARITY_TIER_ATTACK_PLAN.md); the
 design rationale lives in [docs/design/EMBEDDING_API.md](design/EMBEDDING_API.md).
 
 ## Public Surface

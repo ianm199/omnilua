@@ -68,8 +68,8 @@ lua.scope(|s| {
 })?;
 ```
 
-For untrusted scripts, the sandbox enforces CPU and memory limits and removes
-the standard library:
+For untrusted scripts, the sandbox limits instructions and memory and removes
+code loading, `io`, `debug`, `package` and the host-access parts of `os`:
 
 ```rust
 let (lua, sandbox) = Lua::sandboxed(SandboxConfig::strict())?;
@@ -85,7 +85,9 @@ the browser. See [`examples/bevy/`](examples/bevy/).
 
 All five versions run from the same core and are tested against the reference
 Lua implementation. Version 5.4 is the most thoroughly tested and passes the
-full official PUC-Rio test suite.
+official PUC-Rio test suite, run with its portable `_soft`/`_port` settings
+(which skip the heaviest and platform-specific checks). Version 5.5 passes its
+official suite the same way.
 
 Two behavioral notes: 5.1 and 5.2 have no integer type, so all numbers are
 floats, and `math.random` uses Rust's PRNG and does not reproduce C's sequence.

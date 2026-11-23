@@ -12,7 +12,7 @@ Programs in `reference/lua-c/testes/` that the autonomous harness has plateaued 
 
 ## Why these plateaued (v4 stuck-skip in action)
 
-The harness escalated each from Sonnet → Opus, ran ≥2 Opus rounds, observed no whole-test pass-count progress (despite real commits landing), and marked them `[skip stuck prog (no progress 2 rounds)]`. That's the intended behavior — stop pouring $10/round into agent attempts that keep peeling layers without converging. Captured in `docs/RETROSPECTIVE_AND_PRODUCTIZATION.md` §11.
+The harness escalated each from Sonnet → Opus, ran ≥2 Opus rounds, observed no whole-test pass-count progress (despite real commits landing), and marked them `[skip stuck prog (no progress 2 rounds)]`. That's the intended behavior — stop pouring $10/round into agent attempts that keep peeling layers without converging. Captured in `docs/archive/RETROSPECTIVE_AND_PRODUCTIZATION.md` §11.
 
 ## How agents *do* make progress on these — without passing them
 

@@ -4,13 +4,13 @@ Status: **IMPLEMENTED in v0.0.22** — 5.2 via the 5.2-bridge phase, 5.1 via the
 5.1-legacy phase (fenv globals landed via Option B, as recommended below).
 Retained as the design record; for the as-built methodology see
 [`MULTIVERSION_PLAYBOOK.md`](MULTIVERSION_PLAYBOOK.md), and for shipped-vs-deferred
-see `specs/followup/PHASE_D_5.1_REPORT.md` / `PHASE_D_5.2_REPORT.md`. Audience:
+see `specs/archive/followup/PHASE_D_5.1_REPORT.md` / `PHASE_D_5.2_REPORT.md`. Audience:
 anyone touching the 5.1/5.2 backends.
 
 Inputs this spec is built on (read them first):
-- `specs/research/5.1-5.2-upstream.md` — the upstream delta map (number model,
+- `specs/archive/research/5.1-5.2-upstream.md` — the upstream delta map (number model,
   globals model, opcodes, stdlib, metamethods, GC, oracle pinning).
-- `specs/research/lua-rs-current-seams.md` — where 5.4 assumptions are baked
+- `specs/archive/research/lua-rs-current-seams.md` — where 5.4 assumptions are baked
   into the current code and where version seams naturally go.
 
 Pins (the oracle): **Lua 5.1.5** and **Lua 5.2.4** — final point releases.

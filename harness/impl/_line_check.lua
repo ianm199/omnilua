@@ -1,5 +1,0 @@
-print("L1")
-print("L2")
-print("L3")
-print("L4")
-assert(false, "this is line 5")

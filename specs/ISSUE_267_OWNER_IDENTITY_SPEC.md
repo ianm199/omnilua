@@ -49,7 +49,7 @@ is legible:
 
 1. **The shipped `GcHeader` is 24 B on 64-bit / 16 B on wasm32, not 8 B.** The 8 B figure
    is the #113 W2 target, which was **measured-negative and closed unmerged** (only W1
-   landed — see `docs/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`). The current 24 B layout
+   landed — see `docs/archive/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`). The current 24 B layout
    has **one spare padding byte**, so a **u8 owner tag is free** and a **u32 owner-id costs
    +8 B/box** on 64-bit (24→32; +4 B on wasm32, 16→20). `size_of` verified in §7.
 2. **"A slot-index handle resurrects W2, therefore it is measured-negative"** is not a
@@ -327,7 +327,7 @@ owns a slot table `slots: Vec<Option<NonNull<GcBox>>>`; a global/generational re
   exclusive/`&mut` lifetime, returning an access guard instead of `&T`, pinning/rooting for
   the borrow's extent, or removing safe `Deref`.
 - **This is not the W2 architecture and W2's RSS number does not apply.** W2
-  (`docs/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`) kept raw-pointer `Gc` handles and
+  (`docs/archive/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`) kept raw-pointer `Gc` handles and
   relocated the *owner-list* pointer into a 16 B/slot vector; its measured-negative RSS came
   from that relocation + vector slack, and its Ir was actually −2.7% on binarytrees. A
   slot-*indexed* handle instead adds an indirection to `deref` (the hot path) — a cost W2

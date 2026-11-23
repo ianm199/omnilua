@@ -1,5 +1,0 @@
-1 0 reference/lua-c/testes/gc.lua [opus]
-3 0 reference/lua-c/testes/locals.lua [opus]
-2 0 reference/lua-c/testes/literals.lua [opus]
-4 0 reference/lua-c/testes/files.lua [opus]
-5 0 reference/lua-c/testes/errors.lua [opus]

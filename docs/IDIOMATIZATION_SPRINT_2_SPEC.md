@@ -102,7 +102,7 @@ net now guards it and which algorithm code was left load-bearing.
       `loadlib` #208 — all merged CI-green. The ENTIRE stdlib library surface is
       now idiomatized (11 modules). See the "Stdlib crush" section below.
 - [x] CLOSE: all PRs #196–#208 merged CI-green; board row updated; VM-layer
-      findings filed in `docs/IDIOMATIZATION_VM_FINDINGS.md`; synthesis below.
+      findings filed in `docs/archive/IDIOMATIZATION_VM_FINDINGS.md`; synthesis below.
 
 ## Phase 2 synthesis (module set complete 2026-06-14)
 
@@ -160,7 +160,7 @@ idiomatized.**
 | loadlib | #208 | 16 | **7** | platform FFI left load-bearing; pure-Lua layer pinned |
 
 **Total: 31 cross-version correctness bugs caught and fixed**, plus ~5 deferred
-VM-layer findings (`docs/IDIOMATIZATION_VM_FINDINGS.md`). Every fix
+VM-layer findings (`docs/archive/IDIOMATIZATION_VM_FINDINGS.md`). Every fix
 reference-verified across the affected versions; oracle stayed 181, all official
 suites + `check.sh ×5` (57/54/23/7/10) green throughout; **0 `unsafe` added** (and
 the FFI/VM `unsafe` left untouched); whole idiomatization **performance-neutral**

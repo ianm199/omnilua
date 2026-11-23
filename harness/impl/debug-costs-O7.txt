@@ -1,6 +1,0 @@
-4 0.7598192500000002 reference/lua-c/testes/calls.lua
-5 0.42539250000000006 reference/lua-c/testes/nextvar.lua
-2 1.9200854999999994 reference/lua-c/testes/strings.lua
-1 [2026-05-18T06:03:42Z mega]   → committed 4e234ae (debug/reference/lua-c/testes/gc.lua )
-2.23403275 reference/lua-c/testes/gc.lua
-3 4.06634875 reference/lua-c/testes/literals.lua

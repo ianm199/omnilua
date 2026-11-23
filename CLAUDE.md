@@ -10,12 +10,8 @@ The public artifact is **omniLua**: embedding crate `omnilua` (dir
 `crates/lua-rs-runtime/` unchanged), CLI crate `omnilua-cli` producing the
 `omnilua` binary, npm package `omnilua`. The version env var is
 `OMNILUA_VERSION` (canonical), with `LUA_RS_VERSION` still read as a fallback.
-The local directory `lua-rs-port/` and internal crate names (`lua-vm`, `lua-gc`,
-…) are unchanged — they are implementation paths, not public surfaces.
-
-This repo is one of three siblings under `../`; see **`../CLAUDE.md`** for the
-tree-level story (the AI-agent harness is the real product). Cross-repo
-"who's-doing-what" lives in **`../AGENT_COORDINATION_BOARD.md`**.
+Internal crate names (`lua-vm`, `lua-gc`, …) are implementation paths, not
+public surfaces.
 
 ## Orientation — find current truth, don't trust prose
 
@@ -23,8 +19,8 @@ tree-level story (the AI-agent harness is the real product). Cross-repo
 - **Test status → run the harness** (`harness/run_official_all.sh`). Never trust a
   hardcoded pass-count written in a doc — they rot.
 - **Version → `CHANGELOG.md` / `git tag`.** Don't hardcode it anywhere.
-- Active frontier: generational GC (issues #104, #113) and extracting the harness
-  to `../port-harness` + `../redis-rs-port`.
+- Larger open work: heap-object memory overhead (#113) and stale-handle
+  soundness (#295).
 
 ## The one rule: the oracle is the only truth-teller
 
@@ -80,7 +76,7 @@ non-5.4 divergence, diff the snippet against that version's reference:
 
 **Reference binaries.** `reference/lua-5.4.7/` (port baseline) and
 `reference/lua-5.3.6/` are vendored in-repo — source committed, binaries
-gitignored, build with `make macosx -C reference/lua-5.x`. The multi-version
+gitignored, build with `make -C reference/lua-5.x <platform>` (`linux`, `macosx`). The multi-version
 oracle scripts use `/tmp/lua-refs/bin/lua5.x` (all five versions), pinned in
 `specs/oracle/CONTRACT.md`; rebuild them from there if `/tmp` was cleared.
 
@@ -142,14 +138,13 @@ workload, then `git bisect run` a script that thresholds the best-of-N wall time
 Multiple git worktrees of this repo exist (`git worktree list`). **One branch per
 worktree; never run two agents in the same worktree** — branch pointers collide
 and commits land on the wrong branch (this has happened). For parallel work, give
-each agent its own worktree: `git worktree add ../lua-rs-port-<name> <branch>`.
+each agent its own worktree: `git worktree add ../omnilua-<name> <branch>`.
 **Never `git stash` in a worktree** — `refs/stash` is shared across ALL
 worktrees of this repo, so concurrent agents' stash/pop interleave and grab
 each other's entries (bit two agents on 2026-07-14; both recovered via
 `git fsck --unreachable`). Use a backup file or a scratch commit instead.
 Within a single session, do not parallelize file-editing subagents in a shared
-tree (`specs/MULTIVERSION_PLAYBOOK.md §7`). Coordinate cross-repo work on
-`../AGENT_COORDINATION_BOARD.md`.
+tree (`specs/MULTIVERSION_PLAYBOOK.md §7`).
 
 ## Releasing
 
@@ -159,7 +154,7 @@ SHA** — the tag push publishes **irreversibly** to crates.io + npm.
 ## Doc map
 
 - **Methodology**: `specs/MULTIVERSION_PLAYBOOK.md` (add/fix a version),
-  `../CLAUDE.md` (harness-as-product concepts), `RELEASING.md`.
+  `RELEASING.md`.
 - **Subsystem guides** (auto-loaded when you work in that subtree):
   `crates/{lua-vm,lua-gc,lua-stdlib,lua-parse,lua-rs-runtime}/CLAUDE.md`,
   `harness/CLAUDE.md`.

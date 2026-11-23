@@ -1,7 +1,0 @@
-3 [2026-05-19T04:39:25Z mega]   → committed ccbe31e (debug/reference/lua-c/testes/locals.lua )
-3.31997705 reference/lua-c/testes/locals.lua [sonnet]
-4 0 reference/lua-c/testes/files.lua [opus]
-5 [2026-05-19T04:39:32Z mega]   → committed 6cbf7a8 (debug/reference/lua-c/testes/errors.lua )
-0 reference/lua-c/testes/errors.lua [sonnet]
-1 7.522402999999999 reference/lua-c/testes/gc.lua [opus]
-2 2.99542455 reference/lua-c/testes/literals.lua [sonnet]

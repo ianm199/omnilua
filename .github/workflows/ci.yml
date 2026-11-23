@@ -24,6 +24,8 @@ jobs:
         run: make test
       - name: GC rooting battery (quarantine configs)
         run: bash harness/asan-stress.sh --quarantine-only
+      - name: Embedding API under GC quarantine
+        run: LUA_RS_GC_QUARANTINE=1 cargo test -p omnilua --all-features
       - name: Lua 5.5 reference build
         run: make lua55-reference
       - name: Lua 5.5 snippet oracle

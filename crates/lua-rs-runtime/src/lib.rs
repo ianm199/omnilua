@@ -5462,7 +5462,11 @@ mod tests {
 
         drop(callback);
         lua.gc_collect();
-        assert_eq!(external_root_count(&lua), 1);
+        // Quarantine parks swept boxes instead of freeing them, so the
+        // callback's captured handle is only released at heap teardown.
+        if std::env::var_os("LUA_RS_GC_QUARANTINE").map_or(true, |v| v != "1") {
+            assert_eq!(external_root_count(&lua), 1);
+        }
         assert_eq!(table.get::<_, i64>("value").expect("table should live"), 42);
     }
 

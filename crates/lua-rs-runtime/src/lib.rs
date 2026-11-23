@@ -1215,6 +1215,7 @@ impl Lua {
             lua: self.clone(),
             source: source.as_ref().to_vec(),
             name: b"chunk".to_vec(),
+            env: None,
         }
     }
 
@@ -1975,6 +1976,7 @@ pub struct Chunk {
     lua: Lua,
     source: Vec<u8>,
     name: Vec<u8>,
+    env: Option<Table>,
 }
 
 impl Chunk {
@@ -1983,11 +1985,29 @@ impl Chunk {
         self
     }
 
+    /// Run the chunk with `env` as its global environment instead of the
+    /// globals table, like the `env` argument of Lua's `load`. Global reads
+    /// and writes in the chunk go to `env`; functions it defines keep it.
+    pub fn set_environment(mut self, env: Table) -> Self {
+        self.env = Some(env);
+        self
+    }
+
+    fn env_raw(&self, state: &LuaState) -> Result<Option<RawLuaValue>> {
+        match &self.env {
+            Some(env) => Ok(Some(RawLuaValue::Table(
+                env.raw_table_in_state(&self.lua, state)?,
+            ))),
+            None => Ok(None),
+        }
+    }
+
     pub fn exec(self) -> Result<()> {
         let capture = self.lua.make_capture()?;
         let handler_raw = capture.as_ref().map(|(_, _, raw)| *raw);
         let result = self.lua.with_state(|state| {
-            exec_state(state, &self.source, &self.name, handler_raw)
+            let env = self.env_raw(state)?;
+            exec_state(state, &self.source, &self.name, env, handler_raw)
                 .map_err(|err| self.lua.capture_error_in_state(state, err))
         });
         match result {
@@ -2001,6 +2021,7 @@ impl Chunk {
         let handler_raw = capture.as_ref().map(|(_, _, raw)| *raw);
         let result = self.lua.with_state(|state| {
             let saved_top = state.top_idx();
+            let env = self.env_raw(state)?;
             let status = load_buffer(state, &self.source, &self.name).map_err(|err| {
                 self.lua.capture_error_in_state(state, err)
             })?;
@@ -2011,6 +2032,7 @@ impl Chunk {
                 state.set_top_idx(saved_top);
                 return Err(captured);
             }
+            install_chunk_env(state, env);
             match protected_call_with_handler(state, 0, T::NRESULTS, handler_raw) {
                 Ok(()) => {
                     let nresults = if T::NRESULTS < 0 {
@@ -2054,6 +2076,7 @@ impl Chunk {
     pub fn into_function(self) -> Result<Function> {
         let raw = self.lua.with_state(|state| {
             let saved_top = state.top_idx();
+            let env = self.env_raw(state)?;
             let status = load_buffer(state, &self.source, &self.name)
                 .map_err(|err| self.lua.capture_error_in_state(state, err))?;
             if status != 0 {
@@ -2063,6 +2086,7 @@ impl Chunk {
                 state.set_top_idx(saved_top);
                 return Err(captured);
             }
+            install_chunk_env(state, env);
             let raw = state.pop();
             state.set_top_idx(saved_top);
             Ok(raw)
@@ -4697,7 +4721,7 @@ impl LuaRuntime {
     /// queue for external roots, so the returned [`Error`] carries the inner
     /// [`LuaError`] verbatim. Read the message before triggering a collection.
     pub fn exec(&mut self, source: &[u8], name: &[u8]) -> Result<()> {
-        exec_state(&mut self.state, source, name, None).map_err(Error::from)
+        exec_state(&mut self.state, source, name, None, None).map_err(Error::from)
     }
 
     /// Apply sandbox limits to this runtime — the lower-level equivalent of
@@ -4740,6 +4764,7 @@ fn exec_state(
     state: &mut LuaState,
     source: &[u8],
     name: &[u8],
+    env: Option<RawLuaValue>,
     handler_raw: Option<RawLuaValue>,
 ) -> std::result::Result<(), LuaError> {
     let status = load_buffer(state, source, name)?;
@@ -4747,7 +4772,19 @@ fn exec_state(
         let err = state.pop();
         return Err(LuaError::from_value(err));
     }
+    install_chunk_env(state, env);
     protected_call_with_handler(state, 0, 0, handler_raw)
+}
+
+/// Install `env` as the environment of the chunk function on top of the
+/// stack: its first upvalue, as Lua's `load` does with its `env` argument.
+fn install_chunk_env(state: &mut LuaState, env: Option<RawLuaValue>) {
+    if let Some(env) = env {
+        state.push(env);
+        if lua_vm::api::setup_value(state, -2, 1).is_none() {
+            state.pop();
+        }
+    }
 }
 
 pub fn install_parser_hook(state: &mut LuaState) {

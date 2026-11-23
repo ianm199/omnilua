@@ -128,3 +128,21 @@ fn normal_status_when_resuming_a_child() {
     let child_view_of_parent: String = co.resume(()).unwrap();
     assert_eq!(child_view_of_parent, "normal");
 }
+
+#[test]
+fn resume_error_payload_survives_collection() {
+    let lua = Lua::new();
+    let f: Function = lua
+        .load("return function() error(table.concat({'boom', 'from', 'coroutine'}, '-'), 0) end")
+        .eval()
+        .unwrap();
+    let thread = lua.create_thread(f).unwrap();
+    let err = thread.resume::<_, ()>(()).unwrap_err();
+    drop(thread);
+    lua.load("local t = {} for i = 1, 20000 do t[i] = 'garbage_' .. i end")
+        .exec()
+        .unwrap();
+    lua.gc_collect();
+    lua.gc_collect();
+    assert!(err.to_string().contains("boom-from-coroutine"), "{err}");
+}

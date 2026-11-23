@@ -1510,6 +1510,9 @@ pub(crate) fn concat(state: &mut LuaState, total: i32) -> Result<(), LuaError> {
             n = count;
 
             // Build concatenated result
+            if let Some(err) = state.sandbox_reserve(total_len) {
+                return Err(err);
+            }
             let mut buf: Vec<u8> = Vec::with_capacity(total_len);
             let top = state.top_idx();
             copy_to_buf(state, top, n, &mut buf);
@@ -1579,6 +1582,9 @@ fn concat_pair_fast(
         .len()
         .checked_add(right.len())
         .ok_or_else(|| LuaError::runtime(format_args!("string length overflow")))?;
+    if let Some(err) = state.sandbox_reserve(total_len) {
+        return Err(err);
+    }
     let mut buf = Vec::with_capacity(total_len);
     left.append_to(&mut buf);
     right.append_to(&mut buf);

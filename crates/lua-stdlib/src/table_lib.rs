@@ -325,6 +325,9 @@ pub fn concat(state: &mut LuaState) -> Result<usize, LuaError> {
     let mut buf: Vec<u8> = Vec::new();
     while i < last {
         add_field(state, &mut buf, i)?;
+        if let Some(err) = state.sandbox_reserve(buf.len() + sep.len()) {
+            return Err(err);
+        }
         buf.extend_from_slice(&sep);
         i += 1;
     }

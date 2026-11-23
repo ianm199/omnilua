@@ -561,3 +561,42 @@ fn plain_runtime_is_unbounded() {
         "plain runtime should run freely: {result:?}"
     );
 }
+
+#[test]
+fn concat_doubling_trips_memory_limit_before_allocating() {
+    let (lua, sandbox) = Lua::sandboxed(SandboxConfig::strict()).unwrap();
+    let err = lua
+        .load("local s = 'x' for i = 1, 40 do s = s .. s end")
+        .exec()
+        .unwrap_err();
+    assert!(err.to_string().contains("memory limit"), "{err}");
+    assert_eq!(sandbox.tripped(), Some(TripReason::Memory));
+}
+
+#[test]
+fn concat_of_many_operands_trips_memory_limit() {
+    let (lua, sandbox) = Lua::sandboxed(SandboxConfig::strict()).unwrap();
+    let err = lua
+        .load(
+            "local s = ('x'):rep(8 * 1024 * 1024)
+             local t = s .. s .. s .. s .. s .. s .. s .. s .. s .. s",
+        )
+        .exec()
+        .unwrap_err();
+    assert!(err.to_string().contains("memory limit"), "{err}");
+    assert_eq!(sandbox.tripped(), Some(TripReason::Memory));
+}
+
+#[test]
+fn table_concat_with_large_separator_trips_memory_limit() {
+    let (lua, sandbox) = Lua::sandboxed(SandboxConfig::strict()).unwrap();
+    let err = lua
+        .load(
+            "local t = {} for i = 1, 100000 do t[i] = '' end
+             return table.concat(t, ('y'):rep(1024 * 1024))",
+        )
+        .exec()
+        .unwrap_err();
+    assert!(err.to_string().contains("memory limit"), "{err}");
+    assert_eq!(sandbox.tripped(), Some(TripReason::Memory));
+}

@@ -2463,7 +2463,7 @@ impl LuaState {
     /// past the ceiling, *before* the buffer is built. Returns the uncatchable
     /// memory abort if `total_bytes() + additional` exceeds the limit. Used by
     /// stdlib functions that allocate a large buffer of a computed size in one
-    /// instruction (e.g. `string.rep`, `string.pack`, `table.concat`), where the
+    /// instruction (e.g. `string.rep`, `table.concat` and the `..` operator), where the
     /// per-instruction `sandbox_check_memory` would only fire *after* the
     /// allocation already happened.
     pub fn sandbox_reserve(&self, additional: usize) -> Option<LuaError> {

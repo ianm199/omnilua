@@ -503,7 +503,7 @@ struct UserDataCell<T> {
 // `Scope::create_userdata::<T>(&mut data)` stores a raw pointer to `data` in a
 // `ScopedCell<T>` and registers the cell with the scope. While the scope is
 // alive the cell's pointer is dereferenced (validity-checked) on every method
-// call from Lua. When the scope drops, every registered cell's pointer is set
+// call from Lua. When the scope ends, every registered cell's pointer is set
 // to `None`, so any leaked userdata calls return a clean Lua error instead of
 // using-after-the-borrow-ended.
 //
@@ -514,7 +514,7 @@ struct UserDataCell<T> {
 // - Re-entrant access (a Lua callback that fires another callback on the same
 //   userdata) is rejected at runtime via `ScopedCell::borrow`'s shared/exclusive
 //   counter, mirroring `RefCell`.
-// - On scope drop, callbacks have already returned (they run synchronously
+// - When the scope ends, callbacks have already returned (they run synchronously
 //   inside the scope body), so `invalidate` only nulls the pointer; no
 //   concurrent dereference can be in progress.
 
@@ -635,19 +635,41 @@ impl<'a, T: 'static> DerefMut for ScopedRefMut<'a, T> {
 /// Handle passed to the closure body of [`Lua::scope`].
 ///
 /// `Scope::create_userdata` produces an [`AnyUserData`] whose backing storage
-/// is a borrow you provide; when the scope drops every cell it created is
+/// is a borrow you provide; when the scope ends every cell it created is
 /// invalidated. Any later Lua call that reaches one of those userdatas fails
 /// with a clean error rather than touching freed memory.
-pub struct Scope<'scope> {
+///
+/// The lifetimes follow `std::thread::scope`: `'env` covers values that live
+/// outside the [`Lua::scope`] call, and the invariant `'scope` covers the
+/// whole scope body. A borrow handed to the scope must last for all of
+/// `'scope`, so one that ends inside the body is rejected at compile time:
+///
+/// ```compile_fail
+/// use omnilua::Lua;
+/// let lua = Lua::new();
+/// lua.scope(|scope| {
+///     let f = {
+///         let local = String::from("gone");
+///         let r = &local;
+///         scope.create_function(&lua, move |_, ()| Ok(r.clone()))?
+///     };
+///     lua.globals().set("f", f)?;
+///     lua.load("return f()").exec()
+/// })
+/// .unwrap();
+/// ```
+pub struct Scope<'scope, 'env: 'scope> {
     invalidators: RefCell<Vec<Rc<dyn ScopeInvalidate>>>,
-    _phantom: std::marker::PhantomData<&'scope mut ()>,
+    _scope: std::marker::PhantomData<&'scope mut &'scope ()>,
+    _env: std::marker::PhantomData<&'env mut &'env ()>,
 }
 
-impl<'scope> Scope<'scope> {
+impl<'scope, 'env: 'scope> Scope<'scope, 'env> {
     fn new() -> Self {
         Self {
             invalidators: RefCell::new(Vec::new()),
-            _phantom: std::marker::PhantomData,
+            _scope: std::marker::PhantomData,
+            _env: std::marker::PhantomData,
         }
     }
 
@@ -727,10 +749,11 @@ impl<'scope> Scope<'scope> {
         // SAFETY: extending the trait-object lifetime bound from `'scope` to
         // `'static` is sound here because the closure is owned by the
         // [`ScopedFnCell`] we are about to build, that cell is registered in
-        // `self.invalidators`, and `Scope::drop` invokes `invalidate()` on
-        // every registered cell. `invalidate()` calls `take()` on the box,
-        // which drops the closure (and therefore its `'scope` captures)
-        // while `'scope` is still alive (we are mid-drop of `Scope`). After
+        // `self.invalidators`, and `Lua::scope` calls `invalidate_all()` on
+        // every registered cell when the body returns or unwinds.
+        // `invalidate()` calls `take()` on the box, which drops the closure
+        // (and therefore its `'scope` captures) while `'scope` is still
+        // alive. After
         // `invalidate()` the cell holds `None`, so any subsequent call sees
         // "no longer valid" before it can reach a dangling capture.
         let adapter_static: Box<dyn Fn(&Lua, Vec<Value>) -> Result<Vec<Value>>> =
@@ -745,8 +768,11 @@ impl<'scope> Scope<'scope> {
     }
 }
 
-impl<'scope> Drop for Scope<'scope> {
-    fn drop(&mut self) {
+impl<'scope, 'env: 'scope> Scope<'scope, 'env> {
+    /// Invalidate every cell this scope created. [`Lua::scope`] calls this
+    /// once the body returns or unwinds, while every `'scope` borrow is still
+    /// alive.
+    fn invalidate_all(&self) {
         for inv in self.invalidators.borrow().iter() {
             inv.invalidate();
         }
@@ -754,7 +780,7 @@ impl<'scope> Drop for Scope<'scope> {
 }
 
 /// Owns a scoped Rust closure on behalf of [`Scope`]. The closure is stored
-/// as `Box<dyn Fn(...)>` (lifetime laundered to `'static`); on scope drop the
+/// as `Box<dyn Fn(...)>` (lifetime laundered to `'static`); when the scope ends the
 /// option is taken and the closure (with its `'scope` captures) is dropped.
 /// All later calls see `None` and return a clean Lua runtime error.
 struct ScopedFnCell {
@@ -1577,17 +1603,20 @@ impl Lua {
     /// }).unwrap();
     /// assert!(lua.load("leaked:inc(1)").exec().is_err());
     /// ```
-    pub fn scope<F, R>(&self, f: F) -> Result<R>
+    pub fn scope<'env, F, R>(&self, f: F) -> Result<R>
     where
-        F: for<'scope> FnOnce(&Scope<'scope>) -> Result<R>,
+        F: for<'scope> FnOnce(&'scope Scope<'scope, 'env>) -> Result<R>,
     {
         let scope = Scope::new();
-        let result = f(&scope);
-        // `scope` drops here, invalidating every cell it created. After this
-        // point any Lua call that reaches a scoped userdata sees `ptr = None`
-        // and errors.
-        drop(scope);
-        result
+        let result = catch_unwind(AssertUnwindSafe(|| f(&scope)));
+        // Invalidate every cell the scope created, on return and on unwind.
+        // After this any Lua call that reaches a scoped userdata or function
+        // errors cleanly.
+        scope.invalidate_all();
+        match result {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     /// Build (or reuse) the per-`TypeId` *scoped* metatable for `T`. Same
@@ -2599,7 +2628,7 @@ impl AnyUserData {
     /// type `P`, or another delegated userdata of type `P` (chains
     /// compose).
     ///
-    /// Scope invalidation propagates: when the originating scope drops,
+    /// Scope invalidation propagates: when the originating scope ends,
     /// both the parent and every delegated descendant become invalid.
     pub fn delegate<P, S, F>(&self, lua: &Lua, accessor: F) -> Result<AnyUserData>
     where

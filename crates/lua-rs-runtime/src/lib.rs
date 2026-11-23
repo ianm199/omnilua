@@ -1308,6 +1308,18 @@ impl Lua {
     }
 
     fn create_registered_function(&self, callable: LuaRustFunction) -> Result<Function> {
+        // A callback can run on a coroutine's state. Host calls it makes
+        // re-enter through `active_state`, so point that at the calling state:
+        // a GC step taken from there roots the running coroutine's stack.
+        let lua_weak = Rc::downgrade(&self.inner);
+        let inner_callable = callable;
+        let callable: LuaRustFunction = Rc::new(move |state: &mut LuaState| {
+            let Some(inner) = lua_weak.upgrade() else {
+                return inner_callable(state);
+            };
+            let _active = inner.enter_active(state as *mut LuaState);
+            inner_callable(state)
+        });
         let root = self.with_state(|state| {
             let trampoline = rust_callback_trampoline as lua_vm::state::LuaCFunction;
             let idx = {

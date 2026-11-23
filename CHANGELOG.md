@@ -6,6 +6,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-23
+
+Embedding-API repair release. Most fixes are GC rooting bugs in the host
+API that a sandboxed-scripting port hit (#322). Each one has a regression
+test that fails under `LUA_RS_GC_QUARANTINE=1` before the fix.
+
+### Changed — `Lua::scope` lifetimes match `std::thread::scope` (#330)
+
+`Scope<'scope>` was covariant in `'scope`, so safe code could register a
+scoped function that borrowed a local declared inside the scope body, drop
+the local, and call the function while the scope was still open. That is a
+use-after-free. `Scope` is now `Scope<'scope, 'env>` with both lifetimes
+invariant, the same shape as mlua. Closures passed to `Lua::scope` compile
+unchanged. Code that names the type must add the second lifetime. This
+ships in a patch release because it closes a soundness hole.
+
+### Added — `Chunk::set_environment` (#332)
+
+`set_environment(env)` gives a loaded chunk its own `_ENV` table, the way
+`load(..., env)` does. It applies to `exec`, `eval`, `into_function` and the
+async variants on every version.
+
+### Fixed — embedding API GC rooting
+
+- Host `Table::raw_set` now runs the same write barriers as `Table::set`.
+  New keys and values written into a black table were swept (#323).
+- Rust callbacks invoked inside a coroutine ran host API calls against the
+  main state instead of the running coroutine (#324).
+- `Table::set_metatable` goes through `lua_setmetatable`, so `__mode` and
+  `__gc` set from the host take effect (#325).
+- The error value returned by `Thread::resume` is rooted. It could be freed
+  once the thread handle was dropped (#326).
+- `LuaRuntime::into_lua` converts with the runtime's own Lua version (#327).
+- `Lua::gc_collect` runs the `__gc` finalizers its cycle makes pending, as
+  `collectgarbage("collect")` does (#329).
+
+### Fixed — sandbox memory limit covers concatenation (#331)
+
+`..` and `table.concat` reserve against the sandbox memory limit before
+allocating the result. A doubling `s = s .. s` loop used to reach a
+multi-GiB allocation and abort the host process.
+
+### Fixed — 5.5 `string.dump` reuses repeated strings (#328)
+
+Lua 5.5 bytecode stores a repeated string as a reference to its first
+copy. omniLua now writes and reads that form, so 5.5 dumps match the
+reference format.
+
+### Fixed — io/os errno fidelity residuals (#320)
+
+Short writes report the real errno in the `(nil, msg, errno)` tuple, the
+wasm build maps `EPERM` correctly, and Win32 error codes normalize to
+POSIX errno values.
+
 ### Fixed — embedding VM churn no longer retains io stream entries (#317)
 
 The `io` library's `LStream` side table (file-handle userdata identity →

@@ -79,6 +79,9 @@ const TAG_LONG_STR: u8 = 0x14;
 struct LoadState<'a> {
     state: &'a mut LuaState,
     z: &'a mut ZIO,
+    /// 5.5 only: strings loaded so far, in order, for back-references
+    /// (`lundump.c` `S->h`/`S->nstr`).
+    saved_strings: Vec<GcRef<LuaString>>,
 }
 
 // ── Error helper ───────────────────────────────────────────────────────────
@@ -195,9 +198,20 @@ fn load_string_n(
     s: &mut LoadState<'_>,
     _proto: &LuaProto,
 ) -> Result<Option<GcRef<LuaString>>, LuaError> {
+    let v55 = s.state.global().lua_version == LuaVersion::V55;
     let raw_size = load_size(s)?;
     if raw_size == 0 {
-        return Ok(None);
+        if !v55 {
+            return Ok(None);
+        }
+        let idx = load_size(s)?;
+        if idx == 0 {
+            return Ok(None);
+        }
+        return match s.saved_strings.get(idx - 1) {
+            Some(ts) => Ok(Some(ts.clone())),
+            None => Err(load_error(s, "invalid string index")),
+        };
     }
     let size = raw_size - 1;
 
@@ -211,6 +225,9 @@ fn load_string_n(
     }
 
     let ts = s.state.intern_str(&buf)?;
+    if v55 {
+        s.saved_strings.push(ts.clone());
+    }
 
     Ok(Some(ts))
 }
@@ -620,7 +637,11 @@ pub(crate) fn undump(
     z: &mut ZIO,
     _name: &[u8],
 ) -> Result<GcRef<LuaLClosure>, LuaError> {
-    let mut s = LoadState { state, z };
+    let mut s = LoadState {
+        state,
+        z,
+        saved_strings: Vec::new(),
+    };
 
     check_header(&mut s)?;
 

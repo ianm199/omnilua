@@ -186,4 +186,8 @@ printf "  Fail:    %3d\n" "$fail"
 printf "  Timeout: %3d\n" "$timeout"
 echo "  TSV:     $TSV"
 echo "=========================================="
+
+if [ "$total" -eq 0 ] || [ "$fail" -gt 0 ] || [ "$timeout" -gt 0 ]; then
+    exit 1
+fi
 exit 0

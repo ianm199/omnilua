@@ -5,6 +5,7 @@
 
 #[allow(unused_imports)]
 use crate::prelude::*;
+use std::collections::HashMap;
 use std::mem::size_of;
 
 use crate::state::LuaState;
@@ -79,6 +80,9 @@ struct DumpState<'a> {
     /// When true, strip all debug information from the output.
     strip: bool,
     version: LuaVersion,
+    /// 5.5 only: each string already written, mapped to its 1-based index,
+    /// so a repeat is written as a reference (`ldump.c` `D->h`/`D->nstr`).
+    saved_strings: HashMap<Vec<u8>, usize>,
 }
 
 impl<'a> DumpState<'a> {
@@ -180,7 +184,13 @@ impl<'a> DumpState<'a> {
     /// Write an interned or long string, or a null sentinel (encoded size = 0).
     ///
     /// Encoding: `dumpSize(len + 1)` followed by `len` raw bytes; size 0 means null/absent.
+    ///
+    /// 5.5 writes each distinct string once: a repeat, and the null sentinel,
+    /// are `dumpSize(0)` followed by the saved string's index (0 for null).
     fn dump_string(&mut self, s: Option<&GcRef<LuaString>>) -> Result<(), LuaError> {
+        if self.version == LuaVersion::V55 {
+            return self.dump_string_55(s);
+        }
         match s {
             None => self.dump_size(0),
 
@@ -190,6 +200,23 @@ impl<'a> DumpState<'a> {
                 self.dump_block(bytes)
             }
         }
+    }
+
+    fn dump_string_55(&mut self, s: Option<&GcRef<LuaString>>) -> Result<(), LuaError> {
+        let Some(s) = s else {
+            self.dump_size(0)?;
+            return self.dump_size(0);
+        };
+        let bytes = s.as_bytes();
+        if let Some(&idx) = self.saved_strings.get(bytes) {
+            self.dump_size(0)?;
+            return self.dump_size(idx);
+        }
+        self.dump_size(bytes.len() + 1)?;
+        self.dump_block(bytes)?;
+        let idx = self.saved_strings.len() + 1;
+        self.saved_strings.insert(bytes.to_vec(), idx);
+        Ok(())
     }
 
     /// Write the bytecode instruction array.
@@ -479,6 +506,7 @@ pub(crate) fn dump(
         writer,
         strip,
         version: state.global().lua_version,
+        saved_strings: HashMap::new(),
     };
 
     d.dump_header()?;

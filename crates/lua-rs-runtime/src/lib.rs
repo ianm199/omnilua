@@ -4651,7 +4651,8 @@ impl LuaRuntime {
     }
 
     pub fn into_lua(self) -> Lua {
-        Lua::from_initialized_state(self.state, LuaVersion::default())
+        let version = self.version();
+        Lua::from_initialized_state(self.state, version)
     }
 
     /// Load and execute a Lua source chunk.

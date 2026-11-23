@@ -1866,9 +1866,14 @@ impl Lua {
         self.create_registered_function(callable)
     }
 
-    /// Run a full garbage-collection cycle.
+    /// Run a full garbage-collection cycle and the `__gc` finalizers it makes
+    /// pending, like `collectgarbage("collect")`. A finalizer error is
+    /// discarded; use [`GcControl::collect`] to observe it on 5.2 and 5.3.
     pub fn gc_collect(&self) {
-        self.with_state(|state| state.gc().full_collect());
+        self.with_state(|state| {
+            lua_vm::api::gc(state, lua_vm::api::GcArgs::Collect);
+            state.global_mut().gc_finalizer_error = None;
+        });
     }
 
     /// A handle to this instance's garbage collector, mirroring mlua's GC

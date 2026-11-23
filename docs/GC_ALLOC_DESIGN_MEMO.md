@@ -1,7 +1,7 @@
 # GC/allocator architecture memo (sprint-2 T3a)
 
-Supervisor-authored 2026-06-11 per `docs/PERF_SPRINT_2_GOAL.md` §T3.
-Quantifies `docs/GC_ALLOC_PLAN.md` causes 2/3 with fresh dhat absolutes and
+Supervisor-authored 2026-06-11 per `docs/archive/PERF_SPRINT_2_GOAL.md` §T3.
+Quantifies `docs/archive/GC_ALLOC_PLAN.md` causes 2/3 with fresh dhat absolutes and
 ranks the options. One bounded step (T3b) is approved out of this memo;
 everything deeper needs explicit human sign-off.
 

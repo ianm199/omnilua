@@ -3,7 +3,7 @@
 # record for LuaVersion::supports (issue #234). Each cell is produced by probing
 # the REFERENCE Lua binary for that version (never our own engine, which would be
 # circular once init.rs consumes the matrix). The probes match
-# specs/ISSUE_234_BACKEND_SEAM_SPEC.md §2.3; every probe is pcall-guarded and
+# specs/archive/ISSUE_234_BACKEND_SEAM_SPEC.md §2.3; every probe is pcall-guarded and
 # loads source via `loadstring or load` so it is Lua-5.1-safe.
 #
 # Usage: bash specs/oracle/gen_feature_matrix.sh   (writes the TSV, prints a diff)

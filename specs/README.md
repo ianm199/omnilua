@@ -15,7 +15,7 @@ current state. For current state: GitHub issues + `CHANGELOG.md` + the harness.
 | `oracle/diff_one.sh`, `oracle/check.sh` | The multi-version snippet oracle (see `harness/CLAUDE.md`). |
 | `MULTIVERSION_ARCHITECTURE_DECISION.md` | Why one runtime-flagged core (not a `dyn` engine). The rationale of record. |
 | `followup/issue-93-generational-gc-plan.md` | Living design for the generational GC frontier (#104/#113). |
-| `followup/REPO_STRENGTHENING_IDEAS.md` | Running list of frontier ideas / honesty caveats. |
+| `archive/followup/REPO_STRENGTHENING_IDEAS.md` | Running list of frontier ideas / honesty caveats. |
 
 ## Historical port evidence (keep, don't read as current)
 

@@ -126,5 +126,5 @@ it cannot condemn one either — wall settles both directions.)
 The project parity threshold is wall ≤ 1.5×; the matrix crossed it on
 2026-06-11 (overall 1.47 stock). Past that line, tail-row wall work competes
 against RSS work and strategic work and usually loses — get the safety-tax
-ablation number (`docs/PERF_SPRINT_2_GOAL.md` §T4) before sponsoring any
+ablation number (`docs/archive/PERF_SPRINT_2_GOAL.md` §T4) before sponsoring any
 further wall packet, because it bounds what the remaining tail can ever yield.

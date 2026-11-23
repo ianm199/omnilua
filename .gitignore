@@ -32,7 +32,8 @@ reference/lua-5.5.0/src/luaconf.h.compat-backup
 
 # Agent output / harness state
 harness/oracle/results/
-harness/impl/official/5.*/
+harness/impl/*
+!harness/impl/.gitkeep
 *.actual.bytecode
 *.actual.stdout
 
@@ -49,9 +50,7 @@ harness/loop/state/
 .claude/worktrees/
 
 # oracle scratch outputs — never commit (harness/CLAUDE.md)
-harness/impl/official/*.out
 harness/.perf-experiment
-harness/impl/stop-build.err
 harness/evidence/rooting-battery/
 harness/canaries/gc/results.tsv
 harness/canaries/gc/*.out

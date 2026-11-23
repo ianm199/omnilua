@@ -440,7 +440,7 @@ distinct from the macro-boundary rule, which asks whether C compiles it away.
 
 ## Patterns from the owner-vector negative (added 2026-07-13)
 
-From the #113 Wave-2 kill (`docs/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`
+From the #113 Wave-2 kill (`docs/archive/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`
 — built, proven correct, measured RSS-negative, closed unmerged).
 
 ### Relocation is not removal

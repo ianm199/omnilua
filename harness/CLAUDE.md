@@ -1,7 +1,7 @@
 # harness — oracles, benchmarks, enforcement
 
-The harness is the real product (see `../../CLAUDE.md` and `../CLAUDE.md`). It is
-how a change is *verified*, not just built. Read the root guide first.
+The harness is how a change is *verified*, not just built. Read the root guide
+(`../CLAUDE.md`) first.
 
 ## Two oracle families (know which question each answers)
 

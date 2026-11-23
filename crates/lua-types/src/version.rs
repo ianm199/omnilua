@@ -23,21 +23,20 @@ pub enum NumberModel {
 
 /// Which Lua language version a runtime instance speaks.
 ///
-/// `Default` is [`LuaVersion::V54`] — the version this codebase currently
-/// implements end-to-end — so that `Lua::new()` and any other defaulted
-/// construction keeps the existing 5.4 behavior.
+/// `Default` is [`LuaVersion::V54`], so `Lua::new()` and any other defaulted
+/// construction runs Lua 5.4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LuaVersion {
-    /// Lua 5.1 — float-only, `fenv`-based globals. Deferred (separate core).
+    /// Lua 5.1 — float-only, `fenv`-based globals.
     V51,
-    /// Lua 5.2 — float-only, modern `_ENV` globals. Deferred (separate core).
+    /// Lua 5.2 — float-only, modern `_ENV` globals.
     V52,
-    /// Lua 5.3 — dual subtype, modern `_ENV`. Deferred.
+    /// Lua 5.3 — dual subtype, modern `_ENV`.
     V53,
-    /// Lua 5.4 — the implemented baseline today.
+    /// Lua 5.4 — the default and the most thoroughly tested version.
     V54,
-    /// Lua 5.5 — dual subtype, declared-globals scope model. Deferred.
+    /// Lua 5.5 — dual subtype, declared-globals scope model.
     V55,
 }
 

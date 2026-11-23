@@ -179,7 +179,7 @@ moved from an intrusive per-object link to one heap-owned vector). Measured:
 closure_ops peak RSS −11.8%, binarytrees ~−5%, compute-workload instruction
 counts flat. Wave 2 (removing the second link) was built, adversarially
 reviewed, measured RSS-negative on churn workloads, and closed unmerged
-with full evidence — see `docs/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`
+with full evidence — see `docs/archive/PERF_EVIDENCE_113_W2_OWNERVEC_20260713.md`
 and the new "Patterns from the owner-vector negative" section of
 `docs/PERFORMANCE_PRINCIPLES.md`.
 
@@ -311,7 +311,7 @@ untrusted-script case). Executor-agnostic and `!Send` (use a single-threaded
 executor such as tokio's `LocalSet`); pure-std, no new dependencies; the `async`
 feature enables `coroutine`. A future error propagates to the Rust caller (the
 coroutine is left suspended); native-only (no wasm executor). Implements
-`specs/embedding/async-integration.md`.
+`specs/archive/embedding/async-integration.md`.
 
 ## [0.4.1] - 2026-06-27
 
@@ -324,7 +324,7 @@ C-backed binding cannot. Host integers cross the version number-model seam via
 `LossyIntPolicy`; `None`/`null` use a non-nil sentinel (`null()`) and sequences
 carry an array-marker metatable (`array_metatable()`) so empty arrays round-trip
 distinctly from empty maps. Conventions match `mlua` (externally tagged enums,
-byte-safe strings). Also ships `specs/embedding/async-integration.md`, the design
+byte-safe strings). Also ships `specs/archive/embedding/async-integration.md`, the design
 spec for a future async lane (not implemented).
 
 ## [0.4.0] - 2026-06-26
@@ -517,7 +517,7 @@ with **5.4 and 5.5 held at 100%** (zero regression on the baseline throughout).
   `run_official_all.sh` wired for 5.1/5.2.
 
 Methodology and the full per-wave log live in
-`specs/followup/MULTIVERSION_COMPAT_AUDIT_2026_06_21.md`.
+`specs/archive/followup/MULTIVERSION_COMPAT_AUDIT_2026_06_21.md`.
 
 ## [0.2.0] - 2026-06-13
 

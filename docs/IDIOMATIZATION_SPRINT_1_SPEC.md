@@ -30,7 +30,7 @@ main 5abb986; `omnilua` 0.2.0; official suite passing.
       idiomatize. The emit/register/jump/line-info/constant-fold core was
       deliberately left structurally faithful (the hot-loop exception). No
       separate P1c work item remains.
-- [x] REFLECT: `docs/IDIOMATIZATION_REFLECTION_1.md` written — recipes, the
+- [x] REFLECT: `docs/archive/IDIOMATIZATION_REFLECTION_1.md` written — recipes, the
       verification-model shift, the "idiomatization debt is not uniform" finding,
       honest-negatives as the richest output (incl. the two-phase technique for a
       future `ExprPayload` enum attempt), roadmap adjustments, and an explicit

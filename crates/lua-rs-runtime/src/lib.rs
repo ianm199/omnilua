@@ -4039,8 +4039,14 @@ impl Thread {
             R::from_lua_multi(returns, &lua)
         } else {
             let err_val = returns.into_iter().next().unwrap_or(Value::Nil);
-            let raw = lua.with_state(|state| err_val.to_raw_for_lua(&lua, state))?;
-            Err(Error::from(LuaError::from_value(raw)))
+            let captured: Result<Error> = lua.with_state(|state| {
+                let raw = err_val.to_raw_for_lua(&lua, state)?;
+                Ok(lua.capture_error_in_state(state, LuaError::from_value(raw)))
+            });
+            Err(match captured {
+                Ok(error) => error,
+                Err(error) => error,
+            })
         }
     }
 

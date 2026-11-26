@@ -15,6 +15,22 @@ Read this alongside:
 
 ## Current Position
 
+**2026-11-26** — stock matrix at `59f71189` (v0.7.2) on an AMD Ryzen 9
+9950X (Zen 5, Linux). Artifact: `20261126T215333Z-59f71189-compare.tsv`
+(not ledgered). The overall ratio is **1.84x** C Lua 5.4.7.
+
+- The June snapshots below ran on an Apple M3 Max. Do not compare their
+  ratios with this one directly.
+- A same-machine A/B of the June binary against the tip
+  (`20261126T220015Z-59f71189-bin-ab.tsv`) shows most of the move from 1.54x
+  is the platform. Five rows did regress since June: string_ops +19%,
+  metatable_index_chain +9%, call_return_shapes +8%, table_setfield_same +5%,
+  method_calls +4%.
+- The worst rows are table_seti_same 3.30x, metatable_index_chain 3.06x,
+  table_setfield_same 2.86x and table_settable_string_key 2.74x. On Zen 5
+  their extra cost is store-to-load forwarding stalls. See "Store-to-load
+  forwarding stalls" below.
+
 **2026-06-10 PM** — full stock + PGO matrices at `c1dfdc1` (artifacts
 `20260610T143508Z-c1dfdc1-compare.tsv` stock,
 `20260610T144112Z-c1dfdc1-compare.tsv` `variant=pgo`, both ledgered).
@@ -172,6 +188,24 @@ Specific existing-key setter opcodes are.
 
 ## Post-idiomatization gap decomposition — safety tax vs representation (2026-06-14)
 
+> **Corrections (2026-11-26).** Three explanations in this section and the next
+> are wrong. The measured ratios in the table still hold.
+>
+> - C Lua 5.4's `TValue` is 16 B: an 8 B `Value` union plus a `tt_` tag byte,
+>   padded. C Lua does not NaN-box. `LuaValue` at 16 B already matches it, as
+>   `MATCHING_C_PERFORMANCE.md` and `harness/bench/value-layout.sh` say.
+>   So axis (C)'s "value representation" bullet does not explain the 2.3x.
+> - `Gc<T>` is no longer an `Rc`. `LuaValue` became `Copy` on 2026-05-24, and
+>   `Gc<T>` is a `Copy` `NonNull<GcBox<T>>` under the tracing GC. The
+>   sequencing argument in the NaN-boxing section is moot.
+> - The `method_calls` figure of 761 vs 6 mispredicts per M instructions comes
+>   from cachegrind's `--branch-sim`, a 2-bit-counter model. On Zen 5 hardware
+>   counters, branch misses are not a material part of any row's gap. The
+>   computed-goto conclusion drawn from it is unsupported.
+>
+> The real-hardware attribution that replaces these explanations is in
+> "Store-to-load forwarding stalls (2026-11-26)" below.
+
 The most important model update since the 2026-06-02 "headline finding" in
 `MATCHING_C_PERFORMANCE.md`. That finding called the gap a *Rust-idiom tax*,
 "recoverable without `unsafe`," and listed bolded rows (clones-where-C-uses-
@@ -252,6 +286,11 @@ fibonacci,mandelbrot_long,method_calls --branch-sim`.
 
 ## NaN-boxing — `unsafe` scoping and sequencing (2026-06-14)
 
+> **Correction (2026-11-26).** C's `TValue` is 16 B, so NaN-boxing would make
+> omnilua's values smaller than C's. `Gc<T>`
+> is no longer an `Rc`, so the `Rc` refcount burden below no longer applies.
+> Keep this section for the `unsafe` scoping only.
+
 The decomposition above names NaN-boxing the value representation as the single
 biggest remaining hot-path lever (`LuaValue` 16 B → 8 B halves the per-value
 memory traffic that dominates `fibonacci`/`mandelbrot`'s 2.3×). This is the
@@ -314,6 +353,107 @@ cleaner: the value no longer *owns* the pointer (the collector does), so
 bit-patterns except NaN, so niche optimization can't shrink a tag+float+pointer
 union below 16 B; the R2 diet already extracted the safe minimum (24→16 B). The
 8 B requires the NaN trick, which requires the `unsafe`.
+
+## Store-to-load forwarding stalls (2026-11-26)
+
+Measured on a Ryzen 9 9950X (Zen 5) at `59f71189`, with `perf stat` hardware
+counters. The stall counter is `ls_bad_status2.stli_other`; forwarding hits are
+`ls_stlf`.
+
+### Where the gap is on real hardware
+
+- Instructions are 2.2–2.3x C on every interpreter-bound row. This matches the
+  cachegrind Ir ratios above.
+- On call and compute rows (fibonacci, method_calls, mandelbrot), omnilua's
+  CPI is at or below C's. Those rows' wall ratio is their instruction ratio.
+- On table and metatable rows, CPI is 1.3–1.8x C's. The extra cycles are
+  store-forwarding failures:
+
+| workload | C `stli_other` | omnilua `stli_other` |
+|---|---:|---:|
+| table_seti_same | 1.2K | 28.6M |
+| table_setfield_same | 267K | 73.9M |
+| method_calls | 1.2M | 36.5M |
+| fibonacci | 60M | 271M |
+| mandelbrot | about equal | about equal |
+
+- Branch misses are not a material part of any row's gap on this machine.
+
+### Mechanism
+
+1. The VM writes a number into a stack slot, for example
+   `window[3].val = LuaValue::Int(new_idx)` in `FORLOOP`. LLVM emits this as
+   two 8-byte stores: the tag word, then the payload.
+2. A following opcode reads that slot as a whole value, for example `SETI`
+   through `state.get_at()`. LLVM emits the copy as one 16-byte SSE load
+   (`movups`).
+3. x86 cores cannot forward two narrower in-flight stores into one wider load.
+   The load waits until both stores retire.
+4. C never hits this. Its `setobj` copies `value_` (8 B) and `tt_` (1 B) as
+   separate fields, so every load matches the width of the store that wrote
+   it.
+
+A standalone Rust benchmark of the same write-then-copy pattern confirms the
+mechanism. Writing the value with one 16-byte store cut forwarding failures
+from 400M to 1.9K and cycles by 6x.
+
+### What was tried
+
+Safe Rust cannot express the fix. Each of these was measured and dropped:
+
+- `-C llvm-args=-x86-sfb-inspection-limit=400`, which widens LLVM's own
+  store-forwarding-block avoidance pass. No change in the counter.
+- A tag-first read (match the tag, then copy the payload), a layout where every
+  payload is a plain 8-byte integer, and a two-field struct copied field by
+  field. LLVM merged each back into one 16-byte load.
+
+The working write is an `unsafe` helper that stores the tag and payload with
+one `_mm_storeu_si128`. It needs the workspace `unsafe_code` lint relaxed from
+`forbid` to `deny`, and an `unsafe` budget for `lua-types`. Three variants were
+A/B'd against the tip with `compare_bins.sh`:
+
+| variant | sites | result |
+|---|---|---|
+| A | all 11 direct `Int`/`Float` slot writes in `vm.rs` | cycles: table_seti_same −26%, table_setfield_same −19%, fibonacci +15% |
+| B | the three `FORLOOP` writes | wall (7 pairs): table_seti_same 0.78, table_setfield_same 0.82, table_settable_string_key 0.91, metatable_index_chain 0.94, compare_immediates 0.95, pcall_error 0.93; json_roundtrip 1.04, table_ops_long 1.04; loop_variants median 1.14 and cycles +24% |
+| C | the visible loop variable only (`window[3]`) | erratic: table_setfield_same +29%, table_ops_long −19% |
+
+Variant B took table_seti_same's failures from 20.9M to 0.5M. Its A/B is
+`20261126T222317Z-59f71189-bin-ab.tsv`.
+
+### Why none of the variants ships
+
+The VM reads a slot two ways. Whole-value copies use one 16-byte load. Typed
+reads (`as_int`, match arms on `Int`) load the tag and the payload as separate
+8-byte loads. Changing one writer's width moves the penalty to whichever
+readers use the other width. Variant B fixed the setter rows and slowed
+loop_variants. Variant C moved the penalty around unpredictably. About 60%
+confident that loop_variants slowed because its narrow reads forward poorly
+from a 16-byte store; a per-site `perf annotate` of loop_variants would
+confirm or refute it.
+
+### Next step
+
+The consistent fix is C's shape: every write and every copy of a slot moves
+the tag and the payload as two separate 8-byte accesses. LLVM merges safe
+field-wise copies, so this needs `unsafe` split copies (or volatile or
+`asm`-fenced accesses) in the value-copy path. That makes it a decision about
+the zero-`unsafe` core, alongside the NaN-boxing scope above.
+
+About 70% confident it keeps variant B's setter wins without the loop_variants
+loss. The cheapest falsifier is the standalone benchmark with two separate
+8-byte loads LLVM cannot merge. If that copy stalls after 8-byte stores, or
+runs slower than the 16-byte path, the idea is dead.
+
+Reproduce the counters with:
+
+```bash
+perf stat -e cycles,instructions,ls_bad_status2.stli_other,ls_stlf \
+  target/release/omnilua harness/bench/workloads/table_seti_same.lua
+```
+
+These are AMD event names. Intel exposes the same failure as
+`ld_blocks.store_forward`. Apple Silicon is untested.
 
 ## Mental Model
 

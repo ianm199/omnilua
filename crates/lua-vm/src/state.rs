@@ -1839,6 +1839,10 @@ pub struct GlobalState {
 
     pub strcache: [[GcRef<LuaString>; STRCACHE_M]; STRCACHE_N],
 
+    /// Address and length of the `'static` slice each `strcache` entry was
+    /// interned from. `(0, 0)` marks an empty entry.
+    pub strcache_src: [[(usize, usize); STRCACHE_M]; STRCACHE_N],
+
     /// Stable intern map for the public [`LuaString`] type. The parser and
     /// stdlib need pointer-equality across `intern_str` calls so
     /// `GcRef::ptr_eq` can resolve variable identity. Without this map each
@@ -2673,7 +2677,34 @@ impl LuaState {
         }
     }
 
-    /// Returns the current CallInfo index (the active call frame).
+    /// Interns a string that lives for the whole program, checking a small
+    /// cache keyed on the slice address before hashing (C's `luaS_new`). A hit
+    /// skips the hash, the intern-table probe and the allocation. A `'static`
+    /// slice never changes, so a matching address and length is a match.
+    pub fn intern_static_str(
+        &mut self,
+        bytes: &'static [u8],
+    ) -> Result<GcRef<LuaString>, LuaError> {
+        let src = (bytes.as_ptr() as usize, bytes.len());
+        let row = src.0 % STRCACHE_N;
+        {
+            let global = self.global();
+            for j in 0..STRCACHE_M {
+                if global.strcache_src[row][j] == src {
+                    return Ok(global.strcache[row][j].clone());
+                }
+            }
+        }
+        let s = self.intern_str(bytes)?;
+        let mut global = self.global_mut();
+        global.strcache[row].rotate_right(1);
+        global.strcache_src[row].rotate_right(1);
+        global.strcache[row][0] = s.clone();
+        global.strcache_src[row][0] = src;
+        Ok(s)
+    }
+
+    /// Returns the current CallInfo index) (the active call frame).
     #[inline(always)]
     pub fn top_idx(&self) -> StackIdx {
         self.top
@@ -6386,6 +6417,7 @@ pub fn new_state() -> Option<LuaState> {
         tmname: Vec::new(),
         mt: std::array::from_fn(|_| None),
         strcache: std::array::from_fn(|_| std::array::from_fn(|_| placeholder_str.clone())),
+        strcache_src: [[(0, 0); STRCACHE_M]; STRCACHE_N],
         interned_lt: InternedStringMap::default(),
         warnf: None,
         warn_mode: WarnMode::Off,
@@ -8125,5 +8157,27 @@ mod tests {
             crate::api::gc(&mut state, crate::api::GcArgs::Step { data: 1 }),
             1
         );
+    }
+
+    /// The static-string cache hands back the same interned object as
+    /// `intern_str`, on both the miss and the hit path, and slices with equal
+    /// bytes at different addresses still intern to one string.
+    #[test]
+    fn intern_static_str_matches_intern_str() {
+        static A: &[u8] = b"boolean";
+        static B: [u8; 7] = *b"boolean";
+        let mut state = new_state().expect("state should initialize");
+        let _heap_guard = {
+            let g = state.global();
+            lua_gc::HeapGuard::push(&g.heap)
+        };
+        let first = state.intern_static_str(A).expect("miss path");
+        let again = state.intern_static_str(A).expect("hit path");
+        let other = state.intern_static_str(&B).expect("other address");
+        let plain = state.intern_str(b"boolean").expect("intern_str");
+        assert!(GcRef::ptr_eq(&first, &again));
+        assert!(GcRef::ptr_eq(&first, &other));
+        assert!(GcRef::ptr_eq(&first, &plain));
+        assert_eq!(first.as_bytes(), b"boolean");
     }
 }

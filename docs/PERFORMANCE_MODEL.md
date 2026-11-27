@@ -491,6 +491,53 @@ perf stat -e cycles,instructions,ls_bad_status2.stli_other,ls_stlf \
 These are AMD event names. Intel exposes the same failure as
 `ld_blocks.store_forward`. Apple Silicon is untested.
 
+### Remaining forwarding failures after 0.7.4 (2026-11-27)
+
+All of loop_variants' leftover failures come from its ipairs loop, at about
+six per iteration. C 5.4.7 fails slightly more often on the same loop: 231M
+to omnilua's 182M on a 30.7M-iteration probe. So the ipairs gap to C is
+instruction count. omnilua retires 18.6G instructions to C's 9.7G and spends
+3.0G cycles to C's 1.9G.
+
+Failures per call on a 10M-call loop at 0.7.4, with C 5.4.7 in brackets:
+
+| Callee | omnilua | C |
+|---|---|---|
+| empty Lua function | 3.2 | 4.0 |
+| `rawlen(t)` | 4.7 | |
+| `rawget(t, 2)` | 1.7 | |
+| `type(t)` | 10.9 | 2.1 |
+
+`type` was the outlier. It copied the name into a `Vec` and re-interned it
+on every call. It now goes through `LuaState::intern_static_str`, a
+`luaS_new`-style cache in `GlobalState.strcache` keyed on the `'static`
+slice's address. That brings it to 3.5 failures and 83 cycles per call,
+down from 138 (C: 60).
+
+Event samples skid by tens of instructions on Zen 5, so `perf annotate`
+lands near the stalled load rather than on it. IBS would give exact
+addresses, but it needs system-wide sampling (`perf_event_paranoid` <= 0).
+
+### The remaining gap is dispatch-loop instruction count
+
+A numeric for loop with two arithmetic opcodes retires 207 instructions per
+iteration, against C's 92. Its cycle ratio is about 2.0x, at IPC 7.2 to C's
+6.5. Bounds-checked slice indexing makes up about a third of the retired
+instructions, and the opcode match another 12%. `execute` keeps `pc`,
+`base`, `trap` and the address of `state.stack` in stack spill slots. Every
+handler reloads them, and every register access is two dependent loads plus
+a length check.
+
+Removing the bounds checks alone does not help. `get_unchecked` in
+`get_at`, `set_at` and the ADD operand reads raised cycles 1.4% on the
+numeric loop and 8% on an empty Lua call. The register allocator spilled
+more (`unchecked-stack-access-dispatch` in
+`harness/rejected-experiments.jsonl`). Closing this gap means keeping the
+frame state in registers across the loop, the way C's `luaV_execute` holds
+`pc`, `base` and `k` in locals. That is the "Raw pointer stack access" and
+"Cached frame and upvalue pointers" work in `MATCHING_C_PERFORMANCE.md`,
+done as one change.
+
 ## Mental Model
 
 **Decomposition (P2.1 rig, 2026-06-09, the most important measured fact in

@@ -1176,6 +1176,16 @@ pub fn push_lstring(state: &mut LuaState, s: &[u8]) -> Result<GcRef<LuaString>, 
     Ok(ts)
 }
 
+/// `lua_pushstring` for a string with static lifetime. Repeat pushes of the
+/// same slice hit the address-keyed string cache instead of re-interning.
+pub fn push_static_string(state: &mut LuaState, s: &'static [u8]) -> Result<(), LuaError> {
+    let ts = state.intern_static_str(s)?;
+    state.push(LuaValue::Str(ts));
+    state.gc_pre_collect_clear();
+    state.gc().check_step();
+    Ok(())
+}
+
 pub fn push_string(
     state: &mut LuaState,
     s: Option<&[u8]>,

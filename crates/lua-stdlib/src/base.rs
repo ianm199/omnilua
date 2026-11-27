@@ -745,9 +745,8 @@ pub(crate) fn type_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     if t == LuaType::None {
         return Err(lua_vm::debug::arg_error_impl(state, 1, b"value expected"));
     }
-    // Clone the bytes before the push to avoid borrow conflict with state.
-    let name: Vec<u8> = state.type_name(t).to_vec();
-    state.push_string(&name)?;
+    let name = state.type_name(t);
+    lua_vm::api::push_static_string(state, name)?;
     Ok(1)
 }
 

@@ -616,9 +616,9 @@ fn math_max(state: &mut LuaState) -> Result<usize, LuaError> {
 fn math_type(state: &mut LuaState) -> Result<usize, LuaError> {
     if matches!(state.type_at(1), LuaType::Number) {
         if arg_is_int(state, 1) {
-            state.push_string(b"integer")?;
+            lua_vm::api::push_static_string(state, b"integer")?;
         } else {
-            state.push_string(b"float")?;
+            lua_vm::api::push_static_string(state, b"float")?;
         }
     } else {
         state.check_any(1)?;

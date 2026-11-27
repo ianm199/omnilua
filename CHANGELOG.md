@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-26
+
+Interpreter performance release. No API or behavior changes.
+
+### Changed — table and `__index` reads no longer stall on store forwarding (#338)
+
+0.7.3 writes stack values as two 8-byte stores. Readers that still copied
+a value back in one 16-byte load stalled the same way the old copies did.
+Hash-part table reads, the `__index` lookup loop and the `ipairs` result
+now read values as two words too. On Zen 5, method calls through a
+metatable run in 0.85x and `__index` chains in 0.77x of their 0.7.3 time.
+Array-part reads stay single copies: bulk shifts such as `table.insert`
+write elements with wide stores, and split reads of those stall instead.
+
 ## [0.7.3] - 2026-11-26
 
 Interpreter performance release. No API or behavior changes.

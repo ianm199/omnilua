@@ -427,23 +427,45 @@ The VM reads a slot two ways. Whole-value copies use one 16-byte load. Typed
 reads (`as_int`, match arms on `Int`) load the tag and the payload as separate
 8-byte loads. Changing one writer's width moves the penalty to whichever
 readers use the other width. Variant B fixed the setter rows and slowed
-loop_variants. Variant C moved the penalty around unpredictably. About 60%
-confident that loop_variants slowed because its narrow reads forward poorly
-from a 16-byte store; a per-site `perf annotate` of loop_variants would
-confirm or refute it.
+loop_variants. Variant C moved the penalty around unpredictably.
 
-### Next step
+The guess that loop_variants' narrow reads forward poorly from a 16-byte store
+was refuted. In the standalone benchmark, two 8-byte loads after one 16-byte
+store forward cleanly (314K failures over 200M copies).
 
-The consistent fix is C's shape: every write and every copy of a slot moves
-the tag and the payload as two separate 8-byte accesses. LLVM merges safe
-field-wise copies, so this needs `unsafe` split copies (or volatile or
-`asm`-fenced accesses) in the value-copy path. That makes it a decision about
-the zero-`unsafe` core, alongside the NaN-boxing scope above.
+### The fix: split loads
 
-About 70% confident it keeps variant B's setter wins without the loop_variants
-loss. The cheapest falsifier is the standalone benchmark with two separate
-8-byte loads LLVM cannot merge. If that copy stalls after 8-byte stores, or
-runs slower than the 16-byte path, the idea is dead.
+C's shape works. `LuaValue::load` copies a value as two 8-byte loads in one
+inline-asm block, which LLVM cannot merge. Two 8-byte loads forward from
+either store shape: the tag-and-payload stores of a fresh value, or the one
+16-byte store of a whole copy. It is used in `get_at`, `MOVE`, `SETUPVAL`,
+`RETURN1` and the generic-for copies. It is the one `unsafe` block in
+`lua-types`; Miri builds a plain copy.
+
+Standalone benchmark, 200M write-then-copy iterations:
+
+| writer | reader | failures | cycles |
+|---|---|---:|---:|
+| two 8 B stores | one 16 B load (today) | 417M | 3.44G |
+| two 8 B stores | two 8 B loads, asm | 96K | 1.05G |
+| one 16 B store | two 8 B loads | 314K | 0.98G |
+
+A safe `std::hint::black_box` on the payload also blocks the merge. In the VM
+it cost 15% more instructions and a net cycle loss, because it spills the
+value and clobbers memory.
+
+Interleaved A/B against `59f71189`, 9 pairs, median wall ratio (machine under
+load): table_seti_same 0.66, table_setfield_same 0.75, compare_immediates
+0.83, loop_variants 0.84, table_settable_string_key 0.87,
+metatable_index_chain 0.88, table_field_index 0.93. Four rows that read
+1.03–1.09 were inconclusive or improved at 15 pairs. The same change makes
+`get_i_value` (`ipairs`, `lua_geti`) read the array slot directly when the
+table has no metatable; that is part of loop_variants' gain.
+
+Remaining stalls: fibonacci and method_calls keep about half of theirs, and
+loop_variants keeps most of its count in the C-call path
+(`call_known_c`, `move_results`). Each new copy site follows the same rule:
+copy a slot with `.load()`.
 
 Reproduce the counters with:
 

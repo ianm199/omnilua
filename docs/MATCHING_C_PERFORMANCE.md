@@ -1316,13 +1316,13 @@ others are candidates for carefully-scoped `unsafe` once safe-Rust work
 plateaus. None of these are blockers. They become relevant for the final
 1.0–1.2× push toward parity.
 
-- **Field-wise value copies (store-to-load forwarding).** LLVM writes a
-  numeric `LuaValue` as two 8-byte stores and copies one as a single 16-byte
-  load. On x86 the load cannot forward from the two stores and stalls. This is
-  the largest measured cycle gap on the table-setter rows on Zen 5
-  (2026-11-26). C copies `value_` and `tt_` separately and never hits it.
-  Safe Rust cannot keep the copies split, because LLVM re-merges them. See
-  "Store-to-load forwarding stalls" in `PERFORMANCE_MODEL.md`.
+- **Field-wise value copies (store-to-load forwarding) (done).** LLVM writes
+  a numeric `LuaValue` as two 8-byte stores and copies one as a single 16-byte
+  load. On x86 the load cannot forward from the two stores and stalls. C
+  copies `value_` and `tt_` separately and never hits it. `LuaValue::load`
+  copies hot stack slots as two 8-byte loads in one inline-asm block, the one
+  `unsafe` block in `lua-types`. table_seti_same runs 0.66x its previous wall
+  time. See "Store-to-load forwarding stalls" in `PERFORMANCE_MODEL.md`.
 
 - **C-shaped stack slots (done).** `LuaValue` is 16 bytes, matching C Lua
   5.4.7's `TValue`. `StackValue` holds only `val` and is also 16 bytes, since

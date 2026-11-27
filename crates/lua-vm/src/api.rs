@@ -338,6 +338,11 @@ pub fn copy(state: &mut LuaState, fromidx: i32, toidx: i32) {
     }
 }
 
+/// Returns the value at `idx` (`lua_pushvalue` without the push).
+pub fn value_at(state: &LuaState, idx: i32) -> LuaValue {
+    index_to_value(state, idx)
+}
+
 pub fn push_value(state: &mut LuaState, idx: i32) {
     let v = index_to_value(state, idx);
     state.push(v);

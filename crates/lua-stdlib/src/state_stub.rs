@@ -869,8 +869,7 @@ impl LuaStateStubExt for LuaState {
     }
 
     fn value_at(&mut self, idx: i32) -> LuaValue {
-        lua_vm::api::push_value(self, idx);
-        self.pop()
+        lua_vm::api::value_at(self, idx)
     }
 
     fn check_arg_type(&mut self, arg: i32, t: LuaType) -> Result<(), LuaError> {

@@ -10,7 +10,7 @@ use crate::{
     state::{CallInfoIdx, LuaState},
     vm,
 };
-use lua_types::closure::LuaClosure;
+use lua_types::closure::{LuaCFnPtr, LuaClosure};
 use lua_types::tagmethod::TagMethod;
 use lua_types::StackIdx;
 use lua_types::{error::LuaError, status::LuaStatus, value::LuaValue};
@@ -664,13 +664,15 @@ pub(crate) fn poscall(
     ci_idx: CallInfoIdx,
     nres: i32,
 ) -> Result<(), LuaError> {
-    let wanted = state.get_ci(ci_idx).nresults as i32;
+    let (wanted, func_idx, previous) = {
+        let ci = state.get_ci(ci_idx);
+        (ci.nresults as i32, ci.func, ci.previous)
+    };
 
     if state.hookmask != 0 && !(wanted < LUA_MULTRET) {
         rethook(state, ci_idx, nres)?;
     }
 
-    let func_idx = state.get_ci(ci_idx).func;
     move_results(state, func_idx, nres, wanted)?;
 
     debug_assert!(
@@ -679,11 +681,7 @@ pub(crate) fn poscall(
             == 0
     );
 
-    let previous = state
-        .get_ci(ci_idx)
-        .previous
-        .expect("poscall: no previous call frame");
-    state.ci = previous;
+    state.ci = previous.expect("poscall: no previous call frame");
     Ok(())
 }
 
@@ -707,23 +705,26 @@ fn prep_call_info(
     nret: i32,
     mask: u16,
     top_idx: StackIdx,
+    call_metamethods: u8,
 ) -> Result<CallInfoIdx, LuaError> {
     debug_assert!(
         mask & crate::state::CIST_TRAP == 0,
         "prep_call_info must not be handed a pre-set trap bit"
     );
     // next_ci → L->ci->next ? L->ci->next : luaE_extendCI(L)
-    let ci_idx = state.next_ci()?;
+    let ci_idx = match state.call_info[state.ci.as_usize()].next {
+        Some(idx) => idx,
+        None => crate::state::extend_ci(state),
+    };
+    let ci = &mut state.call_info[ci_idx.as_usize()];
+    ci.tailcalls = 0;
+    ci.func = func_idx;
+    ci.nresults = nret as i16;
+    ci.callstatus = mask;
+    ci.call_metamethods = call_metamethods;
+    ci.top = top_idx;
+    ci.u = crate::state::CallInfoFrame::lua_default();
     state.ci = ci_idx;
-    {
-        let ci = state.get_ci_mut(ci_idx);
-        ci.func = func_idx;
-        ci.nresults = nret as i16;
-        ci.callstatus = mask;
-        ci.call_metamethods = 0;
-        ci.top = top_idx;
-        ci.u = crate::state::CallInfoFrame::lua_default();
-    }
     Ok(ci_idx)
 }
 
@@ -731,12 +732,14 @@ fn prep_call_info(
 /// invokes the C function, and calls `poscall`.
 /// Returns the number of values returned by the C function.
 ///
-#[inline(always)]
+/// Kept out of line: every call site, including the interpreter loop, carries
+/// one call instruction per C call instead of a copy of this body.
+#[inline(never)]
 fn precall_c(
     state: &mut LuaState,
     func_idx: StackIdx,
     nresults: i32,
-    f: crate::state::LuaCallable,
+    f: LuaCFnPtr,
     call_metamethods: u8,
 ) -> Result<i32, LuaError> {
     state.check_stack(LUA_MINSTACK as i32)?;
@@ -745,8 +748,14 @@ fn precall_c(
     }
 
     let top_idx = state.top_idx();
-    let ci_idx = prep_call_info(state, func_idx, nresults, CIST_C, top_idx + LUA_MINSTACK)?;
-    state.get_ci_mut(ci_idx).call_metamethods = call_metamethods;
+    let ci_idx = prep_call_info(
+        state,
+        func_idx,
+        nresults,
+        CIST_C,
+        top_idx + LUA_MINSTACK,
+        call_metamethods,
+    )?;
 
     debug_assert!(
         state.get_ci(ci_idx).top.0 <= state.stack_last.0,
@@ -760,7 +769,13 @@ fn precall_c(
         hook(state, LUA_HOOKCALL, -1, 1, narg)?;
     }
 
-    let n = f.call(state)? as i32;
+    // A bare function pointer is copied out of the registry; only a boxed
+    // Rust closure needs its refcount held across the call.
+    let bare = state.global().c_functions[f].as_bare();
+    let n = match bare {
+        Some(cfunc) => cfunc(state)?,
+        None => call_rust_callable(state, f)?,
+    } as i32;
 
     debug_assert!(
         n <= state.top_idx().0 as i32,
@@ -769,6 +784,13 @@ fn precall_c(
 
     poscall(state, ci_idx, n)?;
     Ok(n)
+}
+
+#[cold]
+#[inline(never)]
+fn call_rust_callable(state: &mut LuaState, f: LuaCFnPtr) -> Result<usize, LuaError> {
+    let cfunc = state.global().c_functions[f].clone();
+    cfunc.call(state)
 }
 
 /// Prepares a tail call, reusing the current `CallInfo`.
@@ -800,12 +822,10 @@ pub(crate) fn pretailcall(
         let func_val = state.get_at(func_idx).clone();
         match func_val {
             LuaValue::Function(LuaClosure::C(ref cl)) => {
-                let cfunc = state.global().c_functions[cl.func].clone();
-                return precall_c(state, func_idx, LUA_MULTRET, cfunc, call_metamethods);
+                return precall_c(state, func_idx, LUA_MULTRET, cl.func, call_metamethods);
             }
             LuaValue::Function(LuaClosure::LightC(f)) => {
-                let cfunc = state.global().c_functions[f].clone();
-                return precall_c(state, func_idx, LUA_MULTRET, cfunc, call_metamethods);
+                return precall_c(state, func_idx, LUA_MULTRET, f, call_metamethods);
             }
             LuaValue::Function(LuaClosure::Lua(ref cl)) => {
                 let proto = cl.proto.clone();
@@ -877,25 +897,37 @@ pub(crate) fn precall(
     func_idx: StackIdx,
     nresults: i32,
 ) -> Result<Option<CallInfoIdx>, LuaError> {
-    if let LuaValue::Function(LuaClosure::Lua(cl)) = &state.stack[func_idx.0 as usize].val {
-        let nfixparams = cl.proto.numparams as i32;
-        let fsize = cl.proto.maxstacksize as i32;
-        let narg = (state.top_idx().0 as i32 - func_idx.0 as i32) - 1;
+    match &state.stack[func_idx.0 as usize].val {
+        LuaValue::Function(LuaClosure::Lua(cl)) => {
+            let nfixparams = cl.proto.numparams as i32;
+            let fsize = cl.proto.maxstacksize as i32;
+            let narg = (state.top_idx().0 as i32 - func_idx.0 as i32) - 1;
 
-        state.check_stack(fsize)?;
-        if state.gc_check_needed {
-            state.gc_check_step();
+            state.check_stack(fsize)?;
+            if state.gc_check_needed {
+                state.gc_check_step();
+            }
+
+            let ci_idx =
+                prep_call_info(state, func_idx, nresults, 0, func_idx + 1 + fsize as i32, 0)?;
+
+            if narg < nfixparams {
+                fill_missing_params(state, narg, nfixparams);
+            }
+            Ok(Some(ci_idx))
         }
-
-        let ci_idx = prep_call_info(state, func_idx, nresults, 0, func_idx + 1 + fsize as i32)?;
-        state.set_ci_savedpc(ci_idx, 0);
-
-        if narg < nfixparams {
-            fill_missing_params(state, narg, nfixparams);
+        LuaValue::Function(LuaClosure::LightC(f)) => {
+            let f = *f;
+            precall_c(state, func_idx, nresults, f, 0)?;
+            Ok(None)
         }
-        return Ok(Some(ci_idx));
+        LuaValue::Function(LuaClosure::C(cl)) => {
+            let f = cl.func;
+            precall_c(state, func_idx, nresults, f, 0)?;
+            Ok(None)
+        }
+        _ => precall_slow(state, func_idx, nresults),
     }
-    precall_slow(state, func_idx, nresults)
 }
 
 /// Cold path: fills `nfixparams - narg` nil values onto the stack.
@@ -927,33 +959,11 @@ fn precall_slow(
         let func_val = state.get_at(func_idx).clone();
         match func_val {
             LuaValue::Function(LuaClosure::C(ref cl)) => {
-                let cfunc = state.global().c_functions[cl.func].clone();
-                precall_c(state, func_idx, nresults, cfunc, call_metamethods)?;
+                precall_c(state, func_idx, nresults, cl.func, call_metamethods)?;
                 return Ok(None);
             }
             LuaValue::Function(LuaClosure::LightC(f)) => {
-                state.check_stack(LUA_MINSTACK as i32)?;
-                if state.gc_check_needed {
-                    state.gc_check_step();
-                }
-
-                let top_idx = state.top_idx();
-                let ci_idx =
-                    prep_call_info(state, func_idx, nresults, CIST_C, top_idx + LUA_MINSTACK)?;
-                state.get_ci_mut(ci_idx).call_metamethods = call_metamethods;
-
-                if state.hookmask & LUA_MASKCALL != 0 {
-                    let narg = (state.top_idx().0 as i32 - func_idx.0 as i32) - 1;
-                    hook(state, LUA_HOOKCALL, -1, 1, narg)?;
-                }
-
-                let cfunc = state.global().c_functions[f].clone();
-                let n = cfunc.call(state)? as i32;
-                debug_assert!(
-                    n <= state.top_idx().0 as i32,
-                    "C function returned more values than available"
-                );
-                poscall(state, ci_idx, n)?;
+                precall_c(state, func_idx, nresults, f, call_metamethods)?;
                 return Ok(None);
             }
             LuaValue::Function(LuaClosure::Lua(ref cl)) => {
@@ -966,10 +976,14 @@ fn precall_slow(
                     state.gc_check_step();
                 }
 
-                let ci_idx =
-                    prep_call_info(state, func_idx, nresults, 0, func_idx + 1 + fsize as i32)?;
-                state.get_ci_mut(ci_idx).call_metamethods = call_metamethods;
-                state.set_ci_savedpc(ci_idx, 0);
+                let ci_idx = prep_call_info(
+                    state,
+                    func_idx,
+                    nresults,
+                    0,
+                    func_idx + 1 + fsize as i32,
+                    call_metamethods,
+                )?;
 
                 if narg < nfixparams {
                     fill_missing_params(state, narg, nfixparams);
@@ -1002,7 +1016,7 @@ fn ccall_known_c_inner(
     func_idx: StackIdx,
     n_results: i32,
     inc: u32,
-    f: crate::state::LuaCallable,
+    f: LuaCFnPtr,
 ) -> Result<(), LuaError> {
     state.n_ccalls += inc;
 
@@ -1075,8 +1089,8 @@ pub(crate) fn call_known_c(
     n_results: i32,
 ) -> Result<bool, LuaError> {
     let cfunc = match &state.stack[func_idx.0 as usize].val {
-        LuaValue::Function(LuaClosure::C(cl)) => state.global().c_functions[cl.func].clone(),
-        LuaValue::Function(LuaClosure::LightC(f)) => state.global().c_functions[*f].clone(),
+        LuaValue::Function(LuaClosure::C(cl)) => cl.func,
+        LuaValue::Function(LuaClosure::LightC(f)) => *f,
         _ => return Ok(false),
     };
 

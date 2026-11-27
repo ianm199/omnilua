@@ -1873,6 +1873,10 @@ pub struct GlobalState {
     /// registers the function and stores the resulting index in the closure.
     pub c_functions: Vec<LuaCallable>,
 
+    /// First `c_functions` index seen for each bare function address, so a
+    /// repeat push of the same light C function skips the registry scan.
+    pub c_function_index: std::collections::HashMap<usize, LuaCFnPtr>,
+
     /// Owns the allgc intrusive list and runs collections. Starts paused;
     /// `new_state` unpauses it once the state is fully initialized, after
     /// which `step` runs during VM dispatch.
@@ -2677,6 +2681,21 @@ impl LuaState {
         }
     }
 
+    /// The cached string for a `'static` slice, if `intern_static_str` has
+    /// seen this address and length. A hit allocates nothing.
+    #[inline]
+    pub fn cached_static_str(&self, bytes: &'static [u8]) -> Option<GcRef<LuaString>> {
+        let src = (bytes.as_ptr() as usize, bytes.len());
+        let row = src.0 % STRCACHE_N;
+        let global = self.global();
+        for j in 0..STRCACHE_M {
+            if global.strcache_src[row][j] == src {
+                return Some(global.strcache[row][j].clone());
+            }
+        }
+        None
+    }
+
     /// Interns a string that lives for the whole program, checking a small
     /// cache keyed on the slice address before hashing (C's `luaS_new`). A hit
     /// skips the hash, the intern-table probe and the allocation. A `'static`
@@ -2685,16 +2704,11 @@ impl LuaState {
         &mut self,
         bytes: &'static [u8],
     ) -> Result<GcRef<LuaString>, LuaError> {
+        if let Some(s) = self.cached_static_str(bytes) {
+            return Ok(s);
+        }
         let src = (bytes.as_ptr() as usize, bytes.len());
         let row = src.0 % STRCACHE_N;
-        {
-            let global = self.global();
-            for j in 0..STRCACHE_M {
-                if global.strcache_src[row][j] == src {
-                    return Ok(global.strcache[row][j].clone());
-                }
-            }
-        }
         let s = self.intern_str(bytes)?;
         let mut global = self.global_mut();
         global.strcache[row].rotate_right(1);
@@ -3334,17 +3348,25 @@ impl LuaState {
     /// share identity.
     pub fn register_c_function(&mut self, f: LuaCFunction, dedup: bool) -> LuaCFnPtr {
         let mut g = self.global_mut();
+        let addr = f as usize;
         if dedup {
+            if let Some(&i) = g.c_function_index.get(&addr) {
+                return i;
+            }
             if let Some(i) = g.c_functions.iter().position(|existing| {
                 existing
                     .as_bare()
                     .is_some_and(|existing| std::ptr::fn_addr_eq(existing, f))
             }) {
+                g.c_function_index.insert(addr, i);
                 return i;
             }
         }
         let i = g.c_functions.len();
         g.c_functions.push(LuaCallable::bare(f));
+        if dedup {
+            g.c_function_index.insert(addr, i);
+        }
         i
     }
 
@@ -3973,19 +3995,7 @@ impl LuaState {
         t.resize(self, na, nh)
     }
     pub fn table_getn(&self, t: &GcRef<LuaTable>) -> i64 {
-        // C's `luaH_getn` returns a boundary i such that t[i] is present and
-        // t[i+1] is absent (or 0 if t[1] is absent), found via a binary or
-        // unbound search over the array part. This instead walks integer
-        // keys linearly from 1 — each `get_int` call is O(1), but the walk
-        // itself is O(n) in the boundary rather than C's O(log n).
-        let mut i: i64 = 1;
-        loop {
-            let v = t.get_int(i);
-            if matches!(v, LuaValue::Nil) {
-                return i - 1;
-            }
-            i += 1;
-        }
+        t.getn() as i64
     }
 
     pub fn try_bin_tm(
@@ -6427,6 +6437,7 @@ pub fn new_state() -> Option<LuaState> {
         test_warn_last_to_cont: false,
         test_warn_buffer: Vec::new(),
         c_functions: Vec::new(),
+        c_function_index: std::collections::HashMap::new(),
         heap,
         cross_thread_upvals: std::collections::HashMap::new(),
         suspended_parent_stacks: Vec::new(),

@@ -13,6 +13,17 @@ result on every call. They now go through an address-keyed cache of static strin
 `lua_pushstring` does. On Zen 5 a `type(t)` loop runs in 0.60x of its 0.7.4
 time: 83 cycles per call, against 60 for C Lua 5.4.7.
 
+### Changed — cheaper C function calls and stdlib argument access
+
+`OP_CALL` now calls C functions on a direct path instead of the generic
+slow path, and the interpreter holds the bytecode as a local slice. Stdlib
+functions read their arguments in place instead of pushing and popping
+them. `rawlen` uses the table border search instead of walking keys from 1,
+so it now returns the same border as `#t`, as C's `lua_rawlen` does.
+`ipairs`, `table.sort`, `select`, `tostring` and `tonumber` skip work they
+repeated on every call. On Zen 5, `sort_seeded` runs in 0.82x of its 0.7.4
+time, `loop_variants` in 0.88x and `json_roundtrip` in 0.91x.
+
 ## [0.7.4] - 2026-11-26
 
 Interpreter performance release. No API or behavior changes.

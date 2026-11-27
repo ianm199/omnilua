@@ -538,6 +538,33 @@ frame state in registers across the loop, the way C's `luaV_execute` holds
 "Cached frame and upvalue pointers" work in `MATCHING_C_PERFORMANCE.md`,
 done as one change.
 
+The dispatch head itself is 23 instructions per opcode on that loop, against
+about 7 in C. Five reload spilled loop state (`state`, `trap`, `pc`, and the
+bytecode slice's pointer and length), two are register moves, two range-check
+the opcode (`opcode()` maps 86-127 to `ExtraArg`), and one extracts the
+opcode a second time. x86-64 has six callee-saved registers. C's loop carries
+about seven values and its `pc` is a pointer, so nothing needs a length. Ours
+carries about ten, and LLVM spills the excess at the loop header. Branch
+hints and unchecked accesses only reshuffled the spills
+(`cold-trace-hook-dispatch`, `unchecked-fetch-plus-unchecked-stack`).
+
+Holding the bytecode as a local slice was the one dispatch change that helped
+everywhere: 3-5 instructions per opcode. The structural fix is a load-time
+bytecode verifier (jump targets, constant indices, register operands under
+`maxstacksize`), then raw `pc`, `k` and register-base pointers refreshed after
+anything that can grow the stack, with `ci` read from `state`.
+
+### C function calls and stdlib bodies (2026-11-27)
+
+`OP_CALL` only had a fast path for Lua closures. Every C function went
+through the `#[cold]` `precall_slow`, which bounds-checked `call_info` five
+times per call. Stdlib bodies paid more than the call itself. Argument reads
+went through an out-of-line `index_to_value`, and `value_at` pushed and then
+popped. `rawlen` walked integer keys from 1 instead of calling the border
+search. Every `ipairs(t)` scanned the whole C-function registry, and
+`lua_geti` built a boxed key for `table_get_with_tm`. All of these now take
+direct paths.
+
 ## Mental Model
 
 **Decomposition (P2.1 rig, 2026-06-09, the most important measured fact in

@@ -1932,7 +1932,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     )));
                 }
             };
-            let code = &cl.proto.code;
+            let code: &[Instruction] = &cl.proto.code;
             let constants = &cl.proto.k;
             // pc is an index into proto.code (u32)
             let mut pc: u32 = state.call_info[ci_slot].saved_pc();

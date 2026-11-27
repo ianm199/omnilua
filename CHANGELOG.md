@@ -6,14 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed — `type()` and `math.type()` no longer re-intern their result
+## [0.7.5] - 2026-11-27
+
+Interpreter performance release. One behavior change: `rawlen` on a table
+with holes now returns the same border as `#t`, as C's `lua_rawlen` does.
+
+### Changed — `type()` and `math.type()` no longer re-intern their result (#340)
 
 `type()` copied the type name into a fresh buffer, and both interned their
 result on every call. They now go through an address-keyed cache of static strings, as C's
 `lua_pushstring` does. On Zen 5 a `type(t)` loop runs in 0.60x of its 0.7.4
 time: 83 cycles per call, against 60 for C Lua 5.4.7.
 
-### Changed — cheaper C function calls and stdlib argument access
+### Changed — cheaper C function calls and stdlib argument access (#341)
 
 `OP_CALL` now calls C functions on a direct path instead of the generic
 slow path, and the interpreter holds the bytecode as a local slice. Stdlib

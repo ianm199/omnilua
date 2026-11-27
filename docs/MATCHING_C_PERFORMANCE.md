@@ -1332,7 +1332,10 @@ plateaus. None of these are blockers. They become relevant for the final
 - **Raw pointer stack access.** C-Lua reads `s2v(L->top.p - 1)` as a single
   pointer load. Our `state.get_at(idx)` indexes a `Vec<StackValue>` with
   whatever bounds-check LLVM can or can't elide. Profile evidence so far
-  suggests this is ~5% overhead, not the dominant cost.
+  suggests this is ~5% overhead, not the dominant cost. Removing the checks
+  alone made the dispatch loop slower (2026-11-27: +1.4% cycles on a numeric
+  for loop, +8% on an empty Lua call), because the register allocator spilled
+  more. It only pays together with cached frame state in registers.
 
 - **Cached frame and upvalue pointers.** C-Lua's `luaV_execute` keeps the
   active closure/prototype/constants/pc/base in local pointer state. CppCXY's

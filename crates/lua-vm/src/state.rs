@@ -1873,6 +1873,10 @@ pub struct GlobalState {
     /// registers the function and stores the resulting index in the closure.
     pub c_functions: Vec<LuaCallable>,
 
+    /// First `c_functions` index seen for each bare function address, so a
+    /// repeat push of the same light C function skips the registry scan.
+    pub c_function_index: std::collections::HashMap<usize, LuaCFnPtr>,
+
     /// Owns the allgc intrusive list and runs collections. Starts paused;
     /// `new_state` unpauses it once the state is fully initialized, after
     /// which `step` runs during VM dispatch.
@@ -3344,17 +3348,25 @@ impl LuaState {
     /// share identity.
     pub fn register_c_function(&mut self, f: LuaCFunction, dedup: bool) -> LuaCFnPtr {
         let mut g = self.global_mut();
+        let addr = f as usize;
         if dedup {
+            if let Some(&i) = g.c_function_index.get(&addr) {
+                return i;
+            }
             if let Some(i) = g.c_functions.iter().position(|existing| {
                 existing
                     .as_bare()
                     .is_some_and(|existing| std::ptr::fn_addr_eq(existing, f))
             }) {
+                g.c_function_index.insert(addr, i);
                 return i;
             }
         }
         let i = g.c_functions.len();
         g.c_functions.push(LuaCallable::bare(f));
+        if dedup {
+            g.c_function_index.insert(addr, i);
+        }
         i
     }
 
@@ -6425,6 +6437,7 @@ pub fn new_state() -> Option<LuaState> {
         test_warn_last_to_cont: false,
         test_warn_buffer: Vec::new(),
         c_functions: Vec::new(),
+        c_function_index: std::collections::HashMap::new(),
         heap,
         cross_thread_upvals: std::collections::HashMap::new(),
         suspended_parent_stacks: Vec::new(),

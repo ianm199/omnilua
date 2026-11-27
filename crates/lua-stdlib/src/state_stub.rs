@@ -24,7 +24,6 @@ use lua_types::{
     CallInfoIdx, LuaStatus, LuaType,
 };
 
-use lua_vm::state::LuaCallable;
 pub use lua_vm::state::LuaState;
 
 /// Bare function callable from Lua. C: `lua_CFunction`.
@@ -787,21 +786,7 @@ impl LuaStateStubExt for LuaState {
     }
 
     fn push_c_function(&mut self, f: lua_CFunction) -> Result<(), LuaError> {
-        let idx: LuaCFnPtr = {
-            let mut g = self.global_mut();
-            match g.c_functions.iter().position(|existing| {
-                existing
-                    .as_bare()
-                    .is_some_and(|existing| std::ptr::fn_addr_eq(existing, f))
-            }) {
-                Some(i) => i,
-                None => {
-                    let i = g.c_functions.len();
-                    g.c_functions.push(LuaCallable::bare(f));
-                    i
-                }
-            }
-        };
+        let idx: LuaCFnPtr = self.register_c_function(f, true);
         self.push(LuaValue::Function(LuaClosure::LightC(idx)));
         Ok(())
     }
@@ -1566,12 +1551,9 @@ impl LuaStateStubExt for LuaState {
     }
 
     fn string_to_number(&mut self, idx: i32) -> Option<usize> {
-        let bytes = lua_vm::api::to_lua_string(self, idx)
-            .ok()
-            .flatten()?
-            .as_bytes()
-            .to_vec();
-        let consumed = lua_vm::api::string_to_number(self, &bytes);
+        // The string stays in its stack slot for the call, which keeps it alive.
+        let s = lua_vm::api::to_lua_string(self, idx).ok().flatten()?;
+        let consumed = lua_vm::api::string_to_number(self, s.as_bytes());
         if consumed == 0 {
             None
         } else {

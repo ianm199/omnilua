@@ -1546,6 +1546,21 @@ pub(crate) fn xpcall_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 /// string, and leaves it on top as this function's single result.
 pub(crate) fn tostring_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     state.check_arg_any(1)?;
+    // A string with no `__tostring` on the string metatable is its own result.
+    if let v @ LuaValue::Str(_) = state.value_at(1) {
+        let mt = state.global().mt[LuaType::String as usize].clone();
+        let plain = match mt {
+            None => true,
+            Some(mt) => {
+                let key = state.intern_static_str(b"__tostring")?;
+                matches!(mt.get_short_str(&key), LuaValue::Nil)
+            }
+        };
+        if plain {
+            state.push(v);
+            return Ok(1);
+        }
+    }
     state.to_display_string(1)?;
     Ok(1)
 }

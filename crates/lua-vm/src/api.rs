@@ -644,6 +644,11 @@ impl LuaState {
     /// `auxlib::check_integer`, which routes through `state.to_integer_x`
     /// and `state.type_name` — both still trait stubs.
     pub fn check_arg_integer(&mut self, arg: i32) -> Result<i64, LuaError> {
+        if arg > 0 {
+            if let Some(LuaValue::Int(i)) = arg_slot(self, arg) {
+                return Ok(*i);
+            }
+        }
         match to_integer_x(self, arg) {
             Some(d) => Ok(d),
             None => {
@@ -680,6 +685,13 @@ impl LuaState {
     /// routes through `state.to_number_x` and `state.type_name` — both still
     /// trait stubs.
     pub fn check_number(&mut self, arg: i32) -> Result<f64, LuaError> {
+        if arg > 0 {
+            match arg_slot(self, arg) {
+                Some(LuaValue::Float(f)) => return Ok(*f),
+                Some(LuaValue::Int(i)) => return Ok(*i as f64),
+                _ => {}
+            }
+        }
         match to_number_x(self, arg) {
             Some(d) => Ok(d),
             None => {
@@ -708,6 +720,11 @@ impl LuaState {
     /// because the latter routes through `state.is_none_or_nil` and
     /// `state.to_integer_x`, which are themselves stubbed.
     pub fn opt_arg_integer(&mut self, arg: i32, def: i64) -> Result<i64, LuaError> {
+        if arg > 0 {
+            if let Some(LuaValue::Int(i)) = arg_slot(self, arg) {
+                return Ok(*i);
+            }
+        }
         match lua_type_at(self, arg) {
             LuaType::None | LuaType::Nil => Ok(def),
             _ => match to_integer_x(self, arg) {
@@ -1007,6 +1024,11 @@ pub fn lua_type_at(state: &LuaState, idx: i32) -> LuaType {
             None => LuaType::None,
         };
     }
+    lua_type_at_nonpositive(state, idx)
+}
+
+#[inline(never)]
+fn lua_type_at_nonpositive(state: &LuaState, idx: i32) -> LuaType {
     if !is_valid_index(state, idx) {
         return LuaType::None;
     }
@@ -1407,11 +1429,7 @@ pub fn get_field(state: &mut LuaState, idx: i32, k: &[u8]) -> Result<LuaType, Lu
 
 pub fn get_i(state: &mut LuaState, idx: i32, n: i64) -> Result<LuaType, LuaError> {
     let t = index_to_value(state, idx);
-    let key = LuaValue::Int(n);
-    let result = state.table_get_with_tm(&t, &key)?;
-    state.push(result);
-    let top = state.top_idx();
-    Ok(state.get_at(top - 1).base_type())
+    get_i_value(state, &t, n)
 }
 
 /// Variant of `get_i` that accepts a pre-resolved table value instead of a

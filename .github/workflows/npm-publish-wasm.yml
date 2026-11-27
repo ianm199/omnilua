@@ -55,22 +55,12 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - name: require npm token
-        if: ${{ !inputs.dry_run }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "Missing NPM_TOKEN repository secret. Create an npm publish token for the intended package owner, then add it with: gh secret set NPM_TOKEN" >&2
-            exit 1
-          fi
-
-      - name: npm identity
-        if: ${{ !inputs.dry_run }}
-        working-directory: packages/omnilua
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm whoami
+      # Publishing authenticates through npm trusted publishing (GitHub OIDC),
+      # which needs npm 11.5.1 or later. The trusted publisher on npmjs.com is
+      # bound to release.yml, so a direct dispatch of this workflow can only
+      # dry-run.
+      - name: npm with trusted publishing support
+        run: npm install -g npm@11
 
       - uses: Swatinem/rust-cache@v2
 
@@ -85,8 +75,6 @@ jobs:
       - name: npm publish
         if: ${{ !inputs.dry_run }}
         working-directory: packages/omnilua
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           name="$(node -p 'require("./package.json").name')"
           version="$(node -p 'require("./package.json").version')"
@@ -97,7 +85,7 @@ jobs:
             exit 0
           fi
           if ! npm publish --provenance --access public --tag "${{ inputs.tag }}"; then
-            echo "npm publish failed. If npm reported E403 or EOTP with a two-factor-authentication requirement, create an npm automation token or granular access token with publish permission and 2FA bypass enabled, then overwrite NPM_TOKEN." >&2
+            echo "npm publish failed. If npm reported E404 or ENEEDAUTH, check the package's trusted publisher on npmjs.com: repository ianm199/omnilua, workflow release.yml, npm publish allowed." >&2
             exit 1
           fi
 

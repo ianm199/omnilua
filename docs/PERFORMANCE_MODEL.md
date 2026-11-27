@@ -462,10 +462,24 @@ metatable_index_chain 0.88, table_field_index 0.93. Four rows that read
 `get_i_value` (`ipairs`, `lua_geti`) read the array slot directly when the
 table has no metatable; that is part of loop_variants' gain.
 
-Remaining stalls: fibonacci and method_calls keep about half of theirs, and
-loop_variants keeps most of its count in the C-call path
-(`call_known_c`, `move_results`). Each new copy site follows the same rule:
-copy a slot with `.load()`.
+A second pass split three more copies: hash-node value reads in `LuaTable`
+(`get_str_value`, the generic hash lookup, `slot_value`), the `t` and `tm`
+copies in `finish_get`, and the result push in `get_i_value`. Interleaved
+A/B against v0.7.3, 15 pairs: metatable_index_chain 0.77, method_calls 0.85.
+table_seti_same reads 1.04; its extra stalls are spread thin, the largest at
+a `RefCell` borrow-flag update.
+
+Do not split array-part reads. Splitting `get_int_value` and the array arm of
+`slot_value` raised table_ops_long's forwarding failures from 20M to 1.97G
+and doubled its wall time. Array elements are moved by bulk shifts
+(`table.insert`, `table.remove`), whose wide stores cannot forward into an
+8-byte load of either word. Hash-node values are written one at a time, so
+their split reads forward.
+
+Each new copy site follows the same rule: copy a stack slot or hash-node
+value with `.load()`, and leave array-part reads as plain copies. Check the
+stall counter on table_ops_long and sort_seeded after any change in
+`table.rs`.
 
 Reproduce the counters with:
 

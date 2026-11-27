@@ -1046,6 +1046,9 @@ impl TableInner {
     /// hash part do we walk the chain. Equivalent in observable
     /// behaviour to `slot_value(get_int_slot(key))`.
     #[inline]
+    // Array reads stay plain copies, unlike hash-node reads: array elements
+    // are moved by bulk shifts whose wide stores cannot forward into the two
+    // 8-byte loads of `LuaValue::load`.
     fn get_int_value(&self, key: i64) -> LuaValue {
         let alimit = self.alimit as u64;
         let uk = key as u64;
@@ -1072,7 +1075,7 @@ impl TableInner {
         let mut n = self.hash_idx_for_int(key);
         loop {
             if self.node[n].key_is_int() && self.node[n].key_int() == key {
-                return self.node[n].value.clone();
+                return self.node[n].value.load();
             }
             let nx = self.node[n].next;
             if nx == 0 {
@@ -1182,7 +1185,7 @@ impl TableInner {
             if self.node[n].key_is_short_str() {
                 let ks = self.node[n].key_string();
                 if lua_string_content_eq(ks, key) {
-                    return self.node[n].value.clone();
+                    return self.node[n].value.load();
                 }
             }
             let nx = self.node[n].next;
@@ -1234,7 +1237,7 @@ impl TableInner {
     fn slot_value(&self, slot: TableSlotRef) -> LuaValue {
         match slot {
             TableSlotRef::Array(i) => self.array[i].clone(),
-            TableSlotRef::Hash(i) => self.node[i].value.clone(),
+            TableSlotRef::Hash(i) => self.node[i].value.load(),
             TableSlotRef::Absent => LuaValue::Nil,
         }
     }

@@ -1351,7 +1351,7 @@ pub fn get_i_value(state: &mut LuaState, t: &LuaValue, n: i64) -> Result<LuaType
         _ => state.table_get_with_tm(t, &LuaValue::Int(n))?,
     };
     let ty = result.base_type();
-    state.push(result);
+    state.push(result.load());
     Ok(ty)
 }
 

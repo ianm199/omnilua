@@ -1029,7 +1029,7 @@ pub(crate) fn finish_get(
     t_idx: Option<StackIdx>,
     var_hint: Option<(&[u8], &[u8])>,
 ) -> Result<(), LuaError> {
-    let mut t = t_val;
+    let mut t = t_val.load();
     let mut t_idx = t_idx;
     for _loop in 0..MAX_TAG_LOOP {
         let tm: LuaValue;
@@ -1056,7 +1056,7 @@ pub(crate) fn finish_get(
             state.call_tm_res(tm, &t, &key, result_idx)?;
             return Ok(());
         }
-        t = tm.clone();
+        t = tm.load();
         t_idx = None;
         if let Some(v) = state.fast_get(&t, &key)? {
             state.set_at(result_idx, v);

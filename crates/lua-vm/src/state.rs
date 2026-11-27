@@ -2681,10 +2681,6 @@ impl LuaState {
         }
     }
 
-    /// Interns a string that lives for the whole program, checking a small
-    /// cache keyed on the slice address before hashing (C's `luaS_new`). A hit
-    /// skips the hash, the intern-table probe and the allocation. A `'static`
-    /// slice never changes, so a matching address and length is a match.
     /// The cached string for a `'static` slice, if `intern_static_str` has
     /// seen this address and length. A hit allocates nothing.
     #[inline]
@@ -2700,6 +2696,10 @@ impl LuaState {
         None
     }
 
+    /// Interns a string that lives for the whole program, checking a small
+    /// cache keyed on the slice address before hashing (C's `luaS_new`). A hit
+    /// skips the hash, the intern-table probe and the allocation. A `'static`
+    /// slice never changes, so a matching address and length is a match.
     pub fn intern_static_str(
         &mut self,
         bytes: &'static [u8],

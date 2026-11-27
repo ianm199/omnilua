@@ -1316,12 +1316,18 @@ others are candidates for carefully-scoped `unsafe` once safe-Rust work
 plateaus. None of these are blockers. They become relevant for the final
 1.0–1.2× push toward parity.
 
-- **C-shaped stack slots.** The current measured layout is `LuaValue` 16 bytes,
-  matching C Lua 5.4.7's `TValue`, but Rust `StackValue` is 24 bytes while C
-  `StackValue` is 16 bytes because C overlays the to-be-closed delta in a
-  union. Recovering stack-slot parity may require a side structure for
-  to-be-closed metadata or an unsafe C-shaped union. Do not claim value-size
-  pressure until `harness/bench/value-layout.sh` says so.
+- **Field-wise value copies (store-to-load forwarding) (done).** LLVM writes
+  a numeric `LuaValue` as two 8-byte stores and copies one as a single 16-byte
+  load. On x86 the load cannot forward from the two stores and stalls. C
+  copies `value_` and `tt_` separately and never hits it. `LuaValue::load`
+  copies hot stack slots as two 8-byte loads in one inline-asm block, the one
+  `unsafe` block in `lua-types`. table_seti_same runs 0.66x its previous wall
+  time. See "Store-to-load forwarding stalls" in `PERFORMANCE_MODEL.md`.
+
+- **C-shaped stack slots (done).** `LuaValue` is 16 bytes, matching C Lua
+  5.4.7's `TValue`. `StackValue` holds only `val` and is also 16 bytes, since
+  the `tbc_delta` field was deleted on 2026-06-09. Value and slot size are at
+  parity with C; `harness/bench/value-layout.sh` checks it.
 
 - **Raw pointer stack access.** C-Lua reads `s2v(L->top.p - 1)` as a single
   pointer load. Our `state.get_at(idx)` indexes a `Vec<StackValue>` with

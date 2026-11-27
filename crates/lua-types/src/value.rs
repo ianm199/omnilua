@@ -8,6 +8,51 @@ use std::ffi::c_void;
 
 pub use crate::table::LuaTable;
 
+/// Copies a value as two separate 8-byte loads.
+///
+/// Inline asm keeps LLVM from merging the two loads into one 16-byte load.
+/// Miri cannot run inline asm, so it takes the plain copy below.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[allow(unsafe_code)]
+#[inline(always)]
+fn load_words(v: &LuaValue) -> LuaValue {
+    /// The two words of a `LuaValue`: the tag word, then the payload word,
+    /// which holds the pointer for every pointer-carrying variant.
+    #[repr(C)]
+    struct Words {
+        tag: u64,
+        payload: *const u8,
+    }
+    const _: () = {
+        assert!(core::mem::size_of::<LuaValue>() == core::mem::size_of::<Words>());
+        assert!(core::mem::align_of::<LuaValue>() == core::mem::align_of::<Words>());
+    };
+    let p = v as *const LuaValue as *const u8;
+    let (tag, payload): (u64, *const u8);
+    // SAFETY: `v` is a valid, initialized 16-byte `LuaValue` and the asm only
+    // reads those 16 bytes. The payload is a pointer-typed output, so a GC or
+    // light-userdata pointer keeps the provenance it had in `*v`. The two
+    // words are the exact bytes of `*v`, so the transmute yields a bitwise
+    // copy of a valid value, and `LuaValue` is `Copy`.
+    unsafe {
+        core::arch::asm!(
+            "mov {tag}, qword ptr [{p}]",
+            "mov {payload}, qword ptr [{p} + 8]",
+            p = in(reg) p,
+            tag = out(reg) tag,
+            payload = lateout(reg) payload,
+            options(nostack, preserves_flags, readonly, pure),
+        );
+        core::mem::transmute::<Words, LuaValue>(Words { tag, payload })
+    }
+}
+
+#[cfg(not(all(target_arch = "x86_64", not(miri))))]
+#[inline(always)]
+fn load_words(v: &LuaValue) -> LuaValue {
+    *v
+}
+
 /// The dynamically-typed Lua value. Replaces C's `TValue`.
 #[derive(Debug, Clone, Copy)]
 pub enum LuaValue {
@@ -24,6 +69,19 @@ pub enum LuaValue {
 }
 
 impl LuaValue {
+    /// Copies the value, reading its tag word and payload word separately.
+    ///
+    /// A plain copy compiles to one 16-byte load. Writing a fresh value
+    /// compiles to a tag store and a payload store, and x86 cannot forward
+    /// two narrower in-flight stores into one wider load, so a copy that
+    /// closely follows such a write stalls until the stores retire. Two
+    /// 8-byte loads forward from either store shape. Use this for stack-slot
+    /// copies on the interpreter's hot paths.
+    #[inline(always)]
+    pub fn load(&self) -> LuaValue {
+        load_words(self)
+    }
+
     pub fn type_tag(&self) -> crate::LuaType {
         use crate::LuaType::*;
         match self {
@@ -168,5 +226,36 @@ impl LuaThread {
     }
     pub fn placeholder() -> Self {
         LuaThread { id: 0 }
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::LuaValue;
+
+    fn same_bits(a: &LuaValue, b: &LuaValue) -> bool {
+        match (a, b) {
+            (LuaValue::Float(x), LuaValue::Float(y)) => x.to_bits() == y.to_bits(),
+            _ => a == b,
+        }
+    }
+
+    #[test]
+    fn load_copies_immediate_values() {
+        let mut light = 7u8;
+        let values = [
+            LuaValue::Nil,
+            LuaValue::Bool(false),
+            LuaValue::Bool(true),
+            LuaValue::Int(0),
+            LuaValue::Int(i64::MIN),
+            LuaValue::Int(-1),
+            LuaValue::Float(-0.0),
+            LuaValue::Float(f64::from_bits(0x7ff8_0000_dead_beef)),
+            LuaValue::LightUserData(&mut light as *mut u8 as *mut std::ffi::c_void),
+        ];
+        for v in &values {
+            assert!(same_bits(&v.load(), v), "{v:?}");
+        }
     }
 }

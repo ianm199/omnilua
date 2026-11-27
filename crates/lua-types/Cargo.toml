@@ -8,8 +8,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[lints]
-workspace = true
+# Per harness/unsafe-budgets.toml, this crate holds one unsafe block: the
+# split-load value copy in value.rs.
+[lints.rust]
+unsafe_code = "deny"
 
 [dependencies]
 lua-gc.workspace = true

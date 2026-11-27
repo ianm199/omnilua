@@ -2689,7 +2689,7 @@ impl LuaState {
     pub fn get_at(&self, idx: impl Into<StackIdxConv>) -> LuaValue {
         let i: StackIdx = idx.into().0;
         match self.stack.get(i.0 as usize) {
-            Some(slot) => slot.val.clone(),
+            Some(slot) => slot.val.load(),
             None => LuaValue::Nil,
         }
     }

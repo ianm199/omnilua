@@ -1344,11 +1344,15 @@ pub fn get_i(state: &mut LuaState, idx: i32, n: i64) -> Result<LuaType, LuaError
 /// the table once and use this function to avoid calling `index_to_value`
 /// on every iteration.
 pub fn get_i_value(state: &mut LuaState, t: &LuaValue, n: i64) -> Result<LuaType, LuaError> {
-    let key = LuaValue::Int(n);
-    let result = state.table_get_with_tm(t, &key)?;
+    // Without a metatable `__index` cannot fire, so read the integer slot
+    // directly, as C's `lua_geti` does through `luaV_fastgeti`.
+    let result = match t {
+        LuaValue::Table(tbl) if !tbl.has_metatable() => tbl.get_int(n),
+        _ => state.table_get_with_tm(t, &LuaValue::Int(n))?,
+    };
+    let ty = result.base_type();
     state.push(result);
-    let top = state.top_idx();
-    Ok(state.get_at(top - 1).base_type())
+    Ok(ty)
 }
 
 fn finish_raw_get(state: &mut LuaState, val: Option<LuaValue>) -> LuaType {

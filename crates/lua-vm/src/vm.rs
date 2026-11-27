@@ -1972,7 +1972,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::Move => {
                         let ra = base + i.arg_a();
                         let rb = base + i.arg_b();
-                        let v = state.stack[rb.0 as usize].val;
+                        let v = state.stack[rb.0 as usize].val.load();
                         state.stack[ra.0 as usize].val = v;
                     }
                     // ── OP_LOADI ─────────────────────────────────────────────
@@ -2046,7 +2046,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                     OpCode::SetUpVal => {
                         let ra = base + i.arg_a();
                         let b = i.arg_b() as usize;
-                        let v = state.stack[ra.0 as usize].val;
+                        let v = state.stack[ra.0 as usize].val.load();
                         let uv = cl.upval(b);
                         match uv.try_open_payload() {
                             Some((thread_id, idx))
@@ -3221,7 +3221,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             } else {
                                 let ra = base + i.arg_a();
                                 state.stack[(base - 1).0 as usize].val =
-                                    state.stack[ra.0 as usize].val; // at least this result
+                                    state.stack[ra.0 as usize].val.load(); // at least this result
                                 state.top = base;
                                 for _ in 1..nres.max(0) {
                                     state.push(LuaValue::Nil);
@@ -3312,9 +3312,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let tfc_ra = base + tfc_i.arg_a();
                         if tfor_55 {
                             let src = tfc_ra.0 as usize;
-                            let func = state.stack[src].val.clone();
-                            let state_val = state.stack[src + 1].val.clone();
-                            let control = state.stack[src + 3].val.clone();
+                            let func = state.stack[src].val.load();
+                            let state_val = state.stack[src + 1].val.load();
+                            let control = state.stack[src + 3].val.load();
                             state.stack[src + 3].val = func;
                             state.stack[src + 4].val = state_val;
                             state.stack[src + 5].val = control;
@@ -3327,7 +3327,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             let src = tfc_ra.0 as usize;
                             let dst = src + 4;
                             for k in 0..3usize {
-                                state.stack[dst + k].val = state.stack[src + k].val.clone();
+                                state.stack[dst + k].val = state.stack[src + k].val.load();
                             }
                             state.set_top(tfc_ra + 4 + 3);
                             state.set_ci_savedpc(ci, pc);
@@ -3357,9 +3357,9 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                         let ra = base + i.arg_a();
                         if tfor_55 {
                             let src = ra.0 as usize;
-                            let func = state.stack[src].val.clone();
-                            let state_val = state.stack[src + 1].val.clone();
-                            let control = state.stack[src + 3].val.clone();
+                            let func = state.stack[src].val.load();
+                            let state_val = state.stack[src + 1].val.load();
+                            let control = state.stack[src + 3].val.load();
                             state.stack[src + 3].val = func;
                             state.stack[src + 4].val = state_val;
                             state.stack[src + 5].val = control;
@@ -3372,7 +3372,7 @@ pub(crate) fn execute(state: &mut LuaState, mut ci: CallInfoIdx) -> Result<(), L
                             let src = ra.0 as usize;
                             let dst = src + 4;
                             for k in 0..3usize {
-                                state.stack[dst + k].val = state.stack[src + k].val.clone();
+                                state.stack[dst + k].val = state.stack[src + k].val.load();
                             }
                             state.set_top(ra + 4 + 3);
                             state.set_ci_savedpc(ci, pc);

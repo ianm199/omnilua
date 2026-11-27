@@ -4,7 +4,13 @@
 # this file in a commit that explains why. See HARNESS_DESIGN.md §3.
 
 [crates]
-"lua-types"  = 0
+"lua-types"  = 1    # value.rs load_words: an inline-asm pair of 8-byte loads
+                    #   plus a [u64; 2] -> LuaValue transmute. It copies a
+                    #   slot so x86 can store-forward from the separate tag
+                    #   and payload stores LLVM emits for a fresh value; a
+                    #   plain 16-byte copy stalls (see PERFORMANCE_MODEL.md,
+                    #   "Store-to-load forwarding stalls"). Not built under
+                    #   Miri, which takes the plain copy.
 "lua-lex"    = 0
 "lua-parse"  = 0
 "lua-code"   = 0

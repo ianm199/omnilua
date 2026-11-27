@@ -1436,12 +1436,8 @@ pub(crate) fn assert_fn(state: &mut LuaState) -> Result<usize, LuaError> {
 pub(crate) fn select_fn(state: &mut LuaState) -> Result<usize, LuaError> {
     let n = state.top() as i64;
     // Check for '#' first byte without holding a borrow across subsequent ops.
-    let first_is_hash = state.type_at(1) == LuaType::String && {
-        state
-            .to_lua_string_bytes(1)
-            .and_then(|b| b.first().copied())
-            == Some(b'#')
-    };
+    let first_is_hash =
+        matches!(state.value_at(1), LuaValue::Str(ref s) if s.as_bytes().first() == Some(&b'#'));
     if first_is_hash {
         state.push(LuaValue::Int(n - 1));
         return Ok(1);

@@ -56,7 +56,15 @@ fn is_valid_index(state: &LuaState, idx: i32) -> bool {
         slot.0 < state.top_idx().0
     } else if !is_pseudo(idx) {
         (-idx) as u32 <= state.top_idx().0.saturating_sub(ci.func.0 + 1)
-    } else if idx == LUA_REGISTRYINDEX {
+    } else {
+        is_valid_pseudo_index(state, idx)
+    }
+}
+
+#[inline(never)]
+fn is_valid_pseudo_index(state: &LuaState, idx: i32) -> bool {
+    let ci = state.current_call_info();
+    if idx == LUA_REGISTRYINDEX {
         true
     } else {
         let upval_n = (LUA_REGISTRYINDEX - idx) as usize;
@@ -74,7 +82,35 @@ fn is_valid_index(state: &LuaState, idx: i32) -> bool {
 
 // Returns a cloned LuaValue rather than a pointer.
 // Writers use a companion index_to_stack_idx() for actual stack slots.
+#[inline]
 fn index_to_value(state: &LuaState, idx: i32) -> LuaValue {
+    if idx > 0 {
+        match arg_slot(state, idx) {
+            Some(v) => v.load(),
+            None => LuaValue::Nil,
+        }
+    } else if !is_pseudo(idx) {
+        state.get_at((state.top_idx().0 as i32 + idx) as u32)
+    } else {
+        index_to_value_slow(state, idx)
+    }
+}
+
+/// The stack slot of positive index `idx`, or `None` when it lies at or above
+/// the frame's top.
+#[inline(always)]
+fn arg_slot(state: &LuaState, idx: i32) -> Option<&LuaValue> {
+    debug_assert!(idx > 0);
+    let slot = state.current_call_info().func + idx;
+    if slot.0 >= state.top_idx().0 {
+        None
+    } else {
+        state.stack.get(slot.0 as usize).map(|s| &s.val)
+    }
+}
+
+#[inline(never)]
+fn index_to_value_slow(state: &LuaState, idx: i32) -> LuaValue {
     let ci = state.current_call_info();
     if idx > 0 {
         let func_idx = ci.func;
@@ -233,6 +269,7 @@ pub fn abs_index(state: &LuaState, idx: i32) -> i32 {
     }
 }
 
+#[inline]
 pub fn get_top(state: &LuaState) -> i32 {
     let ci = state.current_call_info();
     (state.top_idx().0 as i32) - (ci.func.0 as i32 + 1)
@@ -339,6 +376,7 @@ pub fn copy(state: &mut LuaState, fromidx: i32, toidx: i32) {
 }
 
 /// Returns the value at `idx` (`lua_pushvalue` without the push).
+#[inline]
 pub fn value_at(state: &LuaState, idx: i32) -> LuaValue {
     index_to_value(state, idx)
 }
@@ -961,9 +999,22 @@ fn display_default_bytes(
 
 // ── access functions (stack → Rust) ──────────────────────────────────────────
 
+#[inline]
 pub fn lua_type_at(state: &LuaState, idx: i32) -> LuaType {
+    if idx > 0 {
+        return match arg_slot(state, idx) {
+            Some(v) => v.base_type(),
+            None => LuaType::None,
+        };
+    }
     if !is_valid_index(state, idx) {
         return LuaType::None;
+    }
+    if !is_pseudo(idx) {
+        // A valid negative index names a slot below the top.
+        return state.stack[(state.top_idx().0 as i32 + idx) as usize]
+            .val
+            .base_type();
     }
     index_to_value(state, idx).base_type()
 }
@@ -980,6 +1031,7 @@ pub fn is_cfunction(state: &LuaState, idx: i32) -> bool {
     )
 }
 
+#[inline]
 pub fn is_integer(state: &LuaState, idx: i32) -> bool {
     let o = index_to_value(state, idx);
     matches!(o, LuaValue::Int(_))
@@ -1000,6 +1052,7 @@ pub fn is_userdata(state: &LuaState, idx: i32) -> bool {
     matches!(o, LuaValue::UserData(_) | LuaValue::LightUserData(_))
 }
 
+#[inline]
 pub fn raw_equal(state: &LuaState, index1: i32, index2: i32) -> bool {
     if !is_valid_index(state, index1) || !is_valid_index(state, index2) {
         return false;
@@ -1056,16 +1109,19 @@ pub fn string_to_number(state: &mut LuaState, s: &[u8]) -> usize {
     }
 }
 
+#[inline]
 pub fn to_number_x(state: &LuaState, idx: i32) -> Option<f64> {
     let o = index_to_value(state, idx);
     o.to_number_with_strconv()
 }
 
+#[inline]
 pub fn to_integer_x(state: &LuaState, idx: i32) -> Option<i64> {
     let o = index_to_value(state, idx);
     o.to_integer_with_strconv()
 }
 
+#[inline]
 pub fn to_boolean(state: &LuaState, idx: i32) -> bool {
     let o = index_to_value(state, idx);
     !matches!(o, LuaValue::Nil | LuaValue::Bool(false))
@@ -1184,6 +1240,11 @@ pub fn push_lstring(state: &mut LuaState, s: &[u8]) -> Result<GcRef<LuaString>, 
 /// `lua_pushstring` for a string with static lifetime. Repeat pushes of the
 /// same slice hit the address-keyed string cache instead of re-interning.
 pub fn push_static_string(state: &mut LuaState, s: &'static [u8]) -> Result<(), LuaError> {
+    // A cache hit allocates nothing, so there is no GC debt to check.
+    if let Some(ts) = state.cached_static_str(s) {
+        state.push(LuaValue::Str(ts));
+        return Ok(());
+    }
     let ts = state.intern_static_str(s)?;
     state.push(LuaValue::Str(ts));
     state.gc_pre_collect_clear();

@@ -190,8 +190,7 @@ fn keep_first_arg(state: &mut LuaState) -> Result<(), LuaError> {
 /// `math.abs(x)` — absolute value, preserving integer type when possible.
 ///
 fn math_abs(state: &mut LuaState) -> Result<usize, LuaError> {
-    if arg_is_int(state, 1) {
-        let n = state.to_integer(1).unwrap_or(0);
+    if let LuaValue::Int(n) = state.value_at(1) {
         let n = if n < 0 {
             (0u64.wrapping_sub(n as u64)) as i64
         } else {

@@ -2681,20 +2681,30 @@ impl LuaState {
     /// cache keyed on the slice address before hashing (C's `luaS_new`). A hit
     /// skips the hash, the intern-table probe and the allocation. A `'static`
     /// slice never changes, so a matching address and length is a match.
+    /// The cached string for a `'static` slice, if `intern_static_str` has
+    /// seen this address and length. A hit allocates nothing.
+    #[inline]
+    pub fn cached_static_str(&self, bytes: &'static [u8]) -> Option<GcRef<LuaString>> {
+        let src = (bytes.as_ptr() as usize, bytes.len());
+        let row = src.0 % STRCACHE_N;
+        let global = self.global();
+        for j in 0..STRCACHE_M {
+            if global.strcache_src[row][j] == src {
+                return Some(global.strcache[row][j].clone());
+            }
+        }
+        None
+    }
+
     pub fn intern_static_str(
         &mut self,
         bytes: &'static [u8],
     ) -> Result<GcRef<LuaString>, LuaError> {
+        if let Some(s) = self.cached_static_str(bytes) {
+            return Ok(s);
+        }
         let src = (bytes.as_ptr() as usize, bytes.len());
         let row = src.0 % STRCACHE_N;
-        {
-            let global = self.global();
-            for j in 0..STRCACHE_M {
-                if global.strcache_src[row][j] == src {
-                    return Ok(global.strcache[row][j].clone());
-                }
-            }
-        }
         let s = self.intern_str(bytes)?;
         let mut global = self.global_mut();
         global.strcache[row].rotate_right(1);
@@ -3973,19 +3983,7 @@ impl LuaState {
         t.resize(self, na, nh)
     }
     pub fn table_getn(&self, t: &GcRef<LuaTable>) -> i64 {
-        // C's `luaH_getn` returns a boundary i such that t[i] is present and
-        // t[i+1] is absent (or 0 if t[1] is absent), found via a binary or
-        // unbound search over the array part. This instead walks integer
-        // keys linearly from 1 — each `get_int` call is O(1), but the walk
-        // itself is O(n) in the boundary rather than C's O(log n).
-        let mut i: i64 = 1;
-        loop {
-            let v = t.get_int(i);
-            if matches!(v, LuaValue::Nil) {
-                return i - 1;
-            }
-            i += 1;
-        }
+        t.getn() as i64
     }
 
     pub fn try_bin_tm(

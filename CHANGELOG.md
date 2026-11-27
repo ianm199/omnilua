@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-26
+
+Interpreter performance release. No API or behavior changes.
+
+### Changed — stack-slot copies no longer stall on store forwarding (#336)
+
+A freshly written number is stored as a tag word and a payload word, and
+the next opcode copied it back with one 16-byte load. x86 cannot forward
+two narrower stores into one wider load, so the copy waited for the stores
+to retire. Hot stack copies now read the two words separately, as C Lua
+copies `value_` and `tt_`. On Zen 5, `t[i] = v` and `t.k = v` loops run in
+0.66x and 0.75x of their previous time, and `ipairs`, metatable and
+comparison-heavy benchmarks gain 12–17%. `lua-types` now holds one
+`unsafe` block, an inline-asm load pair; Miri builds a plain copy.
+
+`ipairs` and `lua_geti` also read the array slot directly when the table
+has no metatable.
+
 ## [0.7.2] - 2026-11-23
 
 Embedding-API repair release. Most fixes are GC rooting bugs in the host

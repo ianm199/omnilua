@@ -732,7 +732,9 @@ fn prep_call_info(
 /// invokes the C function, and calls `poscall`.
 /// Returns the number of values returned by the C function.
 ///
-#[inline(always)]
+/// Kept out of line: every call site, including the interpreter loop, carries
+/// one call instruction per C call instead of a copy of this body.
+#[inline(never)]
 fn precall_c(
     state: &mut LuaState,
     func_idx: StackIdx,
@@ -767,8 +769,13 @@ fn precall_c(
         hook(state, LUA_HOOKCALL, -1, 1, narg)?;
     }
 
-    let cfunc = state.global().c_functions[f].clone();
-    let n = cfunc.call(state)? as i32;
+    // A bare function pointer is copied out of the registry; only a boxed
+    // Rust closure needs its refcount held across the call.
+    let bare = state.global().c_functions[f].as_bare();
+    let n = match bare {
+        Some(cfunc) => cfunc(state)?,
+        None => call_rust_callable(state, f)?,
+    } as i32;
 
     debug_assert!(
         n <= state.top_idx().0 as i32,
@@ -779,17 +786,11 @@ fn precall_c(
     Ok(n)
 }
 
-/// Calls the C function at `func_idx` from a VM call site. Kept out of line
-/// so the interpreter loop carries one call instruction per C call.
+#[cold]
 #[inline(never)]
-fn precall_c_direct(
-    state: &mut LuaState,
-    func_idx: StackIdx,
-    nresults: i32,
-    f: LuaCFnPtr,
-) -> Result<(), LuaError> {
-    precall_c(state, func_idx, nresults, f, 0)?;
-    Ok(())
+fn call_rust_callable(state: &mut LuaState, f: LuaCFnPtr) -> Result<usize, LuaError> {
+    let cfunc = state.global().c_functions[f].clone();
+    cfunc.call(state)
 }
 
 /// Prepares a tail call, reusing the current `CallInfo`.
@@ -917,12 +918,12 @@ pub(crate) fn precall(
         }
         LuaValue::Function(LuaClosure::LightC(f)) => {
             let f = *f;
-            precall_c_direct(state, func_idx, nresults, f)?;
+            precall_c(state, func_idx, nresults, f, 0)?;
             Ok(None)
         }
         LuaValue::Function(LuaClosure::C(cl)) => {
             let f = cl.func;
-            precall_c_direct(state, func_idx, nresults, f)?;
+            precall_c(state, func_idx, nresults, f, 0)?;
             Ok(None)
         }
         _ => precall_slow(state, func_idx, nresults),

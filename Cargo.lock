@@ -209,7 +209,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lua-cli-test-rust-module"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-types",
  "lua-vm",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "lua-code"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-types",
  "lua-vm",
@@ -225,18 +225,18 @@ dependencies = [
 
 [[package]]
 name = "lua-coro"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-types",
 ]
 
 [[package]]
 name = "lua-gc"
-version = "0.7.4"
+version = "0.7.5"
 
 [[package]]
 name = "lua-lex"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-gc",
  "lua-types",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "lua-parse"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-code",
  "lua-lex",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "lua-rs-derive"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "omnilua",
  "proc-macro2",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "lua-rs-hlua-shim"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-gc",
  "lua-parse",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "lua-rs-lfs"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "filetime",
  "lua-types",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "lua-stdlib"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-types",
  "lua-vm",
@@ -294,14 +294,14 @@ dependencies = [
 
 [[package]]
 name = "lua-types"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-gc",
 ]
 
 [[package]]
 name = "lua-vm"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-gc",
  "lua-types",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "lua-wasm"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-types",
  "omnilua",
@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "lua-wasm-smoke"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "omnilua",
 ]
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "omnilua"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "lua-gc",
  "lua-parse",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "omnilua-cli"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "dhat",
  "libc",

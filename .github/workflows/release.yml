@@ -155,7 +155,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add harness/evidence/ledger.jsonl \
                   harness/bench/history/index.html \
-                  harness/bench/history/history.json
+                  harness/bench/history/history.json \
+                  harness/bench/history/series.json
           git add harness/bench/results 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "no dashboard changes to commit"

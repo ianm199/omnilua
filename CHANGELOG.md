@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-28
+
+Release-process change only; the code is the same as 0.7.5.
+
+### Changed — npm publishing uses trusted publishing (#343)
+
+The npm package now publishes through npm trusted publishing (GitHub
+OIDC) instead of an `NPM_TOKEN` secret. The token had failed every release
+since 0.7.1, so npm was still at 0.7.1; 0.7.6 brings it level with
+crates.io.
+
 ## [0.7.5] - 2026-11-27
 
 Interpreter performance release. One behavior change: `rawlen` on a table

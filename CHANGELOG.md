@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the site's performance page refreshes on release
+
+The release dashboard job regenerated `series.json`, the data behind the
+performance page, but never committed it, so the page stayed on June 2026
+numbers. The job now commits it with the other dashboard files.
+
 ## [0.7.6] - 2026-11-28
 
 Release-process change only; the code is the same as 0.7.5.
